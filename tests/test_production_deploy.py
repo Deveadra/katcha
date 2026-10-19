@@ -801,3 +801,46 @@ def test_stop_supervisor_rejects_failed_reset_or_concurrent_restart(
     with pytest.raises(app.Blocked):
         app.stop_supervisor()
     assert reset
+
+
+@pytest.mark.parametrize("has_browser", [False, True])
+def test_runtime_uses_service_inventory_from_exact_release(monkeypatch, has_browser):
+    app = module()
+    services = app.EXPECTED if has_browser else app.EXPECTED - {"browser"}
+
+    def command(*args, **kwargs):
+        if args[:4] == ("git", "-C", str(app.REPO), "show"):
+            assert args[4] == OLD + ":deploy/docker-compose.production.yml"
+            return "services:\n  browser:\n" if has_browser else "services:\n  api:\n"
+        if args[:2] == ("docker", "ps"):
+            return "\n".join(sorted(services))
+        if args[:2] == ("docker", "inspect"):
+            name = args[2]
+            return json.dumps([{
+                "Config": {
+                    "Labels": {"com.docker.compose.service": name},
+                    "Image": "ghcr.io/deveadra/" + app.IMAGE_FOR_SERVICE.get(name, name)
+                             + ":" + OLD,
+                },
+                "State": {"Running": True, "Status": "running",
+                          "Health": {"Status": "healthy"}},
+            }])
+        pytest.fail("Unexpected operation")
+
+    monkeypatch.setattr(app, "run", command)
+    monkeypatch.setattr(app.urllib.request, "urlopen", lambda *args, **kwargs:
+                        io.StringIO(json.dumps({"release_sha": OLD})))
+    app.runtime(OLD)
+
+
+def test_runtime_requires_browser_in_release_that_defines_it(monkeypatch):
+    app = module()
+
+    def command(*args, **kwargs):
+        if args[0] == "git":
+            return "services:\n  browser:\n"
+        return "\n".join(sorted(app.EXPECTED - {"browser"}))
+
+    monkeypatch.setattr(app, "run", command)
+    with pytest.raises(app.Blocked, match="service count"):
+        app.runtime(OLD)

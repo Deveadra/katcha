@@ -296,3 +296,56 @@ def cancel_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
             current.status = "cancelled"
             current.summary = "Planning stopped. Work already started retains its own status."
     return snapshot(get_goal(goal.id))
+
+
+@router.get("/{goal_id}/browser")
+async def browser_snapshot(http_request: Request, goal_id: uuid.UUID) -> dict:
+    from katcha.services.browser_client import run_browser
+
+    goal = accessible_goal(http_request, goal_id)
+    return await run_browser(goal, {"action": "snapshot"})
+
+
+@router.post("/{goal_id}/browser")
+async def browser_interact(http_request: Request, goal_id: uuid.UUID) -> dict:
+    from pydantic import ValidationError
+
+    from katcha.services.browser_client import run_browser
+    from katcha.services.server_browser import BrowserAction
+
+    goal = accessible_goal(http_request, goal_id)
+    require_control_scope(http_request, "ai:write")
+    # Read a bounded body. Direct operator form entries never become goal observations.
+    body = bytearray()
+    async for chunk in http_request.stream():
+        body.extend(chunk)
+        if len(body) > 20000:
+            raise HTTPException(413, "Browser action is too large")
+    try:
+        action = BrowserAction.model_validate_json(body)
+    except ValidationError:
+        # Do not echo rejected passwords or form values through validation errors.
+        raise HTTPException(422, "Choose an action and provide its required fields") from None
+    if goal.status in {"cancelled", "completed"} and action.action != "close":
+        raise HTTPException(409, "This request has stopped. Open a new request to browse.")
+    if action.action == "screenshot":
+        raise HTTPException(422, "Use the browser screenshot link")
+    return await run_browser(goal, action.model_dump())
+
+
+@router.get("/{goal_id}/browser/screenshot")
+async def browser_screenshot(
+    http_request: Request, goal_id: uuid.UUID, snapshot_id: str | None = None,
+):
+    import base64
+
+    from fastapi.responses import Response
+
+    from katcha.services.browser_client import run_browser
+
+    goal = accessible_goal(http_request, goal_id)
+    result = await run_browser(goal, {"action": "screenshot", "snapshot_id": snapshot_id})
+    if not result.get("image"):
+        raise HTTPException(409, result.get("message", "The browser page is unavailable"))
+    return Response(base64.b64decode(result["image"]), media_type="image/png",
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

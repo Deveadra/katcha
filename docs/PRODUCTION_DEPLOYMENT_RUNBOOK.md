@@ -200,7 +200,7 @@ supervised forward repair. Other migrations are rejected.
 
 ## 6. Deployment activation (ONLY after separate review)
 
-**Do not run during installation.** Require: full current-main CI and six
+**Do not run during installation.** Require: full current-main CI and seven
 verified published images; successful rehearsal; no pending Temporal
 activities; fresh three-database R2 restore; verified leadership fence;
 approved migration classification (or proof no migration is needed);

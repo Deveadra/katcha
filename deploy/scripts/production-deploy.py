@@ -31,15 +31,18 @@ SUPERVISOR_LEASE_FILE = SUPERVISOR_LEASE_DIR / "compose.lock"
 API = "https://api.github.com/repos/Deveadra/katcha"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 EXPECTED = {
-    "api", "worker", "intelligence-worker", "production-worker",
+    "api", "worker", "intelligence-worker", "production-worker", "browser",
     "telegram-worker", "renderer", "postgres", "temporal", "cloudflared",
 }
-IMAGES = ("katcha-control", "katcha-ingest", "katcha-renderer", "katcha-production")
+IMAGES = (
+    "katcha-browser", "katcha-control", "katcha-ingest", "katcha-renderer", "katcha-production",
+)
 MIGRATION_FILE = "migrations/versions/0064_application_ai_settings.py"
 MIGRATION_BLOB = "3d411641d625c772856142d6a8ce43447be7f2b5"
 BEFORE_REVISION = "0063_authoritative_search_ledger"
 AFTER_REVISION = "0064_application_ai_settings"
 IMAGE_FOR_SERVICE = {
+    "browser": "katcha-browser",
     "api": "katcha-control", "intelligence-worker": "katcha-control",
     "telegram-worker": "katcha-control", "worker": "katcha-ingest",
     "renderer": "katcha-renderer", "production-worker": "katcha-production",
@@ -118,7 +121,7 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     head = github("/branches/main")
     if head.get("commit", {}).get("sha") != target:
         raise Blocked("candidate is not current accepted main")
-    # Invoke the *same* fail-closed, six-image, exact-head publication
+    # Invoke the *same* fail-closed, seven-image, exact-head publication
     # verifier as the CI release gate. Installed from accepted main by
     # the root-only deployer installer, not from the mutable app checkout.
     evidence_path = "/usr/local/lib/katcha-production-deploy/release_eligibility.py"
@@ -166,22 +169,28 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
 
 
 def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
+    # The previous immutable release may predate the browser service. Derive its
+    # required inventory from that exact revision so first rollout and rollback
+    # preserve the existing strict service-count checks.
+    compose_source = run("git", "-C", str(REPO), "show",
+                         sha + ":deploy/docker-compose.production.yml")
+    expected = EXPECTED if "\n  browser:\n" in compose_source else EXPECTED - {"browser"}
     ids = run("docker", "ps", "--filter", "label=com.docker.compose.project=katcha-production",
               "--format", "{{.ID}}").splitlines()
-    if len(ids) != 9 or len(set(ids)) != 9:
+    if len(ids) != len(expected) or len(set(ids)) != len(expected):
         raise Blocked("unexpected production service count")
     services = set()
     for cid in ids:
         row = json.loads(run("docker", "inspect", cid))[0]
         service = row["Config"]["Labels"].get("com.docker.compose.service")
         state = row["State"]
-        if service not in EXPECTED or service in services:
+        if service not in expected or service in services:
             raise Blocked("unrecognized or duplicate service")
         if not state.get("Running") or state.get("Status") != "running":
             raise Blocked("production container not running")
-        if service in {"api", "postgres", "temporal", "renderer"}:
-            if state.get("Health", {}).get("Status") != "healthy":
-                raise Blocked("production container unhealthy")
+        if (service in {"api", "postgres", "temporal", "renderer", "browser"}
+            and state.get("Health", {}).get("Status") != "healthy"):
+            raise Blocked("production container unhealthy")
         if service not in {"postgres", "temporal", "cloudflared"}:
             img = row["Config"]["Image"]
             name = IMAGE_FOR_SERVICE[service]
@@ -190,7 +199,7 @@ def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
             if staged is not None and row.get("Image") != staged[name]:
                 raise Blocked("running image differs from previously staged immutable image")
         services.add(service)
-    if services != EXPECTED:
+    if services != expected:
         raise Blocked("required production service absent")
     try:
         with urllib.request.urlopen(

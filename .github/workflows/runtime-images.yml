@@ -12,6 +12,7 @@ on:
       - .github/workflows/runtime-images.yml
       - Dockerfile
       - Dockerfile.analysis
+      - Dockerfile.browser
       - Dockerfile.control
       - Dockerfile.production
       - Dockerfile.renderer
@@ -57,6 +58,7 @@ jobs:
         with:
           script: |
             const definitions = [
+              {image: "katcha-browser", dockerfile: "Dockerfile.browser", multi: true},
               {image: "katcha-control", dockerfile: "Dockerfile.control", multi: true},
               {image: "katcha-ingest", dockerfile: "Dockerfile", multi: true},
               {image: "katcha-analysis", dockerfile: "Dockerfile.analysis", multi: true},
@@ -114,7 +116,7 @@ jobs:
                 if (allImages || names.has(dockerfile)) return true;
                 if (
                   sharedPython &&
-                  ["katcha-control", "katcha-ingest", "katcha-analysis", "katcha-production"].includes(image)
+                  ["katcha-control", "katcha-ingest", "katcha-analysis", "katcha-production", "katcha-browser"].includes(image)
                 ) return true;
                 return image === "katcha-renderer" && rendererChanged;
               });
@@ -251,6 +253,7 @@ jobs:
         run: |
           set -euo pipefail
           images=(
+            katcha-browser
             katcha-control
             katcha-ingest
             katcha-analysis
