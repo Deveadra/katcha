@@ -42,7 +42,10 @@ def remote_source_acquisition(source_id: str) -> dict:
             if row.source_item_id != source.id:
                 raise ValueError("Remote acquisition source linkage does not match")
             return {"job_id": str(row.id), "channel_id": str(row.channel_profile_id)}
-        if not settings.remote_acquisition_enabled:
+        if not (
+            settings.remote_acquisition_enabled
+            and settings.remote_acquisition_auto_dispatch_enabled
+        ):
             return {}
         candidate = session.scalar(
             select(DiscoveryCandidate).where(DiscoveryCandidate.source_item_id == source.id)

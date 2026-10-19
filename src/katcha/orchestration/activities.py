@@ -97,7 +97,8 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
 
         if (
             (source.source_metadata or {}).get("remote_acquisition_job_id")
-            or get_settings().remote_acquisition_enabled
+            or (get_settings().remote_acquisition_enabled
+                and get_settings().remote_acquisition_auto_dispatch_enabled)
         ):
             raise ApplicationError(
                 "Remote acquisition is still pending; wait for its verified handoff",

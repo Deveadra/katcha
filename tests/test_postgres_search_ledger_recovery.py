@@ -109,8 +109,9 @@ def database():
     engine = create_engine(url.set(database=name), pool_pre_ping=True)
     try:
         import katcha.search_ledger_models  # noqa: F401
-        from katcha.db import Base
+        from katcha.db import Base, load_model_metadata
 
+        load_model_metadata()
         Base.metadata.create_all(
             engine,
             tables=[

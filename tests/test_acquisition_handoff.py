@@ -874,3 +874,31 @@ def test_real_s3_part_signature_binds_checksum_and_length():
         "content-md5",
         "host",
     }
+
+
+def test_supervised_queue_only_mode_preserves_unlinked_ingest(job_db, monkeypatch):
+    from katcha.config import Settings
+    from katcha.orchestration import acquisition_activities as module
+
+    settings = Settings(
+        _env_file=None,
+        remote_acquisition_enabled=True,
+        remote_acquisition_auto_dispatch_enabled=False,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    with db.session_scope() as session:
+        source = SourceItem(
+            id=uuid.uuid4(),
+            source_url="https://media.example/unqueued",
+            canonical_url="https://media.example/unqueued",
+            platform="web",
+            source_metadata={"channel_profile_id": str(job_db[0])},
+        )
+        session.add(source)
+        source_id = str(source.id)
+    assert module.remote_source_acquisition(source_id) == {}
+    row = foundation.queued(job_db)
+    assert module.remote_source_acquisition(str(row.source_item_id)) == {
+        "job_id": str(row.id),
+        "channel_id": str(job_db[0]),
+    }

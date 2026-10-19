@@ -11,6 +11,10 @@ does not provision a host or activate a new paid provider.
 1. Deploy the API and main ingestion worker from the same release, with migrations
    through `0066_acquisition_handoff`. Set `KATCHA_REMOTE_ACQUISITION_ENABLED=true`
    on both the API and main ingestion worker. Keep it false until the selected host/route is admitted.
+   For a supervised test, set `KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED=false`
+   on both services: only explicitly queued jobs use the remote host, while unrelated
+   ingests retain their existing route. Linked jobs still wait for verified handoff.
+   The automatic dispatch setting defaults to true for normal operation.
 2. Configure a dedicated control principal with exactly `acquisition:work` and
    explicit channel UUIDs. Never give the host the operator token, wildcard channels,
    extra scopes, production environment file, or bucket credentials. Use one principal
