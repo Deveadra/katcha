@@ -1249,10 +1249,19 @@ const analytics = [
     };
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
-        .textContent.includes("both intelligence and editorial queues"));
+        .textContent.includes("discovery, trend scoring, intelligence and editorial queues"));
     assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-runtime") &&
         row.method === "POST").length, 0,
         "read-only runtime checks cannot dispatch work");
+    channelRuntimes["channel-1"].status = "discovery_worker_not_observed";
+    channelRuntimes["channel-1"].runtime_verified = false;
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Automatic research and source ingestion may be stalled"));
+    channelRuntimes["channel-1"].status = "trend_worker_not_observed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Scheduled scans may run without fresh opportunities"));
     channelRuntimes["channel-1"].status = "editorial_worker_not_observed";
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
