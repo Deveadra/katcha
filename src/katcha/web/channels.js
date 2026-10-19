@@ -2319,11 +2319,15 @@ function renderTrendAutomation() {
     const runtime = state.trendRuntime;
     if (schedule?.registered && schedule.enabled) {
         const states = {
-            queues_recently_polled: "Temporal confirms the schedule is running; both intelligence and editorial queues have recent workflow and activity pollers.",
-            editorial_worker_not_observed: "Temporal sees the schedule and intelligence pollers, but no recent editorial/production pollers.",
-            editorial_queue_unavailable: "Temporal schedule and intelligence pollers observed; production queue check failed.",
+            queues_recently_polled: "Temporal reports recent pollers for discovery, trend scoring, intelligence and editorial queues; the scheduled workflow is running.",
+            discovery_worker_not_observed: "No recent discovery workflow/activity pollers. Automatic research and source ingestion may be stalled.",
+            discovery_queue_unavailable: "Discovery task queue could not be checked; automatic research readiness is unknown.",
+            trend_worker_not_observed: "No recent trend-scoring workflow/activity pollers. Scheduled scans may run without fresh opportunities.",
+            trend_queue_unavailable: "Trend-scoring task queue could not be checked; fresh opportunity scoring is unverified.",
+            editorial_worker_not_observed: "The production/editorial queue has no recent workflow/activity pollers; scripts and renders may stall.",
+            editorial_queue_unavailable: "Production/editorial task queue could not be checked.",
             intelligence_worker_not_observed: "The schedule is running, but intelligence workflow/activity pollers were not both observed recently.",
-            intelligence_queue_unavailable: "Schedule found, but intelligence task queue polling could not be verified.",
+            intelligence_queue_unavailable: "The intelligence task queue could not be checked.",
             workflow_not_running: "Registered schedule is not running in Temporal.",
             workflow_unavailable: "Temporal could not describe the registered schedule.",
             probe_timeout: "Temporal diagnostic timed out; current readiness is unknown.",
