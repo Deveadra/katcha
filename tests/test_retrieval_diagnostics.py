@@ -44,10 +44,13 @@ async def test_ingest_saves_cause_instead_of_temporal_wrapper(monkeypatch):
 
     async def execute(name, *args, **kwargs):
         calls.append((name, kwargs))
+        if name == "remote_source_acquisition":
+            return {}
         if name == "ingest_source":
             raise nested_failure()
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
+    monkeypatch.setattr(workflows.workflow, "patched", lambda _name: True)
     with pytest.raises(RuntimeError, match="Child Workflow"):
         await workflows.ClipIngestWorkflow().run("source")
     assert calls[-1][0] == "mark_source_failed"
