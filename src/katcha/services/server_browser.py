@@ -29,6 +29,10 @@ class BrowserAction(BaseModel):
     y: int = Field(default=0, ge=0, le=799)
     x2: int = Field(default=0, ge=0, le=1279)
     y2: int = Field(default=0, ge=0, le=799)
+    snapshot_id: str | None = Field(
+        default=None, max_length=64,
+        description="Use the current snapshot_id for coordinates, focused typing and global keys",
+    )
     url: str | None = Field(default=None, max_length=2000)
     ref: str | None = Field(default=None, pattern=r"^e[0-9]+$", max_length=12)
     text: str = Field(default="", max_length=10000)
@@ -135,6 +139,8 @@ class Session:
     page: object = None
     refs: dict = field(default_factory=dict)
     next_ref: int = 0
+    snapshot_id: str | None = None
+    snapshot_url: str | None = None
 
 
 class BrowserPool:
@@ -207,6 +213,11 @@ class BrowserPool:
                 context.set_default_navigation_timeout(20000)
 
                 async def route(request_route):
+                    request = request_route.request
+                    # Initial popup requests can arrive before Playwright exposes a frame.
+                    # Invalidate conservatively for every navigation, including child frames.
+                    if request.is_navigation_request():
+                        session.snapshot_id = None
                     if urlsplit(request_route.request.url).scheme != "https":
                         await request_route.abort()
                     else:
@@ -234,7 +245,8 @@ class BrowserPool:
         # Frame-local locators remain bound to the actual DOM nodes until next snapshot.
         for frame in page.frames[:16]:
             locator = frame.locator(
-                "a[href],button,input,textarea,select,[role=button],[contenteditable=true]"
+                "a[href],button,input,textarea,select,summary,[tabindex],"
+                "[role=button],[role=link],[role=checkbox],[role=combobox],[contenteditable=true]"
             )
             for item in (await locator.all())[:500]:
                 if len(elements) >= 150:
@@ -243,6 +255,10 @@ class BrowserPool:
                     continue
                 description = await item.evaluate("""e => ({tag:e.tagName.toLowerCase(),
                     role:e.getAttribute('role')||'',type:e.getAttribute('type')||'',
+                    disabled:!!e.disabled||e.getAttribute('aria-disabled')==='true',
+                    checked:e.matches('[type=checkbox],[type=radio]')?e.checked:null,
+                    options:e.tagName==='SELECT'?Array.from(e.options).slice(0,100)
+                        .map(o=>({value:o.value,label:o.label,selected:o.selected})):[],
                     name:(e.getAttribute('aria-label')||e.labels?.[0]?.innerText||
                           e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||'')
                           .slice(0,200)})""")
@@ -251,8 +267,11 @@ class BrowserPool:
                 session.refs[ref] = await item.element_handle()
                 elements.append({"ref": ref, **description})
         text = await page.locator("body").inner_text(timeout=5000)
+        session.snapshot_id = str(uuid.uuid4())
+        session.snapshot_url = page.url
         return {
             "available": True, "session_id": session.session_id, "url": page.url,
+            "snapshot_id": session.snapshot_id,
             "title": await page.title(), "text": text[:18000], "elements": elements,
             "tabs": [{"index": i, "url": p.url} for i, p in enumerate(session.context.pages)],
             "observed_at": datetime.now(UTC).isoformat(),
@@ -280,6 +299,19 @@ class BrowserPool:
             if page.is_closed():
                 pages = session.context.pages
                 session.page = page = pages[-1] if pages else await session.context.new_page()
+            needs_snapshot = action.action in {"mouse_click", "drag", "type"} or (
+                action.action == "press" and not action.ref
+            )
+            check_snapshot = needs_snapshot or (
+                action.action == "screenshot" and action.snapshot_id
+            )
+            if check_snapshot and (
+                not action.snapshot_id or action.snapshot_id != session.snapshot_id
+                or page.url != session.snapshot_url
+            ):
+                raise ValueError("Refresh the page view before clicking or using the keyboard")
+            if action.action not in {"screenshot", "snapshot", "tabs"}:
+                session.snapshot_id = None
             if action.action == "open":
                 await asyncio.to_thread(public_addresses, action.url)
                 await page.goto(action.url, wait_until="domcontentloaded")

@@ -89,8 +89,18 @@ async def test_real_javascript_forms_cookies_isolation_tabs_and_screenshot(real_
     pool, requests = real_pool
     scope = ("actor", "channel", "goal")
 
+    snapshot_id = None
+
     async def act(action, **kwargs):
-        return await pool.execute(scope, browser.BrowserAction(action=action, **kwargs))
+        nonlocal snapshot_id
+        if action in {"mouse_click", "drag", "type", "screenshot"} or (
+            action == "press" and not kwargs.get("ref")
+        ):
+            kwargs["snapshot_id"] = snapshot_id
+        result = await pool.execute(scope, browser.BrowserAction(action=action, **kwargs))
+        if "snapshot_id" in result:
+            snapshot_id = result["snapshot_id"]
+        return result
 
     first = await act("open", url="https://fixture.test/")
     assert "Fixture login" in first["text"]
@@ -107,7 +117,9 @@ async def test_real_javascript_forms_cookies_isolation_tabs_and_screenshot(real_
     filled = await act("fill", ref=control(refreshed, "Name"), text="Ada")
     signed = await act("click", ref=control(filled, "Sign in"))
     assert "Hello Ada" in signed["text"]
-    selected = await act("select", ref=control(signed, "Choice"), text="b")
+    choices = next(e for e in signed["elements"] if e["name"] == "Choice")
+    option = next(o["value"] for o in choices["options"] if o["label"] == "B")
+    selected = await act("select", ref=choices["ref"], text=option)
     assert selected["available"]
     reopened = await act("open", url="https://fixture.test/")
     assert "session=ok" in reopened["text"]
@@ -139,8 +151,14 @@ async def test_real_private_navigation_rejected_and_stale_refs_do_not_act(real_p
     first = await pool.execute(scope, browser.BrowserAction(action="open",
                                                           url="https://fixture.test/"))
     stale = control(first, "Sign in")
+    stale_snapshot = first["snapshot_id"]
     await pool.execute(scope, browser.BrowserAction(action="snapshot"))
     with pytest.raises(ValueError, match="Refresh"):
         await pool.execute(scope, browser.BrowserAction(action="click", ref=stale))
+    with pytest.raises(ValueError, match="Refresh"):
+        await pool.execute(scope, browser.BrowserAction(action="mouse_click", x=20, y=20,
+                                                       snapshot_id=stale_snapshot))
+    with pytest.raises(ValueError, match="Refresh"):
+        await pool.execute(scope, browser.BrowserAction(action="type", text="wrong page"))
     with pytest.raises(ValueError, match="non-public"):
         await pool.execute(scope, browser.BrowserAction(action="open", url="https://127.0.0.1/"))

@@ -334,7 +334,9 @@ async def browser_interact(http_request: Request, goal_id: uuid.UUID) -> dict:
 
 
 @router.get("/{goal_id}/browser/screenshot")
-async def browser_screenshot(http_request: Request, goal_id: uuid.UUID):
+async def browser_screenshot(
+    http_request: Request, goal_id: uuid.UUID, snapshot_id: str | None = None,
+):
     import base64
 
     from fastapi.responses import Response
@@ -342,7 +344,7 @@ async def browser_screenshot(http_request: Request, goal_id: uuid.UUID):
     from katcha.services.browser_client import run_browser
 
     goal = accessible_goal(http_request, goal_id)
-    result = await run_browser(goal, {"action": "screenshot"})
+    result = await run_browser(goal, {"action": "screenshot", "snapshot_id": snapshot_id})
     if not result.get("image"):
         raise HTTPException(409, result.get("message", "The browser page is unavailable"))
     return Response(base64.b64decode(result["image"]), media_type="image/png",

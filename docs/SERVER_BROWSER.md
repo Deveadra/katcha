@@ -45,7 +45,10 @@ Open the goal's browser panel and navigate to the target site. Use that panel fo
 sign-in forms and one-time verification codes so credentials are not included in
 AI prompts or goal tool receipts. The operator endpoint is
 `/v1/ai/goals/{goal_id}/browser`. Refresh the page view to see the current controls;
-element references become stale after interaction and must be refreshed.
+element references become stale after interaction and must be refreshed. Pointer
+and focused-keyboard actions must include the returned `snapshot_id`; outdated
+views are rejected when another AI or operator action changes the session. The
+operator panel attaches this identity automatically.
 
 Sessions are separate for each actor, channel and goal. Cookies and page state
 stay in memory and expire after 15 idle minutes or a service restart. Closing a

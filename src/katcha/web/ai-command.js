@@ -1013,6 +1013,7 @@ function attachGoalBrowser(progress, goal) {
     const tabs = panel.querySelector(".browser-tabs");
     let busy = false;
     let imageUrl = null;
+    let snapshotId = null;
     function permitted(action) {
         return action === "snapshot" || (capability("ai_write") && (panel.dataset.stopped !== "true" || action === "close"));
     }
@@ -1049,6 +1050,12 @@ function attachGoalBrowser(progress, goal) {
             message.textContent = "Return to this goal’s channel and conversation to use its browser.";
             return;
         }
+        const needsSnapshot = ["mouse_click", "type"].includes(action) || (action === "press" && !args.ref);
+        if (needsSnapshot && !snapshotId) {
+            message.textContent = "Refresh the page view before clicking a position, typing, or pressing a key.";
+            return;
+        }
+        if (needsSnapshot) args = {...args, snapshot_id: snapshotId};
         busy = true;
         const buttons = [...panel.querySelectorAll("button, select")];
         buttons.forEach((button) => { button.disabled = true; });
@@ -1058,6 +1065,7 @@ function attachGoalBrowser(progress, goal) {
             const result = await api(endpoint, action === "snapshot" ? {} : {
                 method: "POST", body: JSON.stringify({action, ...args}),
             });
+            snapshotId = result.available ? result.snapshot_id || null : null;
             view.hidden = !result.available;
             if (!result.available) {
                 if (action === "close") interaction.elements.text.value = "";
@@ -1075,7 +1083,8 @@ function attachGoalBrowser(progress, goal) {
             message.textContent = result.message || "Browser ready. Choose a page element to interact with it.";
             if (["fill", "type"].includes(action)) interaction.elements.text.value = "";
             try {
-                const response = await fetch(endpoint + "/screenshot", {headers: headers(), cache: "no-store"});
+                if (!snapshotId) throw new Error("Refresh the page view to capture an image");
+                const response = await fetch(endpoint + "/screenshot?snapshot_id=" + encodeURIComponent(snapshotId), {headers: headers(), cache: "no-store"});
                 if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("image/")) throw new Error("Screenshot unavailable");
                 const blob = await response.blob();
                 if (panel.isConnected && panel.open) {
@@ -1087,6 +1096,7 @@ function attachGoalBrowser(progress, goal) {
                 message.textContent += " The screenshot is unavailable. You can still use page text and element controls; refresh to retry.";
             }
         } catch (error) {
+            snapshotId = null;
             message.textContent = "The browser could not complete that action. Your entries are preserved. Refresh the page view before retrying an action that might have submitted a form. " + error.message;
         } finally {
             busy = false;

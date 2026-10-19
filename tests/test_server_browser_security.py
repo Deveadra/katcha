@@ -175,3 +175,27 @@ async def test_action_waiting_for_session_lock_cannot_reuse_closed_context():
     assert result["available"] is False
     context.close.assert_awaited_once()
     proxy.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("action", ["mouse_click", "drag", "type", "press", "screenshot"])
+async def test_stale_view_cannot_target_focused_controls_or_capture_new_page(action):
+    pool = server_browser.BrowserPool()
+    key = ("actor", "channel", "goal")
+    page = SimpleNamespace(
+        url="https://fixture.example/", is_closed=lambda: False,
+        mouse=SimpleNamespace(click=AsyncMock(), move=AsyncMock()),
+        keyboard=SimpleNamespace(insert_text=AsyncMock(), press=AsyncMock()),
+        screenshot=AsyncMock(),
+    )
+    session = server_browser.Session(SimpleNamespace(), None, page=page,
+                                    snapshot_id="current-view", snapshot_url=page.url)
+    pool.sessions[key] = session
+    pool.browser = SimpleNamespace(is_connected=lambda: True)
+    with pytest.raises(ValueError, match="Refresh"):
+        await pool.execute(key, server_browser.BrowserAction(action=action,
+                                                             snapshot_id="stale-view"))
+    page.mouse.click.assert_not_awaited()
+    page.mouse.move.assert_not_awaited()
+    page.keyboard.insert_text.assert_not_awaited()
+    page.keyboard.press.assert_not_awaited()
+    page.screenshot.assert_not_awaited()

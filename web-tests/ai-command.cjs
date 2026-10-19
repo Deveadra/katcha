@@ -37,6 +37,7 @@ let replacementGoal = null;
 let browserSessionOpen = false;
 let failBrowserFillOnce = true;
 let browserScreenshotAvailable = false;
+let failBrowserTypeOnce = false;
 const goalBodies = [];
 let goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
@@ -258,6 +259,7 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
             data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
                 status: goalPhase, summary: "Saved goal status", result: {}};
         } else if (url.pathname === "/v1/ai/goals/" + goalId + "/browser/screenshot") {
+            assert.equal(url.searchParams.get("snapshot_id"), "fixture-view");
             if (browserScreenshotAvailable) {
                 await route.fulfill({contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="white"/><text x="20" y="40">Fixture browser canvas</text></svg>'});
                 return;
@@ -265,6 +267,11 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
             await route.fulfill({status: 409, json: {detail: "Fixture screenshot unavailable"}});
             return;
         } else if (url.pathname === "/v1/ai/goals/" + goalId + "/browser") {
+            if (body?.action === "type" && failBrowserTypeOnce) {
+                failBrowserTypeOnce = false;
+                await route.fulfill({status: 409, json: {detail: "The page view changed. Refresh before trying again."}});
+                return;
+            }
             if (body?.action === "open") browserSessionOpen = true;
             if (body?.action === "close") browserSessionOpen = false;
             if (body?.action === "fill" && failBrowserFillOnce) {
@@ -272,7 +279,7 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
                 await route.fulfill({status: 503, json: {detail: "Fixture connection interrupted"}});
                 return;
             }
-            data = browserSessionOpen ? {available: true, url: "https://example.com/", title: "Fixture browser page",
+            data = browserSessionOpen ? {available: true, snapshot_id: "fixture-view", url: "https://example.com/", title: "Fixture browser page",
                 text: "Fixture page text", elements: [{ref: "e1", tag: "input", name: "Sign in"}],
                 tabs: [{index: 0, url: "https://example.com/"}]} :
                 {available: false, code: "session_expired", message: "Open a page to start a browser session."};
@@ -987,6 +994,7 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     await browserPanel.getByRole("button", {name: "Apply action"}).waitFor({state: "visible"});
     await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
     const pointerAction = requests.filter((request) => request.body?.action === "mouse_click").at(-1).body;
+    assert.equal(pointerAction.snapshot_id, "fixture-view");
     assert(Math.abs(pointerAction.x - 320) < 3 && Math.abs(pointerAction.y - 600) < 3, JSON.stringify(pointerAction));
     await browserPanel.getByRole("button", {name: "Click server browser page", exact: true}).focus();
     await page.keyboard.press("Enter");
@@ -995,19 +1003,29 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     await browserPanel.getByLabel("Vertical position").fill("88");
     await browserPanel.getByRole("button", {name: "Click this position"}).click();
     await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
-    assert.deepEqual(requests.filter((request) => request.body?.action === "mouse_click").at(-1).body, {action: "mouse_click", x: 77, y: 88});
+    assert.deepEqual(requests.filter((request) => request.body?.action === "mouse_click").at(-1).body, {action: "mouse_click", x: 77, y: 88, snapshot_id: "fixture-view"});
     await browserPanel.locator('select[name="ref"]').selectOption("");
     await browserPanel.getByLabel("Action", {exact: true}).selectOption("type");
     await browserPanel.getByLabel("Text or option value").fill("fixture-focused-secret");
+    failBrowserTypeOnce = true;
+    await browserPanel.getByRole("button", {name: "Apply action"}).click();
+    await browserPanel.getByText(/The page view changed/).waitFor();
+    assert.equal(await browserPanel.getByLabel("Text or option value").inputValue(), "fixture-focused-secret");
+    const staleTypeCount = requests.filter((request) => request.body?.action === "type").length;
+    await browserPanel.getByRole("button", {name: "Apply action"}).click();
+    await browserPanel.getByText(/Refresh the page view before clicking/).waitFor();
+    assert.equal(requests.filter((request) => request.body?.action === "type").length, staleTypeCount);
+    await browserPanel.getByRole("button", {name: "Refresh page view"}).click();
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
     await browserPanel.getByRole("button", {name: "Apply action"}).click();
     await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
-    assert.deepEqual(requests.filter((request) => request.body?.action === "type").at(-1).body, {action: "type", text: "fixture-focused-secret"});
+    assert.deepEqual(requests.filter((request) => request.body?.action === "type").at(-1).body, {action: "type", text: "fixture-focused-secret", snapshot_id: "fixture-view"});
     assert.equal(await browserPanel.getByLabel("Text or option value").inputValue(), "");
     await browserPanel.getByLabel("Action", {exact: true}).selectOption("press");
     await browserPanel.getByLabel("Key or shortcut").fill("Control+a");
     await browserPanel.getByRole("button", {name: "Apply action"}).click();
     await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
-    assert.deepEqual(requests.filter((request) => request.body?.action === "press").at(-1).body, {action: "press", key: "Control+a"});
+    assert.deepEqual(requests.filter((request) => request.body?.action === "press").at(-1).body, {action: "press", key: "Control+a", snapshot_id: "fixture-view"});
     await browserPanel.locator('select[name="ref"]').selectOption("e1");
     await browserPanel.getByLabel("Action", {exact: true}).selectOption("hover");
     await browserPanel.getByRole("button", {name: "Apply action"}).click();
