@@ -51,7 +51,11 @@ def _iter_objects(store: ObjectStore, limit: int):
     token: str | None = None
     seen: set[str] = set()
     count = 0
+    pages = 0
     while count < limit:
+        pages += 1
+        if pages > limit:
+            raise RuntimeError("Staging object listing exceeded its page bound")
         args: dict[str, Any] = {
             "Bucket": store.settings.s3_bucket,
             "Prefix": DIRECT_STAGE_PREFIX,
@@ -79,7 +83,11 @@ def _iter_uploads(store: ObjectStore, limit: int):
     upload_marker: str | None = None
     seen: set[tuple[str, str]] = set()
     count = 0
+    pages = 0
     while count < limit:
+        pages += 1
+        if pages > limit:
+            raise RuntimeError("Staging upload listing exceeded its page bound")
         args: dict[str, Any] = {
             "Bucket": store.settings.s3_bucket,
             "Prefix": DIRECT_STAGE_PREFIX,
@@ -183,10 +191,13 @@ def reconcile_direct_staging(
     counts: Counter[str] = Counter()
     previews: list[dict[str, str]] = []
 
-    for kind, rows, timestamp_field in (
-        ("object", _iter_objects(store, max_records), "LastModified"),
-        ("multipart", _iter_uploads(store, max_records), "Initiated"),
-    ):
+    # Inventory both sources before touching S3. In apply mode, a failed object
+    # or multipart listing must not leave half the previous page already deleted.
+    inventories = (
+        ("object", list(_iter_objects(store, max_records)), "LastModified"),
+        ("multipart", list(_iter_uploads(store, max_records)), "Initiated"),
+    )
+    for kind, rows, timestamp_field in inventories:
         for item in rows:
             counts["scanned"] += 1
             key = item.get("Key")
