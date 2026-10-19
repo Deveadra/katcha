@@ -230,6 +230,32 @@ def test_invalid_cursor_fails_closed(saved):
         recon.reconcile_direct_staging(store=store, now=NOW)
 
 
+def test_apply_requires_both_inventories_complete_before_first_delete(saved):
+    ready = source(SourceStatus.READY.value)
+    candidate = key(ready)
+    store = FakeStore(
+        [{"Contents": [obj(candidate)], "IsTruncated": False}],
+        [{
+            "Uploads": [upload(candidate)],
+            "IsTruncated": True,
+            # A broken multipart cursor must fail before the object mutation.
+        }],
+    )
+    with pytest.raises(RuntimeError, match="pagination cursor"):
+        recon.reconcile_direct_staging(store=store, now=NOW, apply=True)
+    assert not store.deleted
+    assert not store.client.aborted
+
+
+def test_empty_paginated_inventory_is_bounded(saved):
+    store = FakeStore([
+        {"Contents": [], "IsTruncated": True, "NextContinuationToken": "p2"},
+    ])
+    with pytest.raises(RuntimeError, match="page bound"):
+        recon.reconcile_direct_staging(store=store, now=NOW, max_records=1)
+    assert len(store.client.object_calls) == 1
+
+
 def test_invalid_undated_and_boundary_objects_are_protected(saved):
     ready = source(SourceStatus.READY.value)
     staged = key(ready)
