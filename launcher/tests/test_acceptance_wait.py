@@ -7,7 +7,6 @@ from unittest.mock import Mock
 
 import pytest
 
-
 SPEC = importlib.util.spec_from_file_location(
     "launcher_acceptance", Path(__file__).with_name("acceptance.py")
 )
