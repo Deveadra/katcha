@@ -1265,7 +1265,7 @@ const analytics = [
     channelRuntimes["channel-1"].status = "editorial_worker_not_observed";
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
-        .textContent.includes("no recent editorial/production pollers"));
+        .textContent.includes("scripts and renders may stall"));
     channelSchedules["channel-1"].scan_health = "scan_overdue";
     channelSchedules["channel-1"].scan_overdue = true;
     channelSchedules["channel-1"].last_scheduled_scan_started_at = "2026-10-18T08:00:00Z";
