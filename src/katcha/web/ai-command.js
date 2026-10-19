@@ -230,6 +230,23 @@ async function openThread(threadId) {
             actions,
         });
     }
+    if (state.durableGoals) {
+        try {
+            const goals = await api("/v1/ai/goals?channel_profile_id=" + encodeURIComponent(state.channelId));
+            if (state.threadId === threadId) {
+                for (const goal of goals.filter((row) => row.thread_id === threadId && finishedGoals.has(row.status))) {
+                    const article = document.createElement("article");
+                    article.className = "message katcha-message saved-goal-browser";
+                    article.innerHTML = '<div class="message-avatar" aria-hidden="true">K</div><div class="message-body goal-progress-body"><span class="message-author">Katcha AI · saved goal</span><p></p></div>';
+                    article.querySelector("p").textContent = goal.summary || "Saved goal browser";
+                    $("thread").append(article);
+                    attachGoalBrowser(article, goal);
+                }
+            }
+        } catch (error) {
+            status("Saved browser sessions could not be loaded. Reopen this conversation to retry. " + error.message, true);
+        }
+    }
     scrollThread();
 }
 
@@ -948,6 +965,203 @@ function forgetGoal(commandId) {
         (row) => row.request.command_id !== commandId)));
 }
 const finishedGoals = new Set(["completed", "blocked", "needs_input", "failed", "cancelled"]);
+
+function attachGoalBrowser(progress, goal) {
+    const existing = progress.querySelector(".goal-browser");
+    if (existing) {
+        existing.dataset.stopped = String(["completed", "cancelled"].includes(goal.status));
+        existing.dispatchEvent(new Event("browserpermissions"));
+        return;
+    }
+    const panel = document.createElement("details");
+    panel.className = "goal-browser";
+    panel.dataset.stopped = String(["completed", "cancelled"].includes(goal.status));
+    panel.innerHTML = `<summary>Open server browser</summary>
+        <p>Browse websites in this goal’s private server session. Actions happen on the website immediately. Check before submitting forms or making purchases. Close the session when finished.</p>
+        <p>Sign-in values entered here are sent only to the browser session, and are not added to your goal or conversation history.</p>
+        <p class="browser-permission"></p>
+        <p class="browser-status" role="status" aria-live="polite">Open the browser to check its connection.</p>
+        <form class="browser-address"><label>Website address<input name="url" type="url" placeholder="https://example.com" required autocomplete="off"></label><button type="submit">Visit website</button></form>
+        <div class="browser-controls"><button type="button" data-browser-action="snapshot">Refresh page view</button><button type="button" data-browser-action="back">Go back</button><button type="button" data-browser-action="close">Close browser session</button></div>
+        <div class="browser-view" hidden>
+            <h4 class="browser-title"></h4><p class="browser-location"></p>
+            <p>Click a position in the page image to use menus, maps, or other visual controls. For keyboard access, use the position controls below, then type or press a key.</p>
+            <button type="button" class="browser-screen" aria-label="Click server browser page" hidden><img class="browser-screenshot" alt="Current server browser page"></button>
+            <details class="ae-help"><summary>Click a page position with the keyboard</summary>
+                <p>The page is 1280 pixels wide and 800 pixels tall. Positions start at the top left.</p>
+                <form class="browser-position"><label>Horizontal position<input name="x" type="number" min="0" max="1279" value="640" required></label><label>Vertical position<input name="y" type="number" min="0" max="799" value="400" required></label><button type="submit">Click this position</button></form>
+            </details>
+            <details class="ae-help"><summary>Read page text</summary><pre class="browser-text"></pre></details>
+            <label>Browser tab<select class="browser-tabs"></select></label>
+            <div class="browser-controls"><button type="button" data-browser-action="tabs">Refresh tabs</button><button type="button" data-browser-action="close_tab">Close current tab</button></div>
+            <form class="browser-interaction">
+                <label>Page element<select name="ref"><option value="">No page elements available</option></select></label>
+                <label>Action<select name="action" aria-label="Action"><option value="click">Click element</option><option value="fill">Enter text in element</option><option value="select">Choose option</option><option value="hover">Move pointer over element</option><option value="type">Type at current position</option><option value="press">Press key</option></select></label>
+                <label class="browser-value-label" hidden>Text or option value<input name="text" type="password" autocomplete="off"></label>
+                <label class="browser-key-label" hidden>Key or shortcut<input name="key" value="Enter" maxlength="40" placeholder="Enter, Tab, Control+a" autocomplete="off"></label>
+                <button type="submit">Apply action</button>
+            </form>
+            <div class="browser-controls"><button type="button" data-browser-action="scroll" data-scroll="-600">Scroll up</button><button type="button" data-browser-action="scroll" data-scroll="600">Scroll down</button><button type="button" data-browser-action="wait">Wait for page</button></div>
+        </div>`;
+    progress.querySelector(".goal-progress-body").append(panel);
+    const endpoint = "/v1/ai/goals/" + encodeURIComponent(goal.goal_id) + "/browser";
+    const message = panel.querySelector(".browser-status");
+    const view = panel.querySelector(".browser-view");
+    const screenshot = panel.querySelector(".browser-screenshot");
+    const screenButton = panel.querySelector(".browser-screen");
+    const interaction = panel.querySelector(".browser-interaction");
+    const tabs = panel.querySelector(".browser-tabs");
+    let busy = false;
+    let imageUrl = null;
+    let snapshotId = null;
+    function permitted(action) {
+        return action === "snapshot" || (capability("ai_write") && (panel.dataset.stopped !== "true" || action === "close"));
+    }
+    function updatePermissions() {
+        panel.querySelector(".browser-permission").textContent = panel.dataset.stopped === "true"
+            ? "This goal has stopped. You can review or close its browser session. Send a new request to continue browsing."
+            : !capability("ai_write") ? "Your access allows reviewing this browser. Ask an operator with write access to interact with it." : "";
+        panel.querySelectorAll("button").forEach((button) => {
+            const action = button.dataset.browserAction || (button.closest(".browser-address") ? "open" : "click");
+            button.disabled = busy || !permitted(action);
+        });
+        panel.querySelectorAll("select").forEach((select) => { select.disabled = busy || !permitted("click"); });
+    }
+    panel.addEventListener("browserpermissions", updatePermissions);
+    updatePermissions();
+    function clearScreenshot() {
+        screenButton.hidden = true;
+        screenshot.removeAttribute("src");
+        if (imageUrl) URL.revokeObjectURL(imageUrl);
+        imageUrl = null;
+    }
+    function replaceOptions(select, rows, empty) {
+        const selected = select.value;
+        select.replaceChildren();
+        for (const [value, name] of rows.length ? rows : [["", empty]]) {
+            select.add(new Option(name, value));
+        }
+        if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+    }
+    async function perform(action, args = {}) {
+        if (busy) return;
+        if (!permitted(action)) { updatePermissions(); return; }
+        if (state.channelId !== goal.channel_profile_id || state.threadId !== goal.thread_id) {
+            message.textContent = "Return to this goal’s channel and conversation to use its browser.";
+            return;
+        }
+        const needsSnapshot = ["mouse_click", "type"].includes(action) || (action === "press" && !args.ref);
+        if (needsSnapshot && !snapshotId) {
+            message.textContent = "Refresh the page view before clicking a position, typing, or pressing a key.";
+            return;
+        }
+        if (needsSnapshot) args = {...args, snapshot_id: snapshotId};
+        busy = true;
+        const buttons = [...panel.querySelectorAll("button, select")];
+        buttons.forEach((button) => { button.disabled = true; });
+        message.textContent = "Updating the browser…";
+        clearScreenshot();
+        try {
+            const result = await api(endpoint, action === "snapshot" ? {} : {
+                method: "POST", body: JSON.stringify({action, ...args}),
+            });
+            snapshotId = result.available ? result.snapshot_id || null : null;
+            view.hidden = !result.available;
+            if (!result.available) {
+                if (action === "close") interaction.elements.text.value = "";
+                message.textContent = result.message || "The browser session is unavailable or has expired. Visit a website to start a new session, or refresh to try again.";
+                return;
+            }
+            panel.querySelector(".browser-title").textContent = result.title || "Browser page";
+            panel.querySelector(".browser-location").textContent = result.url || "";
+            panel.querySelector(".browser-text").textContent = result.text || "No readable page text yet. Try waiting for the page.";
+            replaceOptions(interaction.elements.ref, [["", "Current position (typing or keyboard)"], ...(result.elements || []).map((element) => [
+                String(element.ref), (element.name || "Unnamed element") + " · " + (element.role || element.tag || element.type || "element"),
+            ])], "No page elements available. Refresh or wait for the page.");
+            replaceOptions(tabs, (result.tabs || []).map((tab) => [String(tab.index), "Tab " + (tab.index + 1) + ": " + (tab.title || tab.url || "New page")]), "No open tabs");
+            if (result.active_tab !== undefined) tabs.value = String(result.active_tab);
+            message.textContent = result.message || "Browser ready. Choose a page element to interact with it.";
+            if (["fill", "type"].includes(action)) interaction.elements.text.value = "";
+            try {
+                if (!snapshotId) throw new Error("Refresh the page view to capture an image");
+                const response = await fetch(endpoint + "/screenshot?snapshot_id=" + encodeURIComponent(snapshotId), {headers: headers(), cache: "no-store"});
+                if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("image/")) throw new Error("Screenshot unavailable");
+                const blob = await response.blob();
+                if (panel.isConnected && panel.open) {
+                    imageUrl = URL.createObjectURL(blob);
+                    screenshot.src = imageUrl;
+                    screenButton.hidden = false;
+                }
+            } catch {
+                message.textContent += " The screenshot is unavailable. You can still use page text and element controls; refresh to retry.";
+            }
+        } catch (error) {
+            snapshotId = null;
+            message.textContent = "The browser could not complete that action. Your entries are preserved. Refresh the page view before retrying an action that might have submitted a form. " + error.message;
+        } finally {
+            busy = false;
+            updatePermissions();
+        }
+    }
+    panel.addEventListener("toggle", () => {
+        if (panel.open) perform("snapshot");
+        if (!panel.open) clearScreenshot();
+    });
+    panel.querySelector(".browser-address").onsubmit = (event) => {
+        event.preventDefault();
+        const url = new URL(event.currentTarget.elements.url.value);
+        if (url.protocol !== "https:") { message.textContent = "Enter a secure website address starting with https://."; return; }
+        perform("open", {url: url.href});
+    };
+    interaction.elements.action.onchange = () => {
+        const action = interaction.elements.action.value;
+        panel.querySelector(".browser-value-label").hidden = !["fill", "select", "type"].includes(action);
+        panel.querySelector(".browser-key-label").hidden = action !== "press";
+    };
+    interaction.onsubmit = (event) => {
+        event.preventDefault();
+        const fields = interaction.elements;
+        const action = fields.action.value;
+        if (!["type", "press"].includes(action) && !fields.ref.value) { message.textContent = "Choose a page element, or refresh to find elements."; return; }
+        const args = fields.ref.value && action !== "type" ? {ref: fields.ref.value} : {};
+        if (["fill", "select", "type"].includes(action)) args.text = fields.text.value;
+        if (action === "press") args.key = fields.key.value;
+        perform(action, args);
+    };
+    screenButton.onclick = (event) => {
+        if (!event.detail) {
+            const positionForm = panel.querySelector(".browser-position");
+            positionForm.closest("details").open = true;
+            positionForm.elements.x.focus();
+            message.textContent = "Choose a horizontal and vertical position, then select Click this position.";
+            return;
+        }
+        if (!screenshot.naturalWidth || !screenshot.naturalHeight) {
+            message.textContent = "The page image is still loading. Wait a moment, or refresh the page view.";
+            return;
+        }
+        const rect = screenshot.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width;
+        const y = (event.clientY - rect.top) / rect.height;
+        perform("mouse_click", {
+            x: Math.max(0, Math.min(1279, Math.floor(x * screenshot.naturalWidth))),
+            y: Math.max(0, Math.min(799, Math.floor(y * screenshot.naturalHeight))),
+        });
+    };
+    panel.querySelector(".browser-position").onsubmit = (event) => {
+        event.preventDefault();
+        const fields = event.currentTarget.elements;
+        perform("mouse_click", {x: Number(fields.x.value), y: Number(fields.y.value)});
+    };
+    tabs.onchange = () => { if (tabs.value !== "") perform("switch_tab", {tab: Number(tabs.value)}); };
+    panel.querySelectorAll("[data-browser-action]").forEach((button) => {
+        button.onclick = () => {
+            const action = button.dataset.browserAction;
+            perform(action, action === "scroll" ? {scroll_y: Number(button.dataset.scroll)} : action === "wait" ? {wait_ms: 1000} : action === "close_tab" ? {tab: Number(tabs.value)} : {});
+        };
+    });
+}
+
 async function followGoal(receipt, { background = false } = {}) {
     let shownConfirmation = false;
     let nextDispatchAttemptAt = 0;
@@ -978,6 +1192,7 @@ async function followGoal(receipt, { background = false } = {}) {
                 catch (error) { status(error.message, true); }
             };
         }
+        attachGoalBrowser(progress, goal);
         const goalLinks = KatchaResourceLinks.resources(goal.result?.evidence || [], state.channelId);
         const displaySummary = goal.workflow_status_unverified
             ? "The goal is saved, but Temporal workflow status cannot be verified. Checking again."

@@ -29,6 +29,7 @@ jobs:
       storage: ${{ steps.plan.outputs.storage }}
       renderer: ${{ steps.plan.outputs.renderer }}
       explorer: ${{ steps.plan.outputs.explorer }}
+      server_browser: ${{ steps.plan.outputs.server_browser }}
     steps:
       - name: Classify changed files
         id: plan
@@ -43,6 +44,7 @@ jobs:
               "storage",
               "renderer",
               "explorer",
+              "server_browser",
             ];
 
             if (context.eventName !== "pull_request") {
@@ -119,6 +121,10 @@ jobs:
                   "tests/test_brand_previews.py",
                   "tests/test_packaging_thumbnails.py"
                 ),
+              server_browser:
+                ciChanged ||
+                prefix("src/katcha/services/server_browser", "src/katcha/services/browser_client", "tests/test_server_browser") ||
+                exact("pyproject.toml", "Dockerfile.browser", "docker-compose.yml", "docker-compose.intelligence.yml", "deploy/docker-compose.production.yml"),
               explorer:
                 ciChanged ||
                 prefix("web-tests/", "src/katcha/web/") ||
@@ -625,6 +631,27 @@ jobs:
         if: always()
         run: docker compose --env-file .env.example down -v
 
+  server-browser:
+    name: Server browser Chromium acceptance
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.server_browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python browser runtime
+        run: python -m pip install -e '.[dev,browser]'
+      - name: Install matching Chromium and operating system dependencies
+        run: python -m playwright install --with-deps chromium
+      - name: Exercise real server browser sessions and isolation
+        env:
+          KATCHA_TEST_REAL_BROWSER: "1"
+        run: pytest -q tests/test_server_browser.py
+
   explorer:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.explorer == 'true'
@@ -680,6 +707,7 @@ jobs:
       - renderer
       - ranked-render-e2e
       - explorer
+      - server-browser
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

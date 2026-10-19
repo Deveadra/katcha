@@ -117,7 +117,12 @@ def test_executed_publication_plan_uses_tested_sha() -> None:
     result = execute_script(workflow_scripts()[0], ci_payload(), "a" * 40)
     assert result["failures"] == []
     assert result["outputs"]["release_sha"] == "a" * 40
-    assert len(json.loads(result["outputs"]["matrix"])["include"]) == 6
+    images = json.loads(result["outputs"]["matrix"])["include"]
+    assert len(images) == 7
+    assert {image["image"] for image in images} == {
+        "katcha-browser", "katcha-control", "katcha-ingest", "katcha-analysis",
+        "katcha-renderer", "katcha-production", "katcha-minio",
+    }
 
 
 @pytest.mark.parametrize("changes", [

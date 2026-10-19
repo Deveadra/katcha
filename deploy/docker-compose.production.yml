@@ -75,6 +75,31 @@ services:
     command: ["alembic", "upgrade", "head"]
     networks: [backend]
 
+  browser:
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-browser:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+    shm_size: 256mb
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:?Set a unique KATCHA_BROWSER_SERVICE_TOKEN}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=2).read()"]
+      interval: 30s
+      start_period: 20s
+      timeout: 3s
+      retries: 5
+    mem_limit: 1g
+    cpus: 0.75
+    pids_limit: 256
+    logging: *default-logging
+    networks: [backend]
+
   api:
     # Optional, independently reviewed API-only promotion. All workers keep the
     # original KATCHA_RELEASE_SHA until a separately approved full rollout.
@@ -91,6 +116,8 @@ services:
       # Keep public /v1/health/release tied to the actual API image revision.
       KATCHA_RELEASE_SHA: ${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}}
       KATCHA_INTELLIGENCE_HANDOFF_DIR: /handoff
+      KATCHA_BROWSER_SERVICE_URL: http://browser:8010
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:?Set a unique KATCHA_BROWSER_SERVICE_TOKEN}
     volumes:
       - /srv/katcha/handoff:/handoff
     ports:
@@ -158,6 +185,8 @@ services:
     env_file: *control-env
     environment:
       KATCHA_API_RELEASE_SHA: ""
+      KATCHA_BROWSER_SERVICE_URL: http://browser:8010
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:?Set a unique KATCHA_BROWSER_SERVICE_TOKEN}
     depends_on:
       migrate:
         condition: service_completed_successfully

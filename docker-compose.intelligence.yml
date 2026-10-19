@@ -5,6 +5,9 @@ services:
       context: .
       dockerfile: Dockerfile.control
     env_file: ${KATCHA_ENV_FILE:-.env}
+    environment:
+      KATCHA_BROWSER_SERVICE_URL: http://browser:8010
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:-katcha-local-browser-development-token-only}
     depends_on:
       migrate:
         condition: service_completed_successfully

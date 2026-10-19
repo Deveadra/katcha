@@ -213,6 +213,9 @@ class CloudflareAccessPrincipalSettings(BaseModel):
 
 
 class Settings(BaseSettings):
+    browser_service_url: str | None = None
+    browser_service_token: SecretStr | None = None
+
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
         env_file=".env",

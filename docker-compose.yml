@@ -110,6 +110,27 @@ services:
         condition: service_healthy
     command: ["alembic", "upgrade", "head"]
 
+  browser:
+    image: katcha-browser:local
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+    shm_size: 256mb
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:-katcha-local-browser-development-token-only}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=2).read()"]
+      interval: 30s
+      start_period: 20s
+      timeout: 3s
+      retries: 5
+
   api:
     image: katcha-control:local
     group_add:
@@ -123,6 +144,8 @@ services:
         condition: service_completed_successfully
     environment:
       KATCHA_INTELLIGENCE_HANDOFF_DIR: /handoff
+      KATCHA_BROWSER_SERVICE_URL: http://browser:8010
+      KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:-katcha-local-browser-development-token-only}
     ports:
       - "8000:8000"
       # Codex ChatGPT-login callback. 1457 is OpenAI's registered fallback
