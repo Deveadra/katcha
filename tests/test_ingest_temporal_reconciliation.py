@@ -243,6 +243,43 @@ async def test_worker_restarts_registered_but_holds_ingesting_on_failed_executio
 
 
 @pytest.mark.asyncio
+async def test_worker_limits_concurrent_temporal_recovery_inspections(saved):
+    for _ in range(17):
+        add_source()
+    concurrency = 0
+    peak = 0
+
+    class MeasuredHandle:
+        async def describe(self):
+            nonlocal concurrency, peak
+            concurrency += 1
+            peak = max(peak, concurrency)
+            try:
+                await asyncio.sleep(0)
+                return SimpleNamespace(status=WorkflowExecutionStatus.RUNNING)
+            finally:
+                concurrency -= 1
+
+    class MeasuredClient(FakeTemporal):
+        def get_workflow_handle(self, workflow_id):
+            self.lookups.append(workflow_id)
+            return MeasuredHandle()
+
+    client = MeasuredClient(None)
+    settings = SimpleNamespace(
+        temporal_task_queue="ingest", temporal_publishing_task_queue="publish",
+        youtube_processing_poll_seconds=20, youtube_processing_max_polls=10,
+        analytics_offsets_hours=lambda: [24, 72],
+    )
+    assert await worker._resume_persisted_ingest_and_publication_work(
+        client, settings
+    ) == (0, 17)
+    assert 1 < peak <= 8
+    assert len(client.lookups) == 17
+    assert not client.started
+
+
+@pytest.mark.asyncio
 async def test_worker_running_ingest_is_present_without_duplicate_dispatch(saved):
     source_id = add_source()
     client = FakeTemporal(WorkflowExecutionStatus.RUNNING)
