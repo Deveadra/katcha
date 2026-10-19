@@ -215,6 +215,7 @@ class CloudflareAccessPrincipalSettings(BaseModel):
 class Settings(BaseSettings):
     browser_service_url: str | None = None
     browser_service_token: SecretStr | None = None
+    remote_acquisition_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
