@@ -20,6 +20,7 @@ from katcha.orchestration.activities import (
     mark_source_failed,
     prepare_authorized_passthrough_activity,
 )
+from katcha.orchestration.ingest_recovery import check_ingesting_source
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
     apply_packaging_thumbnail_activity,
@@ -88,7 +89,20 @@ async def _resume_persisted_ingest_and_publication_work(
 
     resumed = 0
     present = 0
+    # Cap outstanding Temporal visibility checks during process restart. A
+    # serial timeout per stale row would otherwise delay worker readiness by
+    # minutes/hours; no INGESTING source is started in either case.
+    in_progress = [row for row in sources if row.status == "ingesting"]
+    for offset in range(0, len(in_progress), 8):
+        inspected = await asyncio.gather(*(
+            check_ingesting_source(client, row)
+            for row in in_progress[offset : offset + 8]
+        ))
+        present += sum(inspected)
+
     for row in sources:
+        if row.status == "ingesting":
+            continue
         try:
             await client.start_workflow(
                 ClipIngestWorkflow.run,

@@ -121,6 +121,15 @@ def test_streamed_source_becomes_real_clip_and_preserves_provenance(
 ):
     store, attempts, media = transfer_stubs
     source_id = add_source("https://press.example.org/video.mp4")
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        source.source_metadata = {
+            **source.source_metadata,
+            "ingest_recovery": {
+                "code": "ingest_temporal_visibility_unavailable",
+                "workflow_status": "UNVERIFIED",
+            },
+        }
     result = activities._ingest_source(str(source_id))
     assert result["deduped"] is False
     assert attempts == ["https://press.example.org/video.mp4"]
@@ -140,6 +149,7 @@ def test_streamed_source_becomes_real_clip_and_preserves_provenance(
         assert source.source_metadata["rights_lane"] == "yellow"
         assert source.source_metadata["channel_profile_id"] == "channel-1"
         assert source.source_metadata["acquisition_transport"] == "pinned_https_r2_multipart"
+        assert "ingest_recovery" not in source.source_metadata
     assert not any(key.startswith("staging/") for key in store.objects)
 
     # The same source's workflow retry must return the existing clip, no new bytes.

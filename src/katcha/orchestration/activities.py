@@ -25,6 +25,7 @@ from katcha.integrations.object_streaming import (
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.orchestration.failure_details import MediaPreparationError, failure_details
+from katcha.orchestration.ingest_recovery import RECOVERY_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,8 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
             }
             source.error = None
             source.source_metadata = {
-                k: v for k, v in source.source_metadata.items() if k != "ingestion_diagnostic"
+                k: v for k, v in source.source_metadata.items()
+                if k not in {"ingestion_diagnostic", RECOVERY_KEY}
             }
 
             session.add(
@@ -270,6 +272,7 @@ def _ingest_direct_source(source_uuid: uuid.UUID, canonical: str) -> dict[str, s
                 "direct_media_content_type": transferred.content_type,
             }
             source.source_metadata.pop("ingestion_diagnostic", None)
+            source.source_metadata.pop(RECOVERY_KEY, None)
             session.add(
                 DomainEvent(
                     aggregate_type="source",
