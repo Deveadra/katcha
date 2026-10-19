@@ -56,7 +56,7 @@ def _client(*, workflow_running=True, missing=None, failing=None):
 
 
 @pytest.mark.asyncio
-async def test_readiness_requires_active_schedule_and_both_worker_queues(monkeypatch):
+async def test_readiness_requires_schedule_and_all_four_worker_queues(monkeypatch):
     client, calls = _client()
     monkeypatch.setattr(
         readiness, "get_temporal_client", AsyncMock(return_value=client)
@@ -72,8 +72,10 @@ async def test_readiness_requires_active_schedule_and_both_worker_queues(monkeyp
     assert ready["status"] == "queues_recently_polled"
     assert ready["runtime_verified"] is True
     assert ready["editorial_queue_ready"] is True
-    assert len(calls) == 4
-    assert len(set(calls)) == 4
+    assert ready["discovery_queue_ready"] is True
+    assert ready["trend_queue_ready"] is True
+    assert len(calls) == 8
+    assert len(set(calls)) == 8
     assert ready["checked_at"].tzinfo is not None
 
 
@@ -115,6 +117,72 @@ async def test_missing_intelligence_pollers_blocks_schedule_runtime_verification
     result = await readiness.inspect_trend_schedule_runtime("scheduled-g1")
     assert result["status"] == "intelligence_worker_not_observed"
     assert result["runtime_verified"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("queue", "expected"),
+    [
+        ("discovery", "discovery_worker_not_observed"),
+        ("trend", "trend_worker_not_observed"),
+    ],
+)
+async def test_missing_upstream_pollers_never_report_ready(
+    monkeypatch, queue, expected,
+):
+    name = (
+        readiness.DISCOVERY_TASK_QUEUE
+        if queue == "discovery" else readiness.TREND_TASK_QUEUE
+    )
+    missing = {(name, int(readiness.TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY))}
+    client, calls = _client(missing=missing)
+    monkeypatch.setattr(readiness, "get_temporal_client", AsyncMock(return_value=client))
+    monkeypatch.setattr(
+        readiness, "get_settings",
+        lambda: SimpleNamespace(
+            temporal_namespace="default",
+            temporal_production_task_queue="katcha-production",
+        ),
+    )
+    result = await readiness.inspect_trend_schedule_runtime("scheduled-g1")
+    assert result["status"] == expected
+    assert result["schedule_running"] is True
+    assert result["runtime_verified"] is False
+    assert result[f"{queue}_queue_ready"] is False
+    assert result["editorial_queue_ready"] is True
+    assert len(set(calls)) == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("queue", "expected"),
+    [
+        ("discovery", "discovery_queue_unavailable"),
+        ("trend", "trend_queue_unavailable"),
+    ],
+)
+async def test_upstream_queue_rpc_failure_is_not_reported_as_ready(
+    monkeypatch, queue, expected,
+):
+    name = (
+        readiness.DISCOVERY_TASK_QUEUE
+        if queue == "discovery" else readiness.TREND_TASK_QUEUE
+    )
+    failing = {(name, int(readiness.TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW))}
+    client, _ = _client(failing=failing)
+    monkeypatch.setattr(readiness, "get_temporal_client", AsyncMock(return_value=client))
+    monkeypatch.setattr(
+        readiness, "get_settings",
+        lambda: SimpleNamespace(
+            temporal_namespace="default",
+            temporal_production_task_queue="katcha-production",
+        ),
+    )
+    result = await readiness.inspect_trend_schedule_runtime("scheduled-g1")
+    assert result["status"] == expected
+    assert result["runtime_verified"] is False
+    assert result[f"{queue}_queue_ready"] is False
+    assert "injected" not in str(result)
 
 
 @pytest.mark.asyncio
