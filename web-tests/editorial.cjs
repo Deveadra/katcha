@@ -41,6 +41,7 @@ const regionSuggestion = {kind: 'circle', region: {x: .1, y: .2, width: .3, heig
 frameReceipt.shots[0].regions = {regions: [regionSuggestion], limitations: ['Exact frozen sample only']};
 let directionRun = null, failFrameImage = true;
 let storyboardWorkspace = null;
+let holdStoryboardLoad = false, storyboardLoadReady = null, releaseStoryboardLoad = null;
 const storyboardHistory = [];
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
@@ -352,7 +353,17 @@ const draft = {
                     return send(storyboardWorkspace, 201);
                 }
                 if (url.pathname.endsWith('/storyboard')) {
-                    if (request.method() === 'GET') return send(storyboardWorkspace);
+                    if (request.method() === 'GET') {
+                        if (holdStoryboardLoad) {
+                            holdStoryboardLoad = false;
+                            const snapshot = structuredClone(storyboardWorkspace);
+                            return new Promise(resolve => {
+                                releaseStoryboardLoad = () => resolve(send(snapshot));
+                                storyboardLoadReady();
+                            });
+                        }
+                        return send(storyboardWorkspace);
+                    }
                     const currentVersion = storyboardWorkspace?.version || 0;
                     if (body.expected_version !== currentVersion) {
                         return send({detail: 'Storyboard changed; reload the current workspace before saving'}, 409);
@@ -872,7 +883,10 @@ const draft = {
         assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1\/1 visuals assigned/);
         assert.equal(await page.locator("[data-timeline-status]").innerText(), "Footage");
         assert.equal(await page.locator("[data-timeline-beat]").evaluate(node => node.classList.contains("is-ready")), true);
+        const heldStoryboardLoad = new Promise(resolve => { storyboardLoadReady = resolve; });
+        holdStoryboardLoad = true;
         await page.locator('#editorial-refresh').click();
+        await heldStoryboardLoad;
         assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
         assert.equal(await page.locator("[data-timeline-beat]").getAttribute("aria-selected"), "true");
         assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
@@ -890,6 +904,11 @@ const draft = {
         const previousVersion = storyboardWorkspace.version;
         await page.locator('[data-footage="start"]').fill('2.0');
         await page.getByText(new RegExp(`Saved workspace · v${previousVersion + 1}`)).waitFor();
+        releaseStoryboardLoad();
+        await page.getByText('Your Storyboard edits were kept. Refresh again to load project progress.', {exact: true}).waitFor();
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '2.0');
+        assert.equal(storyboardWorkspace.workspace.beats[0].media[0].start_seconds, 2);
+        assert.match(await page.locator('#editorial-storyboard-sync-status').innerText(), new RegExp(`Saved workspace · v${previousVersion + 1}`));
         assert.equal(await page.locator('#editorial-storyboard-undo').isDisabled(), false);
         const undoResponse = page.waitForResponse(response =>
             response.request().method() === 'POST'
