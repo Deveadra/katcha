@@ -87,8 +87,8 @@ class PublicProxy:
     async def handle(self, reader, writer):
         upstream = None
         self.writers.add(writer)
-        task = asyncio.current_task()
-        self.tasks.add(task)
+        handler_task = asyncio.current_task()
+        self.tasks.add(handler_task)
         try:
             async with self.connections:
                 if self.closed:
@@ -122,7 +122,7 @@ class PublicProxy:
                 writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                 await writer.drain()
         finally:
-            self.tasks.discard(task)
+            self.tasks.discard(handler_task)
             for connection in (writer, upstream):
                 if connection:
                     self.writers.discard(connection)

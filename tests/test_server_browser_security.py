@@ -85,6 +85,7 @@ async def test_connect_pins_public_literal_and_closes_tunnel(monkeypatch):
     assert b"200 Connection Established" in writer.output
     assert writer.closed and upstream_writer.closed
     assert not proxy.writers
+    assert not proxy.tasks
 
 
 @pytest.mark.parametrize("token", ["", "short"])
