@@ -167,36 +167,45 @@ It validates the current running release, the **actual** PostgreSQL schema,
 and every running Temporal execution for pending activities/child tasks.
 It never changes data or cancels workflows.
 
-There are **two explicitly reviewed database states**:
+The reviewed migration boundary is **0063 → 0064 → 0065**. The executor checks
+actual PostgreSQL catalogs rather than trusting the Alembic revision alone:
 
-- **Already at `0064_application_ai_settings`**: the deployer checks that the
-  `application_ai_settings` table, column types/nullability, and primary key
-  match the approved 0064 schema. This state is required for **migration-free**
-  releases. The signed deployment input remains `migration_policy=refuse`.
-- **Still at `0063_authoritative_search_ledger`**: the deployer checks that
-  the 0064 table is absent. Only a release whose *actual accepted Git diff*
-  adds the exact reviewed 0064 migration is eligible for
-  `migration_policy=approve-additive-0064`. A migration-free release is
-  **blocked** at 0063 even if the read-only readiness rehearsal succeeds.
+- At `0063_authoritative_search_ledger`, both new tables must be absent.
+- At `0064_application_ai_settings`, the settings table must match the approved
+  columns and primary key, and the acquisition-jobs table must be absent.
+- At `0065_acquisition_jobs`, both tables must match the approved definitions,
+  including acquisition-job columns, keys, checks, foreign key and indexes.
+  This state is required for migration-free releases whose target head is 0065.
 
-Readiness returns `database_start_revision` and `database_schema_state`
-to show which case it observed; **neither case authorizes deployment**.
-Unknown revisions, wrong primary keys, extra/different columns, and mismatched
-migration policy must remain blocked. The executor rechecks the appropriate
-schema immediately before the stop/restart and verifies 0064 afterward.
+For a release that adds migration 0065, use the separately reviewed policy
+`approve-additive-through-0065`. It permits only the exact added immutable
+migration files in the accepted comparison: 0065 alone, or the known 0064/0065
+chain when the previous checkout predates both. A database already at verified
+0064 advances through 0065 without reapplying 0064. Unknown revisions, altered
+migration blobs, extra migration changes and schema mismatches remain blocked.
+The historical `approve-additive-0064` policy never authorizes migration 0065.
 
-- `REVIEW_REQUIRED`: read-only checks passed, **not** permission to deploy.
-- `BLOCKED`: stop; collect sanitized output for review. A long-running
-  workflow may be idle; a *pending activity* means an interruption is unsafe.
-- The executor inventories workflows again after its fresh R2 backup/restore
-  test and refuses the stop if the set of execution IDs changed.
+The reviewed blobs are `3d411641d625c772856142d6a8ce43447be7f2b5` for 0064 and
+`1a7debea0c609bd3a6a5f19c3b310b64077e9013` for 0065. Migration 0065 only creates
+`acquisition_jobs` and its indexes and constraints; it does not modify existing
+rows or activate remote acquisition. Its execution setting remains off by default.
 
-**Migration 0064 is forward-only for automatic recovery.** It creates
-`application_ai_settings` with an approved exact blob and must be accompanied
-by independently signed `approve-additive-0064` approval. It is refused by
-default. If it runs, old Docker images do not recognize Alembic revision 0064,
-so automatic rollback to the old release is **prohibited**. A failure requires
-supervised forward repair. Other migrations are rejected.
+Readiness reports the observed starting revision and schema state. It is read-only
+and does not authorize deployment. The executor rechecks the same database boundary
+immediately before maintenance and verifies the exact target schema afterward.
+
+- `REVIEW_REQUIRED`: read-only checks passed; a deployment still needs its exact
+  release, migration and workflow policies.
+- `BLOCKED`: stop and collect sanitized diagnostics. A long-running workflow may
+  be idle; a pending activity can make interruption unsafe.
+- The executor inventories workflows again after fresh backup/restore verification
+  and refuses maintenance if the execution set changed.
+
+**Approved additive migration releases are forward-only for automatic recovery.**
+Old images do not recognize the new revision. After a migration-bearing release
+starts changing production, the executor must preserve the upgraded database and
+report `RECOVERY_REQUIRED` on failure, rather than downgrade or automatically
+restart incompatible old code. Use a supervised forward repair.
 
 ## 6. Deployment activation (ONLY after separate review)
 
@@ -224,10 +233,11 @@ select branch `main`, exact current 40-character SHA, and inputs:
 
 - `running_workflows=refuse` by default; `approved-resume` only with a
   reviewed quiescence/idempotence decision.
-- `migration_policy=refuse` for an already-0064 database and a migration-free
-  comparison. Use `approve-additive-0064` **only** when starting at 0063
-  and the accepted comparison adds the exact reviewed 0064 file. Both policies
-  are signed. Do not request an already-applied migration.
+- `migration_policy=refuse` for a migration-free comparison whose database
+  already matches the exact target schema. Use `approve-additive-through-0065`
+  only for the reviewed added 0065 file or 0064/0065 chain. The executor verifies
+  the actual starting schema, including already-applied 0064, before proceeding.
+  The migration policy is part of the signed request; it cannot be changed later.
 - `confirmation=DEPLOY KATCHA PRODUCTION`.
 
 The protected job publishes a 20-minute signed request, **not a completed

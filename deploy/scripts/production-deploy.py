@@ -41,6 +41,32 @@ MIGRATION_FILE = "migrations/versions/0064_application_ai_settings.py"
 MIGRATION_BLOB = "3d411641d625c772856142d6a8ce43447be7f2b5"
 BEFORE_REVISION = "0063_authoritative_search_ledger"
 AFTER_REVISION = "0064_application_ai_settings"
+MIGRATION_0065_FILE = "migrations/versions/0065_acquisition_jobs.py"
+MIGRATION_0065_BLOB = "1a7debea0c609bd3a6a5f19c3b310b64077e9013"
+LATEST_REVISION = "0065_acquisition_jobs"
+MIGRATION_POLICIES = {"refuse", "approve-additive-0064", "approve-additive-through-0065"}
+REVIEWED_MIGRATIONS = {
+    MIGRATION_FILE: MIGRATION_BLOB,
+    MIGRATION_0065_FILE: MIGRATION_0065_BLOB,
+}
+ACQUISITION_CONSTRAINTS = [
+    "acquisition_jobs_pkey:p:PRIMARY KEY (id)",
+    "ck_acquisition_job_generation:c:CHECK (generation >= 0)",
+    "ck_acquisition_job_lease:c:CHECK (status::text <> 'leased'::text OR "
+    'worker_principal IS NOT NULL AND claim_id IS NOT NULL AND lease_expires_at '
+    'IS NOT NULL AND generation > 0)',
+    "ck_acquisition_job_max_bytes:c:CHECK (max_bytes > 0)",
+    "ck_acquisition_job_progress:c:CHECK (bytes_received >= 0 AND bytes_received <= max_bytes)",
+    "ck_acquisition_job_sequence:c:CHECK (heartbeat_sequence >= 0)",
+    'ck_acquisition_job_status:c:CHECK (status::text = ANY '
+    "(ARRAY['queued'::character varying, 'leased'::character varying, "
+    "'awaiting_validation'::character varying, 'failed'::character varying, "
+    "'cancelled'::character varying, 'recovery_required'::character "
+    'varying]::text[]))',
+    'fk_acquisition_job_receipt_channel:f:FOREIGN KEY (receipt_id, '
+    'channel_profile_id) REFERENCES acquisition_receipts(id, channel_profile_id)',
+    "uq_acquisition_job_receipt:u:UNIQUE (receipt_id)",
+]
 IMAGE_FOR_SERVICE = {
     "browser": "katcha-browser",
     "api": "katcha-control", "intelligence-worker": "katcha-control",
@@ -145,24 +171,56 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
         name = change.get("filename", "")
         if not isinstance(name, str) or not name or ".." in name.split("/"):
             raise Blocked("candidate changed-file list invalid")
+        previous = change.get("previous_filename", "")
+        if previous and (not isinstance(previous, str)
+                         or previous.startswith(("alembic/", "migrations/"))
+                         or previous == "alembic.ini"):
+            raise Blocked("migration rename is outside reviewed additive boundary")
         if name == "deploy/scripts/postgres-disaster-restore.sh":
             raise Blocked("disaster-restore code changed; separate review required")
         if name.startswith(("alembic/", "migrations/")) or name == "alembic.ini":
             if change.get("status") != "added" and name == MIGRATION_FILE:
                 raise Blocked("approved migration must be an added immutable file")
             migration_paths.append(name)
-    if migration_policy not in {"refuse", "approve-additive-0064"}:
+    if migration_policy not in MIGRATION_POLICIES:
         raise Blocked("unrecognized migration approval")
     if migration_paths:
-        if migration_policy != "approve-additive-0064" or migration_paths != [MIGRATION_FILE]:
+        allowed = ({MIGRATION_FILE} if migration_policy == "approve-additive-0064"
+                   else set(REVIEWED_MIGRATIONS)
+                   if migration_policy == "approve-additive-through-0065" else set())
+        if (not set(migration_paths) <= allowed
+            or len(set(migration_paths)) != len(migration_paths)
+            or (migration_policy == "approve-additive-through-0065"
+                and MIGRATION_0065_FILE not in migration_paths)):
             raise Blocked("unknown migration or migration approval missing")
-        proof = github("/contents/" + MIGRATION_FILE + "?ref=" + target)
-        if (not isinstance(proof, dict) or proof.get("sha") != MIGRATION_BLOB
-            or proof.get("path") != MIGRATION_FILE
-            or proof.get("type") != "file"):
-            raise Blocked("approved additive migration source differs from reviewed blob")
+        for change in files:
+            if change.get("filename") in migration_paths and change.get("status") != "added":
+                raise Blocked("approved migration must be an added immutable file")
     elif migration_policy != "refuse":
         raise Blocked("migration approval supplied for release without reviewed migration")
+    # Even a migration-free release must retain the reviewed head. Inspect the
+    # target inventory rather than accepting the revision of the running image.
+    reviewed = ({MIGRATION_FILE: MIGRATION_BLOB}
+                if migration_policy == "approve-additive-0064" else REVIEWED_MIGRATIONS)
+    max_revision = 64 if migration_policy == "approve-additive-0064" else 65
+    inventory = github("/contents/migrations/versions?ref=" + target)
+    if (not isinstance(inventory, list) or not inventory or len(inventory) >= 1000
+        or any(not isinstance(item, dict) or not isinstance(item.get("name"), str)
+               for item in inventory)):
+        raise Blocked("target migration inventory unavailable")
+    by_name = {item["name"]: item for item in inventory}
+    if (len(by_name) != len(inventory)
+        or any(name.endswith(".py") and name[:4].isdigit()
+               and int(name[:4]) > max_revision for name in by_name)
+        or any(by_name.get(Path(path).name, {}).get("type") != "file"
+               or by_name[Path(path).name].get("sha") != blob
+               for path, blob in reviewed.items())):
+        raise Blocked("target migration head is outside reviewed boundary")
+    for path, blob in reviewed.items():
+        proof = github("/contents/" + path + "?ref=" + target)
+        if (not isinstance(proof, dict) or proof.get("sha") != blob
+            or proof.get("path") != path or proof.get("type") != "file"):
+            raise Blocked("approved additive migration source differs from reviewed blob")
     if github("/branches/main").get("commit", {}).get("sha") != target:
         raise Blocked("main advanced during deployment review")
     return bool(migration_paths)
@@ -357,6 +415,38 @@ def database_query(sql: str) -> str:
             "AND tc.constraint_type = 'PRIMARY KEY'"
         ),
     }
+    for prefix, table in (("settings", "application_ai_settings"),
+                          ("acquisition", "acquisition_jobs")):
+        statements[prefix + "_table"] = (
+            "SELECT COALESCE(to_regclass('public." + table + "')::text, '')"
+        )
+        statements[prefix + "_columns"] = (
+            "SELECT column_name || ':' || data_type || ':' || is_nullable || ':' "
+            "|| COALESCE(character_maximum_length::text, '') "
+            "FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name = '" + table + "' ORDER BY ordinal_position"
+        )
+        statements[prefix + "_constraints"] = (
+            "SELECT conname || ':' || contype::text || ':' || pg_get_constraintdef(oid, true) "
+            "|| CASE WHEN convalidated THEN '' ELSE ':NOT_VALIDATED' END "
+            "FROM pg_constraint WHERE conrelid = to_regclass('public." + table + "') "
+            "ORDER BY conname"
+        )
+        statements[prefix + "_indexes"] = (
+            "SELECT p.indexname || ':' || p.indexdef "
+            "|| CASE WHEN i.indisvalid AND i.indisready AND i.indislive "
+            "THEN '' ELSE ':INVALID' END FROM pg_indexes p "
+            "JOIN pg_namespace n ON n.nspname = p.schemaname "
+            "JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = p.indexname "
+            "JOIN pg_index i ON i.indexrelid = c.oid "
+            "WHERE p.schemaname = 'public' AND p.tablename = '" + table + "' ORDER BY p.indexname"
+        )
+        statements[prefix + "_defaults"] = (
+            "SELECT column_name || ':' || column_default "
+            "FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name = '" + table + "' AND column_default IS NOT NULL "
+            "ORDER BY column_name"
+        )
     if sql not in statements:
         raise Blocked("unapproved database observation")
     query = statements[sql].replace("'", "'\\''")
@@ -379,24 +469,93 @@ def database_migration_preflight() -> None:
 def database_migration_postflight() -> None:
     if database_query("revision") != AFTER_REVISION:
         raise Blocked("database was not upgraded to the reviewed target revision")
-    if database_query("table") != "application_ai_settings":
-        raise Blocked("approved AI settings table missing after migration")
-    if database_query("columns").splitlines() != [
-        "key:character varying:NO:64", "value:text:NO:",
-    ] or database_query("primary") != "key":
+    verify_ai_settings_schema()
+    if database_query("acquisition_table"):
+        raise Blocked("acquisition jobs table exists beyond reviewed 0064 migration")
+
+
+def verify_ai_settings_schema() -> None:
+    if (database_query("table") != "application_ai_settings"
+        or database_query("columns").splitlines() != [
+            "key:character varying:NO:64", "value:text:NO:"]
+        or database_query("primary") != "key"
+        or database_query("settings_constraints") !=
+            "application_ai_settings_pkey:p:PRIMARY KEY (key)"
+        or database_query("settings_indexes") !=
+            "application_ai_settings_pkey:CREATE UNIQUE INDEX application_ai_settings_pkey "
+            "ON public.application_ai_settings USING btree (key)"
+        or database_query("settings_defaults")):
         raise Blocked("approved AI settings table schema differs from reviewed migration")
 
 
-def database_release_preflight(migration: bool) -> None:
-    """Validate the actual database state for the exact reviewed Git diff.
+def verify_acquisition_jobs_schema() -> None:
+    if database_query("acquisition_table") != "acquisition_jobs":
+        raise Blocked("approved acquisition jobs table missing")
+    if database_query("acquisition_columns").splitlines() != [
+        "id:uuid:NO:", "receipt_id:uuid:NO:", "channel_profile_id:uuid:NO:",
+        "status:character varying:NO:32", "generation:integer:NO:",
+        "max_bytes:bigint:NO:", "bytes_received:bigint:NO:",
+        "heartbeat_sequence:integer:NO:", "worker_principal:character varying:YES:64",
+        "claim_id:uuid:YES:", "lease_expires_at:timestamp with time zone:YES:",
+        "last_heartbeat_at:timestamp with time zone:YES:", "phase:character varying:NO:32",
+        "pending_result:json:NO:", "failure_code:character varying:YES:64",
+        "created_at:timestamp with time zone:NO:", "updated_at:timestamp with time zone:NO:",
+    ]:
+        raise Blocked("approved acquisition jobs column schema differs from reviewed migration")
+    if database_query("acquisition_constraints").splitlines() != ACQUISITION_CONSTRAINTS:
+        raise Blocked("approved acquisition jobs constraints differ from reviewed migration")
+    if database_query("acquisition_indexes").splitlines() != [
+        'acquisition_jobs_pkey:CREATE UNIQUE INDEX acquisition_jobs_pkey ON '
+        'public.acquisition_jobs USING btree (id)',
+        'ix_acquisition_jobs_channel_profile_id:CREATE INDEX '
+        'ix_acquisition_jobs_channel_profile_id ON public.acquisition_jobs USING '
+        'btree (channel_profile_id)',
+        'ix_acquisition_jobs_status:CREATE INDEX ix_acquisition_jobs_status ON '
+        'public.acquisition_jobs USING btree (status)',
+        'uq_acquisition_job_receipt:CREATE UNIQUE INDEX uq_acquisition_job_receipt '
+        'ON public.acquisition_jobs USING btree (receipt_id)',
+    ] or database_query("acquisition_defaults").splitlines() != [
+        "created_at:now()", "updated_at:now()",
+    ]:
+        raise Blocked("approved acquisition jobs indexes/defaults differ from reviewed migration")
 
-    A migration-free release must already be at 0064 with its exact schema.
-    Only an independently approved 0064-addition may start at 0063.
-    """
-    if migration:
+
+def database_release_preflight(migration: bool, migration_policy: str = "refuse") -> None:
+    """Check the actual database, including already-applied reviewed additions."""
+    if migration_policy not in MIGRATION_POLICIES:
+        raise Blocked("unrecognized migration approval")
+    if not migration and migration_policy != "refuse":
+        raise Blocked("migration approval supplied without migration")
+    if migration_policy == "approve-additive-0064":
         database_migration_preflight()
+        if database_query("acquisition_table"):
+            raise Blocked("acquisition jobs table exists before reviewed migration")
+        return
+    revision = database_query("revision")
+    if revision == LATEST_REVISION:
+        verify_ai_settings_schema()
+        verify_acquisition_jobs_schema()
+        return
+    if not migration or migration_policy != "approve-additive-through-0065":
+        raise Blocked("migration-free release requires reviewed 0065 schema")
+    if revision == BEFORE_REVISION:
+        database_migration_preflight()
+    elif revision == AFTER_REVISION:
+        verify_ai_settings_schema()
     else:
+        raise Blocked("database revision is outside reviewed 0063/0064/0065 boundary")
+    if database_query("acquisition_table"):
+        raise Blocked("acquisition jobs table already exists before migration")
+
+
+def database_release_postflight(migration_policy: str = "refuse") -> None:
+    if migration_policy == "approve-additive-0064":
         database_migration_postflight()
+        return
+    if database_query("revision") != LATEST_REVISION:
+        raise Blocked("database was not upgraded to reviewed 0065 target revision")
+    verify_ai_settings_schema()
+    verify_acquisition_jobs_schema()
 
 
 def stage_images(target: str) -> dict[str, str]:
@@ -570,7 +729,7 @@ def acquire_supervisor_lease() -> int:
 
 def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[str, Any]:
     if (not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}
-        or migration_policy not in {"refuse", "approve-additive-0064"}):
+        or migration_policy not in MIGRATION_POLICIES):
         raise Blocked("invalid deployment inputs")
     authorized()
     current, _ = pinned(ENV)
@@ -590,7 +749,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     runtime(current)
     authority()
     migration = eligible(current, target, migration_policy)
-    database_release_preflight(migration)
+    database_release_preflight(migration, migration_policy)
     before = temporal_inventory(policy)
     staged = stage_images(target)
     backup_and_restore()
@@ -601,15 +760,16 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         raise Blocked("running Temporal executions changed during backup/preparation")
     if eligible(current, target, migration_policy) != migration:
         raise Blocked("migration classification changed during deployment review")
-    database_release_preflight(migration)
+    database_release_preflight(migration, migration_policy)
     run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
     if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
         raise Blocked("fetched main differs from approved candidate")
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", current, target)
-    if migration and run(
-        "git", "-C", str(REPO), "rev-parse", target + ":" + MIGRATION_FILE,
-    ) != MIGRATION_BLOB:
-        raise Blocked("fetched migration blob differs from approved implementation")
+    for path, blob in (REVIEWED_MIGRATIONS.items()
+                       if migration_policy != "approve-additive-0064"
+                       else {MIGRATION_FILE: MIGRATION_BLOB}.items()):
+        if run("git", "-C", str(REPO), "rev-parse", target + ":" + path) != blob:
+            raise Blocked("fetched migration blob differs from approved implementation")
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
         raise Blocked("deployment audit directory ownership/permissions unsafe")
@@ -635,16 +795,16 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         # The successor must obtain the same private lease itself.
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
-        # Both approved 0063→0064 migrations and migration-free releases
-        # must finish with the independently verified 0064 schema.
-        database_migration_postflight()
+        database_release_postflight(migration_policy)
         resumed = workflows("approved-resume")
         recovered = verify_temporal_recovery(before)
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
                    "predeploy_running_workflows": len(before),
                    "postdeploy_running_workflows": resumed,
                    "predeploy_workflow_recovery": recovered,
-                   "migration_revision": AFTER_REVISION if migration else "unchanged",
+                   "migration_revision": (
+                       AFTER_REVISION if migration_policy == "approve-additive-0064"
+                       else LATEST_REVISION) if migration else "unchanged",
                    "migration_rollback": "FORWARD_ONLY" if migration else "not_applicable",
                    "public_browser_acceptance": "REQUIRED"}
     except Exception as exc:
@@ -654,7 +814,8 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         if migration and started_change:
             outcome = {
                 "status": "RECOVERY_REQUIRED", "sha": target,
-                "previous_sha": current, "migration": AFTER_REVISION,
+                "previous_sha": current, "migration": (AFTER_REVISION
+                    if migration_policy == "approve-additive-0064" else LATEST_REVISION),
                 "reason": "forward-only migration release needs supervised repair",
             }
             (record_dir / "result.json").write_text(json.dumps(outcome) + "\n")
@@ -693,16 +854,23 @@ def readiness() -> dict[str, Any]:
     revision = database_query("revision")
     if revision == BEFORE_REVISION:
         database_migration_preflight()
-        schema_state = "requires_approved_additive_0064_if_release_adds_migration"
+        if database_query("acquisition_table"):
+            raise Blocked("acquisition jobs table already exists before migration")
+        schema_state = "requires_approved_additive_through_0065"
     elif revision == AFTER_REVISION:
-        database_migration_postflight()
-        schema_state = "0064_already_applied_and_verified"
+        verify_ai_settings_schema()
+        if database_query("acquisition_table"):
+            raise Blocked("acquisition jobs table already exists before migration")
+        schema_state = "0064_verified_requires_approved_additive_through_0065"
+    elif revision == LATEST_REVISION:
+        database_release_postflight()
+        schema_state = "0065_already_applied_and_verified"
     else:
-        raise Blocked("database revision is outside the reviewed 0063/0064 boundary")
+        raise Blocked("database revision is outside reviewed 0063/0064/0065 boundary")
     open_executions = temporal_inventory("approved-resume")
     return {
         "status": "REVIEW_REQUIRED",
-        "migration": AFTER_REVISION,
+        "migration": LATEST_REVISION,
         "database_start_revision": revision,
         "database_schema_state": schema_state,
         "temporal_running_count": len(open_executions),
