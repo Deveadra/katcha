@@ -20,6 +20,7 @@ from katcha.trend_activation_models import TrendActivationPolicyVersion
 # policy silently becomes permission to spend. One operator-controlled policy
 # switch, a recent budget snapshot, and live provider readiness are required.
 _MAX_PER_SCAN = 2
+_MAX_CANDIDATES_INSPECTED = 100
 _MIN_HEADROOM_USD = Decimal("2.00")
 _ECONOMICS_MAX_AGE = timedelta(hours=24)
 
@@ -120,20 +121,28 @@ async def dispatch_planned_trend_editorial(
                     ShortEpisode.status == "planned",
                     ShortEpisode.stage == "planned",
                 )
-                .order_by(ShortEpisode.created_at.asc(), ShortEpisode.id.asc())
-                .limit(_safe_limit(policy) * 10)
+                .order_by(ShortEpisode.created_at.desc(), ShortEpisode.id.desc())
+                .limit(_MAX_CANDIDATES_INSPECTED)
             )
         )
+        # Newsworthy episodes are time-sensitive. Repeatedly inspecting only
+        # the oldest plans lets stale/rights-blocked rows starve fresh plans.
+        # Inspect a bounded recent window, loading items in one query to keep
+        # the larger window inexpensive and deterministic.
+        items_by_episode: dict[uuid.UUID, list[ShortEpisodeItem]] = {}
+        if candidates:
+            for item in session.scalars(
+                select(ShortEpisodeItem)
+                .where(ShortEpisodeItem.short_episode_id.in_(
+                    [episode.id for episode in candidates]
+                ))
+                .order_by(ShortEpisodeItem.position)
+            ):
+                items_by_episode.setdefault(item.short_episode_id, []).append(item)
         selected = []
         rejected = []
         for episode in candidates:
-            items = list(
-                session.scalars(
-                    select(ShortEpisodeItem).where(
-                        ShortEpisodeItem.short_episode_id == episode.id
-                    )
-                )
-            )
+            items = items_by_episode.get(episode.id, [])
             if not items or any(
                 not (item.acquisition_snapshot or {}).get("eligible")
                 for item in items
