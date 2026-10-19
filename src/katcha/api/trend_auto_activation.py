@@ -130,9 +130,15 @@ class TrendActivationRuntimeResponse(BaseModel):
     schedule_running: bool = False
     intelligence_workflow_pollers_recent: bool = False
     intelligence_activity_pollers_recent: bool = False
+    discovery_workflow_pollers_recent: bool = False
+    discovery_activity_pollers_recent: bool = False
+    trend_workflow_pollers_recent: bool = False
+    trend_activity_pollers_recent: bool = False
     production_workflow_pollers_recent: bool = False
     production_activity_pollers_recent: bool = False
     runtime_verified: bool = False
+    discovery_queue_ready: bool = False
+    trend_queue_ready: bool = False
     editorial_queue_ready: bool = False
     reason: str | None = None
 
