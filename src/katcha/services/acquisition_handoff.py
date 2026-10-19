@@ -340,7 +340,9 @@ def probe_object(store, key, size, media_type):
         width = int(stream.width) if media_type == "video" else None
         height = int(stream.height) if media_type == "video" else None
         if media_type == "video" and not (
-            0 < width <= MAX_DIMENSION and 0 < height <= MAX_DIMENSION
+            0 < width <= MAX_DIMENSION
+            and 0 < height <= MAX_DIMENSION
+            and width * height <= 16_777_216
         ):
             raise ValueError("Media dimensions are outside supported limits")
         stream.codec_context.thread_count = 1

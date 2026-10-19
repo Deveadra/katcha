@@ -8,7 +8,7 @@ import threading
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from temporalio import activity
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -120,17 +120,26 @@ async def supervise_acquisitions(client, settings):
 
     while True:
         try:
-            with session_scope() as session:
-                identities = list(
-                    session.execute(
-                        select(AcquisitionJob.id, AcquisitionJob.channel_profile_id)
-                        .where(
-                            AcquisitionJob.status.in_(["queued", "leased", "awaiting_validation"])
+
+            def pending():
+                with session_scope() as session:
+                    return list(
+                        session.execute(
+                            select(AcquisitionJob.id, AcquisitionJob.channel_profile_id)
+                            .where(
+                                AcquisitionJob.status.in_(
+                                    ["queued", "leased", "awaiting_validation"]
+                                )
+                            )
+                            .order_by(
+                                case((AcquisitionJob.status == "awaiting_validation", 0), else_=1),
+                                AcquisitionJob.created_at,
+                            )
+                            .limit(1000)
                         )
-                        .order_by(AcquisitionJob.created_at)
-                        .limit(1000)
                     )
-                )
+
+            identities = await asyncio.to_thread(pending)
             for job_id, channel in identities:
                 with contextlib.suppress(WorkflowAlreadyStartedError):
                     await client.start_workflow(
