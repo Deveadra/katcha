@@ -984,6 +984,34 @@ def test_reconcile_runtime_failure_is_recoverable(tmp_path):
     assert any(event.get("recovery") for event in app.events)
 
 
+def test_browser_image_is_managed_before_full_startup(tmp_path):
+    app = instance(tmp_path)
+    assert "browser" in runtime.BACKGROUND_BUILD_SERVICES
+    assert "Dockerfile.browser" in runtime.BACKGROUND_DOCKERFILES
+    assert app.image_build_services()["katcha-browser:local"] == "browser"
+
+    dockerfile = tmp_path / "Dockerfile.browser"
+    dockerfile.write_text("FROM python:3.12-slim\\n")
+    old_fingerprint = app.build_fingerprint()
+    dockerfile.write_text("FROM python:3.12-alpine\\n")
+    assert app.build_fingerprint() != old_fingerprint
+
+    # A matching fingerprint alone must not hide a missing browser image.
+    (app.directory / "build-fingerprint").write_text(app.build_fingerprint())
+    with (
+        patch.object(app, "release_revision", return_value=None),
+        patch.object(
+            app, "run",
+            side_effect=[RuntimeError("No such image: katcha-browser:local"), ""],
+        ) as run,
+    ):
+        app.prepare_images()
+    commands = [call.args[0] for call in run.call_args_list]
+    assert "katcha-browser:local" in commands[0]
+    assert "build" in commands[1]
+    assert "browser" in commands[1]
+
+
 def test_unchanged_images_skip_build_and_source_changes_invalidate(tmp_path):
     app = instance(tmp_path)
     source = tmp_path / "src"
@@ -1463,11 +1491,14 @@ def test_health_check_cannot_overwrite_active_lifecycle_phase(tmp_path):
 
 
 
-def test_partial_prebuilt_images_build_only_missing_services(tmp_path):
+@pytest.mark.parametrize(
+    ("missing_image", "missing_service"),
+    [("katcha-renderer:local", "renderer"), ("katcha-browser:local", "browser")],
+)
+def test_partial_prebuilt_images_build_only_missing_services(tmp_path, missing_image, missing_service):
     app = instance(tmp_path)
     revision = "d" * 40
     images = app.built_images()
-    missing_image = "katcha-renderer:local"
     missing_remote = app.prebuilt_ref(missing_image, revision)
 
     def fake_run(args, **_kwargs):
@@ -1484,7 +1515,7 @@ def test_partial_prebuilt_images_build_only_missing_services(tmp_path):
     commands = [call.args[0] for call in run.call_args_list]
     build_commands = [command for command in commands if "build" in command]
     assert len(build_commands) == 1
-    assert build_commands[0][-1:] == ["renderer"]
+    assert build_commands[0][-1:] == [missing_service]
     for image in images:
         remote = app.prebuilt_ref(image, revision)
         if image == missing_image:
