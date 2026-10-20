@@ -165,8 +165,14 @@ const detail = {
             if (url.pathname.endsWith("/brands") && request.method()==="GET") return json([{id:"brand-live",channel_profile_id:"20000000-0000-0000-0000-000000000001",version:brandVersion,brand_key:"ranksnaxx",is_active:true,contract:brandContract(brandVersion,brandVersion>1),brand_metadata:{},created_at:"2026-09-28T00:00:00Z"}]);
             if (url.pathname.endsWith("/edit-blueprints") && request.method()==="GET") return json([{id:"bp-live",channel_profile_id:"20000000-0000-0000-0000-000000000001",blueprint_key:"persona_commentary",version:blueprintVersion,contract_version:"1.0.0",is_active:true,is_default:true,contract:blueprintContract,blueprint_metadata:{display_name:"RankSnaxx commentary",description:"Fixture"},created_at:"2026-09-28T00:00:00Z"}]);
             if (url.pathname.endsWith("/edit-blueprints") && request.method()==="POST") { blueprintVersion+=1; Object.assign(blueprintContract,body.contract); return json({id:"bp-new",blueprint_key:"persona_commentary",version:blueprintVersion,contract_version:"1.0.0",is_active:true,is_default:true,contract:body.contract,blueprint_metadata:{display_name:body.display_name,description:body.description},created_at:"2026-09-28T00:00:00Z"}); }
-            if (url.pathname.includes("/studio/clips/") && url.pathname.endsWith("/media")) return route.fulfill({status:200,contentType:"video/mp4",body:Buffer.from("fixture-source-video")});
-            if (url.pathname.includes("/studio/episodes/") && url.pathname.endsWith("/media")) return route.fulfill({status:200,contentType:"video/mp4",body:Buffer.from("fixture-render-video")});
+            if (url.pathname.match(/^\\/v1\\/clips\\/[^/]+\\/media-session$/) && request.method()==="POST") {
+                return json({media_url:url.pathname.replace(/-session$/, ""),expires_in_seconds:3600});
+            }
+            if (url.pathname.includes("/studio/episodes/") && url.pathname.endsWith("/media-session") && request.method()==="POST") {
+                return json({media_url:url.pathname.replace(/-session$/, "")+url.search,expires_in_seconds:3600});
+            }
+            if (url.pathname.match(/^\\/v1\\/clips\\/[^/]+\\/media$/)) return route.fulfill({status:206,contentType:"video/mp4",body:Buffer.from("fixture-source-video"),headers:{"Accept-Ranges":"bytes","Content-Range":"bytes 0-19/20"}});
+            if (url.pathname.includes("/studio/episodes/") && url.pathname.endsWith("/media")) return route.fulfill({status:206,contentType:"video/mp4",body:Buffer.from("fixture-render-video"),headers:{"Accept-Ranges":"bytes","Content-Range":"bytes 0-19/20"}});
             if (url.pathname.endsWith("/logo") && request.method()==="POST") return json({storage_key:"brands/one/logos/logo.png",content_type:"image/png",size_bytes:12},201);
             if (url.pathname.endsWith("/brands") && request.method()==="POST") return json({id:"brand-stage",channel_profile_id:"20000000-0000-0000-0000-000000000001",version:brandVersion+1,brand_key:"ranksnaxx",is_active:false,contract:body.contract,brand_metadata:{},created_at:"2026-09-28T00:00:00Z"},201);
             if (url.pathname.match(/\/brands\/\d+\/activate$/)) { brandVersion+=1; return json({}); }
@@ -194,13 +200,24 @@ const detail = {
         assert(
             requests.some(
                 (row) =>
-                    row.path === `/v1/studio/episodes/${episode.id}/media`
-                    && row.query.generation === "1",
+                    row.path === `/v1/studio/episodes/${episode.id}/media-session`
+                    && row.query.generation === "1" && row.method === "POST",
             ),
         );
         await page.locator("#render-version").selectOption("2");
 
         await page.locator(".clip-row").first().click();
+        await page.waitForFunction(() =>
+            document.getElementById("monitor-video").getAttribute("src")?.startsWith("/v1/clips/")
+        );
+        const nativeSource = await page.locator("#monitor-video").getAttribute("src");
+        assert.match(nativeSource, /^\\/v1\\/clips\\/[^/]+\\/media$/);
+        assert(requests.some((row) =>
+            row.path === nativeSource+"-session" && row.method === "POST"
+        ));
+        const initialUrl = await page.locator("#monitor-video").getAttribute("src");
+        await page.evaluate(() => showMonitor());
+        assert.equal(await page.locator("#monitor-video").getAttribute("src"), initialUrl);
         // Source review can jump beyond the selected six-second edit without
         // rewinding the original media or involuntarily pausing playback.
         const manualSeek = await page.evaluate(() => {
