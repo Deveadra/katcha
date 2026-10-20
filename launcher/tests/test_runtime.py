@@ -1530,7 +1530,9 @@ def test_health_check_cannot_overwrite_active_lifecycle_phase(tmp_path):
     ("missing_image", "missing_service"),
     [("katcha-renderer:local", "renderer"), ("katcha-browser:local", "browser")],
 )
-def test_partial_prebuilt_images_build_only_missing_services(tmp_path, missing_image, missing_service):
+def test_partial_prebuilt_images_build_only_missing_services(
+    tmp_path, missing_image, missing_service
+):
     app = instance(tmp_path)
     revision = "d" * 40
     images = app.built_images()
