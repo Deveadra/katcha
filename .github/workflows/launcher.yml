@@ -63,7 +63,8 @@ jobs:
           path: web-tests/test-results/launcher*.png
           if-no-files-found: ignore
   full-startup:
-    if: github.event_name != 'pull_request'
+    # Gate launcher PRs with the same actual Docker startup used on main.
+    # Otherwise a missing required image can pass unit tests and break main.
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
