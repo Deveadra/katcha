@@ -58,6 +58,7 @@ BACKGROUND_DOCKERFILES = (
     "Dockerfile.renderer",
 )
 REQUIRED_SERVICES = {
+    "browser",
     "postgres",
     "temporal",
     "minio",
