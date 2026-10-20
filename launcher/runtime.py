@@ -43,6 +43,7 @@ RETIRED_WORKER_SERVICES = (
 )
 BACKGROUND_BUILD_SERVICES = (
     "minio",
+    "browser",
     "worker",
     "analysis-worker",
     "renderer",
@@ -51,6 +52,7 @@ BACKGROUND_BUILD_SERVICES = (
 BACKGROUND_DOCKERFILES = (
     "Dockerfile",
     "Dockerfile.analysis",
+    "Dockerfile.browser",
     "Dockerfile.minio",
     "Dockerfile.production",
     "Dockerfile.renderer",
@@ -721,6 +723,7 @@ class Runtime:
             "KATCHA_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"
         )
         return {
+            "katcha-browser:local": "browser",
             "katcha-ingest:local": "worker",
             "katcha-analysis:local": "analysis-worker",
             "katcha-renderer:local": "renderer",
