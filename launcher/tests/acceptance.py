@@ -140,6 +140,7 @@ if __name__ == "__main__":
         print(f"Initial full readiness: {time.monotonic() - cold_started:.2f}s", flush=True)
         services = {row["Service"] for row in state["services"]}
         assert {
+            "browser",
             "postgres",
             "temporal",
             "minio",
