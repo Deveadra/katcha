@@ -984,6 +984,41 @@ def test_reconcile_runtime_failure_is_recoverable(tmp_path):
     assert any(event.get("recovery") for event in app.events)
 
 
+def test_compose_runtime_images_are_all_prepared_for_no_build_startup(tmp_path):
+    # This checks the effective Docker Compose model, not a hand-maintained
+    # list that can silently omit a newly introduced runtime service.
+    if runtime.shutil.which("docker") is None:
+        pytest.skip("Docker Compose is unavailable")
+
+    app = instance(tmp_path)
+    files = [
+        "docker-compose.yml",
+        "docker-compose.discovery.yml",
+        "docker-compose.trends.yml",
+        "docker-compose.intelligence.yml",
+        "docker-compose.app.yml",
+    ]
+    command = ["docker", "compose", "--env-file", ".env.example"]
+    for filename in files:
+        command.extend(["-f", filename])
+    command.extend(["config", "--format", "json"])
+    environment = app.environment()
+    environment["KATCHA_ENV_FILE"] = ".env.example"
+    configuration = json.loads(runtime.subprocess.check_output(
+        command, cwd=runtime.ROOT, env=environment, text=True,
+    ))
+    local_images = {
+        item["image"].split(":", 1)[0]
+        for item in configuration["services"].values()
+        if item.get("image", "").startswith("katcha-")
+    }
+    managed_images = {
+        item.split(":", 1)[0]
+        for item in [runtime.WORKSPACE_IMAGE, *app.built_images()]
+    }
+    assert local_images == managed_images
+
+
 def test_browser_image_is_managed_before_full_startup(tmp_path):
     app = instance(tmp_path)
     assert "browser" in runtime.BACKGROUND_BUILD_SERVICES
