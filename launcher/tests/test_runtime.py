@@ -915,6 +915,7 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
     from unittest.mock import MagicMock
 
     required = [
+        "browser",
         "postgres",
         "temporal",
         "minio",
