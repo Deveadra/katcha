@@ -141,7 +141,8 @@ def test_studio_native_session_uses_partial_bytes_without_blob_download(native_s
 def test_studio_ticket_cannot_follow_generation_or_replaced_render(native_studio):
     client, episode_id, _, _, current, _, reads = native_studio
     path = path_for(episode_id)
-    assert client.post(path + "-session", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+    issued = client.post(path + "-session", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert issued.status_code == 200
     wrong_generation = client.get(path + "?generation=1")
     assert wrong_generation.status_code == 403
     assert reads == []
