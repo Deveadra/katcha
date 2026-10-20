@@ -41,6 +41,7 @@ _REVIEW_MEDIA_PATH = re.compile(
 _EDITORIAL_REVIEW_MEDIA_PATH = re.compile(
     r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview$"
 )
+_STUDIO_REVIEW_MEDIA_PATH = re.compile(r"/v1/studio/episodes/[^/]+/media$")
 
 
 def _uses_review_media_ticket(request: Request) -> bool:
@@ -51,6 +52,7 @@ def _uses_review_media_ticket(request: Request) -> bool:
         and bool(
             _REVIEW_MEDIA_PATH.fullmatch(request.url.path)
             or _EDITORIAL_REVIEW_MEDIA_PATH.fullmatch(request.url.path)
+            or _STUDIO_REVIEW_MEDIA_PATH.fullmatch(request.url.path)
         )
         and bool(request.cookies.get(REVIEW_MEDIA_COOKIE))
     )
@@ -497,6 +499,11 @@ def _require_named_principal_route_access(request: Request) -> None:
         # Session is minted only to an authenticated, channel-authorized
         # editorial reader after current frozen-render clearance.
         require_control_scope(request, "ai:read")
+        return
+
+    if re.fullmatch(r"/v1/studio/episodes/[^/]+/media(?:-session)?", path):
+        # Both routes independently authorize this episode against its channel.
+        require_control_scope(request, "channels:read")
         return
 
     if method == "POST" and re.fullmatch(
