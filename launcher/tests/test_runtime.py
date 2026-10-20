@@ -1021,6 +1021,7 @@ def test_compose_runtime_images_are_all_prepared_for_no_build_startup(tmp_path):
 
 def test_browser_image_is_managed_before_full_startup(tmp_path):
     app = instance(tmp_path)
+    assert "browser" in runtime.REQUIRED_SERVICES
     assert "browser" in runtime.BACKGROUND_BUILD_SERVICES
     assert "Dockerfile.browser" in runtime.BACKGROUND_DOCKERFILES
     assert app.image_build_services()["katcha-browser:local"] == "browser"
