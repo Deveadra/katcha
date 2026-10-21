@@ -1162,3 +1162,23 @@ def test_release_plan_requires_exact_sha(monkeypatch):
     with pytest.raises(app.Blocked, match="exact 40-character"):
         app.plan_release("main")
     assert not calls
+
+
+def test_release_plan_current_pin_requires_current_main(monkeypatch):
+    app, _, calls = _plan_fixture(monkeypatch)
+    monkeypatch.setattr(app, "pinned", lambda _path: (NEW, False))
+    assert app.plan_release(NEW)["status"] == "CURRENT"
+    assert ("github", "/branches/main") in calls
+
+    monkeypatch.setattr(
+        app, "github", lambda _path: {"commit": {"sha": OLD}},
+    )
+    with pytest.raises(app.Blocked, match="not accepted current main"):
+        app.plan_release(NEW)
+
+
+def test_release_plan_rejects_invalid_merge_base(monkeypatch):
+    app, comparison, _ = _plan_fixture(monkeypatch)
+    comparison["merge_base_commit"] = None
+    with pytest.raises(app.Blocked, match="candidate ancestry"):
+        app.plan_release(NEW)
