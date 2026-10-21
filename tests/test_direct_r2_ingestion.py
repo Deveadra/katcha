@@ -203,6 +203,26 @@ def test_failed_remote_sha_never_registers_clip_and_cleans_stage(
     assert not store.objects
 
 
+def test_existing_unowned_raw_object_is_verified_before_clip_registration(
+    saved, transfer_stubs
+):
+    store, _, media = transfer_stubs
+    sha = hashlib.sha256(media).hexdigest()
+    key = store.raw_key(sha, "mp4")
+    store.objects[key] = b"forged bytes, incorrect SHA"
+    source_id = add_source("https://press.example.org/unsafe-existing.mp4")
+    with pytest.raises(Exception, match="stored|SHA-256|hash|mismatch"):
+        activities._ingest_source(str(source_id))
+    with db.session_scope() as session:
+        assert session.scalar(select(Clip)) is None
+        source = session.get(SourceItem, source_id)
+        assert source.clip_id is None
+        assert source.source_metadata["direct_promotion_proof"]["sha256"] == sha
+    # Never overwrite/delete an unowned raw/ object just because a retry failed.
+    assert store.objects[key] == b"forged bytes, incorrect SHA"
+    assert all(not path.startswith("staging/") for path in store.objects)
+
+
 def test_invalid_remote_video_never_registers_clip(
     saved, transfer_stubs, monkeypatch
 ):
