@@ -146,11 +146,28 @@ def authorized() -> None:
     run("mountpoint", "-q", "/srv/katcha")
 
 
-def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
-    # Deliberately re-check from the OCI host, independently of GitHub Actions.
+def accepted_main_ancestry(target: str) -> None:
+    """The exact candidate must still belong to accepted main history."""
     head = github("/branches/main")
-    if head.get("commit", {}).get("sha") != target:
-        raise Blocked("candidate is not current accepted main")
+    commit = head.get("commit") if isinstance(head, dict) else None
+    main_sha = commit.get("sha") if isinstance(commit, dict) else None
+    if not isinstance(main_sha, str) or not SHA.fullmatch(main_sha):
+        raise Blocked("accepted main identity unavailable")
+    if main_sha == target:
+        return
+    ancestry = github("/compare/" + target + "..." + main_sha)
+    merge_base = ancestry.get("merge_base_commit") if isinstance(ancestry, dict) else None
+    if (not isinstance(ancestry, dict)
+        or ancestry.get("status") != "ahead"
+        or ancestry.get("behind_by") != 0
+        or not isinstance(merge_base, dict)
+        or merge_base.get("sha") != target):
+        raise Blocked("candidate is no longer an accepted main ancestor")
+
+
+def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
+    # Deliberately re-check from OCI, independently of GitHub Actions.
+    accepted_main_ancestry(target)
     # Invoke the *same* fail-closed, seven-image, exact-head publication
     # verifier as the CI release gate. Installed from accepted main by
     # the root-only deployer installer, not from the mutable app checkout.
@@ -232,8 +249,7 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
         if (not isinstance(proof, dict) or proof.get("sha") != blob
             or proof.get("path") != path or proof.get("type") != "file"):
             raise Blocked("approved additive migration source differs from reviewed blob")
-    if github("/branches/main").get("commit", {}).get("sha") != target:
-        raise Blocked("main advanced during deployment review")
+    accepted_main_ancestry(target)
     return bool(migration_paths)
 
 
@@ -842,8 +858,9 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         raise Blocked("migration classification changed during deployment review")
     database_release_preflight(migration, migration_policy)
     run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
-    if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
-        raise Blocked("fetched main differs from approved candidate")
+    # The pinned candidate is allowed to be behind newer main merges. Both
+    # git checks enforce ancestry; neither switches to the mutable head.
+    run("git", "-C", str(REPO), "merge-base", "--is-ancestor", target, "origin/main")
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", current, target)
     for path, blob in (({**REVIEWED_MIGRATIONS, HANDOFF_FILE: HANDOFF_BLOB}.items()
                        if migration_policy == "approve-additive-through-0066"
