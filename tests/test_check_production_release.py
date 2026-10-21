@@ -54,10 +54,65 @@ def test_latest_image_non_success_blocks(change: str | None) -> None:
         release.verify_evidence(SHA, SHA, ci, images)
 
 
-def test_stale_main_blocks() -> None:
+def test_verified_release_survives_newer_main_merges(monkeypatch: pytest.MonkeyPatch) -> None:
+    newer_main = "b" * 40
     ci, images = success()
-    with pytest.raises(release.ReleaseNotEligible):
-        release.verify_evidence(SHA, "b" * 40, ci, images)
+    comparison_path = f"/compare/{SHA}...{newer_main}"
+
+    def fetch(path: str) -> dict:
+        if path == "/branches/main":
+            return {"commit": {"sha": newer_main}}
+        if path == comparison_path:
+            return {
+                "status": "ahead", "behind_by": 0,
+                "merge_base_commit": {"sha": SHA},
+            }
+        if path.startswith("/actions/workflows/ci.yml/runs?"):
+            return {"workflow_runs": ci, "total_count": 1}
+        if path.startswith("/actions/workflows/runtime-images.yml/runs?"):
+            return {"workflow_runs": images, "total_count": 1}
+        pytest.fail(f"unexpected API request: {path}")
+
+    monkeypatch.setattr(release, "api_get", fetch)
+    monkeypatch.setattr(release, "verified_publications", lambda *args: images)
+    result = release.check_release(SHA)
+    assert result["sha"] == SHA
+    assert result["ci_run_id"] == 1
+    assert result["image_run_id"] == 2
+
+
+@pytest.mark.parametrize("proof", [
+    {"status": "diverged", "behind_by": 1, "merge_base_commit": {"sha": SHA}},
+    {"status": "ahead", "behind_by": 0, "merge_base_commit": {"sha": "c" * 40}},
+    {"status": "ahead", "behind_by": 0, "merge_base_commit": None},
+    {"status": "behind", "behind_by": 1, "merge_base_commit": {"sha": SHA}},
+    {},
+])
+def test_unaccepted_release_history_blocks(
+    monkeypatch: pytest.MonkeyPatch, proof: dict,
+) -> None:
+    monkeypatch.setattr(release, "api_get", lambda path: proof)
+    with pytest.raises(release.ReleaseNotEligible, match="not an accepted main ancestor"):
+        release.accepted_main_ancestry(SHA, "b" * 40)
+
+
+def test_exact_current_main_needs_no_compare(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(release, "api_get", lambda path: pytest.fail(path))
+    release.accepted_main_ancestry(SHA, SHA)
+
+
+def test_compare_endpoint_requires_two_immutable_shas(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    seen = []
+    def open_response(request, timeout):
+        seen.append(request.full_url)
+        return io.StringIO("{}")
+    monkeypatch.setattr(release.urllib.request, "urlopen", open_response)
+    assert release.api_get(f"/compare/{SHA}...{'b'*40}") == {}
+    assert seen == [release.API + f"/compare/{SHA}...{'b'*40}"]
+    for path in (f"/compare/{SHA}...main", f"/compare/{SHA}...{'b'*40}/../x"):
+        with pytest.raises(release.ReleaseNotEligible, match="invalid GitHub API path"):
+            release.api_get(path)
 
 
 @pytest.mark.parametrize(

@@ -209,8 +209,9 @@ restart incompatible old code. Use a supervised forward repair.
 
 ## 6. Deployment activation (ONLY after separate review)
 
-**Do not run during installation.** Require: full current-main CI and seven
-verified published images; successful rehearsal; no pending Temporal
+**Do not run during installation.** Require: successful push-to-main CI and all
+seven verified published images **for the exact pinned release commit**;
+successful rehearsal; no pending Temporal
 activities; fresh three-database R2 restore; verified leadership fence;
 approved migration classification (or proof no migration is needed);
 a maintenance window and recovery operator available.
@@ -229,20 +230,39 @@ Separately set the **GitHub repository Actions variable**
 `KATCHA_PRODUCTION_DEPLOY_ENABLED=true`.
 
 GitHub → **Actions → Production deployment → Run workflow**:
-select branch `main`, exact current 40-character SHA, and inputs:
+select workflow branch `main`, but set `release_sha` to the **reviewed,
+immutable 40-character candidate commit**. The candidate must still be on
+accepted `main` ancestry and be a descendant of the currently deployed commit;
+it need not equal the current branch tip. New development merges do not change
+the release selection, CI or image identities. The GitHub approval job and OCI
+executor re-verify ancestry, SHA-specific push CI and full image publication.
+Never use `:main` Docker tags or an unverified PR commit as the candidate.
+
+**Installer versus app release:** the root-owned installer always installs the
+latest reviewed deployment tooling from `origin/main`, but it does not move
+the running production release. Its `DEPLOYER_INSTALLED source_sha` is therefore
+not necessarily the `release_sha` you later choose to deploy.
+
+Submit the following inputs:
 
 - `running_workflows=refuse` by default; `approved-resume` only with a
   reviewed quiescence/idempotence decision.
 - `migration_policy=refuse` for a migration-free comparison whose database
   already matches the exact target schema. Use `approve-additive-through-0065`
-  only for the reviewed added 0065 file or 0064/0065 chain. The executor verifies
-  the actual starting schema, including already-applied 0064, before proceeding.
-  The migration policy is part of the signed request; it cannot be changed later.
+  only for the reviewed added 0065 file or 0064/0065 chain.
+  For a reviewed 0065 → 0066 release that adds
+  `migrations/versions/0066_acquisition_handoff.py`, use
+  `approve-additive-through-0066` only after checking the exact 0065 starting
+  schema, the immutable 0066 migration blob and the forward-repair plan.
+  The executor verifies the actual starting schema. The migration policy is
+  part of the signed request; it cannot be changed later.
 - `confirmation=DEPLOY KATCHA PRODUCTION`.
 
 The protected job publishes a 20-minute signed request, **not a completed
 deployment**. The OCI timer polls every five minutes, verifies the request,
-runs the fixed executor, and records a root-only receipt.
+runs the fixed executor **for that exact candidate SHA (not the moving main
+tip)**, and records a root-only receipt. Compare the signed SHA to the serving
+release and receipt before declaring success.
 Confirm local/public release, all containers, workflows, Cloudflare Access
 and frontend/navigation/assets afterward. Expect a **full-stack restart**, not
 a zero-downtime API-only swap.
