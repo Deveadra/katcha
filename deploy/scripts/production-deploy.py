@@ -168,7 +168,7 @@ def accepted_main_ancestry(target: str) -> None:
 def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     # Deliberately re-check from OCI, independently of GitHub Actions.
     accepted_main_ancestry(target)
-    # Invoke the *same* fail-closed, seven-image, exact-head publication
+    # Invoke the fail-closed seven-image, exact-candidate publication
     # verifier as the CI release gate. Installed from accepted main by
     # the root-only deployer installer, not from the mutable app checkout.
     evidence_path = "/usr/local/lib/katcha-production-deploy/release_eligibility.py"
