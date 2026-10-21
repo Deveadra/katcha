@@ -13,7 +13,7 @@ from test_command_goals import saved as saved_fixture
 from katcha import db
 from katcha.domain import SourceStatus
 from katcha.integrations.direct_media import DirectMediaStreamResult
-from katcha.models import Clip, SourceItem
+from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.orchestration import activities
 
 saved = saved_fixture
@@ -149,6 +149,15 @@ def test_streamed_source_becomes_real_clip_and_preserves_provenance(
         assert source.source_metadata["rights_lane"] == "yellow"
         assert source.source_metadata["channel_profile_id"] == "channel-1"
         assert source.source_metadata["acquisition_transport"] == "pinned_https_r2_multipart"
+        claim = source.source_metadata["direct_promotion_proof"]
+        assert claim["sha256"] == clip.sha256
+        assert claim["source_id"] == str(source_id)
+        assert claim["raw_key"] == clip.storage_key
+        assert claim["stage_key"].startswith(f"staging/direct/{source_id}/")
+        events = list(session.scalars(
+            select(DomainEvent).where(DomainEvent.aggregate_id == str(source_id))
+        ))
+        assert "source.direct_media_stage_verified" in [event.event_type for event in events]
         assert "ingest_recovery" not in source.source_metadata
     assert not any(key.startswith("staging/") for key in store.objects)
 
