@@ -1,8 +1,12 @@
 # Katcha production deployment — GitHub approval, private OCI host-pull
 
-**State:** code merged does not mean deployed. The OCI poller and deployment
-gate stay **OFF** until a separately approved maintenance window. Production
-runs on the existing OCI A1 host, not WSL or Oracle Cloud Shell.
+**State:** code merged does not mean deployed. Production promotion uses an
+explicit, protected GitHub release request consumed by the OCI host. The OCI
+**deployment** poller and deployment gate stay **OFF** until a separately
+approved maintenance window. Image publishing is automatic; production
+promotion is not. An independent *read-only release observer* can check drift
+hourly after separate opt-in; its timer is not the deployment timer.
+Production runs on the existing OCI A1 host, not WSL or Oracle Cloud Shell.
 
 ## 1. Know which terminal you are using
 
@@ -167,7 +171,37 @@ It validates the current running release, the **actual** PostgreSQL schema,
 and every running Temporal execution for pending activities/child tasks.
 It never changes data or cancels workflows.
 
-The reviewed migration boundary is **0063 → 0064 → 0065**. The executor checks
+To prevent drift and migration-policy guessing, also plan the **exact accepted
+current-main release**. This option is available once the root-owned deployer
+has been updated using Section 4, without updating the live checkout:
+
+~~~bash
+sudo git -C /opt/katcha fetch origin main
+TARGET="$(sudo git -C /opt/katcha rev-parse origin/main)"
+sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET"
+~~~
+
+This is read-only and explicitly returns `deployment_authorized: false`.
+It checks accepted exact-head CI and published images, commit/file comparison
+limits (at most 250 commits and fewer than 300 changed files), the actual
+database revision, immutable migration blobs, and pending Temporal activity
+safety. It returns a **candidate** `migration_policy` for operator review,
+not permission to execute. The chosen policy remains independently enforced
+by the signed deployment request and host executor. `BLOCKED` means **stop**,
+not use a more permissive policy or skip the check.
+
+**Observed operator evidence (2026-10-21):** running checkout
+`a8fa8a877f81fc616af4d2eebbcd21b44f3bc17d`, verified
+`0065_acquisition_jobs`, six running Temporal workflows with no pending
+activities, active `katcha.service`, deployment timer disabled. At the time
+of inspection, the release comparison to accepted main was 32 commits and
+55 files, with only `0066_acquisition_handoff.py` added under migrations.
+This fits the bounded comparison and has a supported `0065 → 0066` migration
+path; it **does not** yet approve interrupting the six workflows. Rerun the
+planner against the actual final SHA because `main` can advance.
+
+The reviewed migration boundary is **0063 → 0064 → 0065 → 0066**, with
+distinct approval policies for the relevant additive steps. The executor checks
 actual PostgreSQL catalogs rather than trusting the Alembic revision alone:
 
 - At `0063_authoritative_search_ledger`, both new tables must be absent.
@@ -175,7 +209,10 @@ actual PostgreSQL catalogs rather than trusting the Alembic revision alone:
   columns and primary key, and the acquisition-jobs table must be absent.
 - At `0065_acquisition_jobs`, both tables must match the approved definitions,
   including acquisition-job columns, keys, checks, foreign key and indexes.
-  This state is required for migration-free releases whose target head is 0065.
+  This state is required before an approved 0066-only upgrade.
+- At `0066_acquisition_handoff`, the verified handoff transfer tables,
+  acquisition-job changes and widened byte counters are required for
+  migration-free releases targeting a checkout that includes 0066.
 
 For a release that adds migration 0065, use the separately reviewed policy
 `approve-additive-through-0065`. It permits only the exact added immutable
@@ -189,6 +226,14 @@ The reviewed blobs are `3d411641d625c772856142d6a8ce43447be7f2b5` for 0064 and
 `1a7debea0c609bd3a6a5f19c3b310b64077e9013` for 0065. Migration 0065 only creates
 `acquisition_jobs` and its indexes and constraints; it does not modify existing
 rows or activate remote acquisition. Its execution setting remains off by default.
+
+For an accepted release that adds **only** `0066_acquisition_handoff.py`
+against a verified 0065 production database, the separately reviewed candidate
+policy is `approve-additive-through-0066`. It pins the exact immutable
+migration blob `5e5facd8557a97ab788d529f0b40b8740b414df2`. It does **not**
+authorize an unreviewed `0063/0064 → 0066` jump. Future migrations require
+a new reviewed, versioned policy and catalog verification, not manual revision
+stamping, skipping revisions, or blanket approval.
 
 Readiness reports the observed starting revision and schema state. It is read-only
 and does not authorize deployment. The executor rechecks the same database boundary
@@ -234,9 +279,11 @@ select branch `main`, exact current 40-character SHA, and inputs:
 - `running_workflows=refuse` by default; `approved-resume` only with a
   reviewed quiescence/idempotence decision.
 - `migration_policy=refuse` for a migration-free comparison whose database
-  already matches the exact target schema. Use `approve-additive-through-0065`
-  only for the reviewed added 0065 file or 0064/0065 chain. The executor verifies
-  the actual starting schema, including already-applied 0064, before proceeding.
+  already matches the exact target schema. For the specific observed
+  `0065 → 0066` change, use `approve-additive-through-0066` **only after**
+  the exact-SHA planner and the forward-only database/recovery review succeed.
+  `approve-additive-through-0065` is for a separate earlier 0065 release.
+  Do not override a planner `BLOCKED` result or guess a migration policy.
   The migration policy is part of the signed request; it cannot be changed later.
 - `confirmation=DEPLOY KATCHA PRODUCTION`.
 
@@ -276,7 +323,7 @@ reset the Git checkout, or enable OCI paid recovery to repair routine deploys.
 Existing PostgreSQL/Temporal histories remain on their durable volumes, but
 workflow retries and post-deployment public UI behavior require verification.
 
-## Remote acquisition handoff schema (0066)
+## Additional 0066 migration details
 
 `approve-additive-through-0066` permits only the immutable added file
 `0066_acquisition_handoff.py`, starting from a catalog-verified 0065 database.
@@ -287,3 +334,19 @@ The deployer checks the exact migration blob, job and transfer columns, defaults
 constraints, indexes, and widened byte counters after startup. Migration-free
 0066 releases require the same verified schema. Readiness does not activate
 remote acquisition; configure and admit a host separately.
+
+
+## 8. Prevent release drift without enabling automatic deployment
+
+After a reviewed production deployment has installed the current observer
+files, opt into the **read-only** hourly release observer using
+[PRODUCTION_RELEASE_OBSERVER.md](PRODUCTION_RELEASE_OBSERVER.md), not the
+`katcha-production-deploy-poll.timer`. The observer reports exact pinned
+release drift and warns by 75 commits or 100 changed files, well before the
+hard 250/299 comparison ceilings. Check the journal and arrange the next
+reviewed production maintenance window while the upgrade remains small.
+
+The observer never promotes, restarts, migrates, or authorizes the host.
+`KATCHA_PRODUCTION_DEPLOY_ENABLED` and the deployment timer remain independent
+and disabled between explicitly approved release windows. This avoids silently
+accumulating unreviewed releases without taking control away from the operator.
