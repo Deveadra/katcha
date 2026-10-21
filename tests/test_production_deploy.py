@@ -1024,7 +1024,11 @@ def _plan_fixture(monkeypatch, *, revision=None, changes=None, active=6):
         "status": "ahead", "behind_by": 0,
         "merge_base_commit": {"sha": OLD},
         "total_commits": 32,
-        "files": chosen_changes,
+        # A migration-free release still changes application code. GitHub
+        # returns a nonempty changed-file list for a genuine newer commit.
+        "files": chosen_changes or [
+            {"filename": "src/katcha/web/settings.js", "status": "modified"},
+        ],
     }
     calls = []
     monkeypatch.setattr(app, "readiness", lambda: {
