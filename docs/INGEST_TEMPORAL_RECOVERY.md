@@ -31,6 +31,10 @@ source/channel/editorial metadata. Observing `RUNNING` clears a previous
 
 ## Manual incident assessment
 
+Start with the read-only evidence collector documented in
+`docs/INGEST_RECOVERY_EVIDENCE_INSPECTION.md`. It inspects the exact
+SourceItem/Temporal/Clip/direct-staging evidence and never authorizes replay.
+
 1. Confirm the affected source ID and **stored** `workflow_id` from the
    SourceItem. Check the `source_metadata.ingest_recovery` record and source
    audit events. Do not interpret `ingesting` alone as confirmation the
