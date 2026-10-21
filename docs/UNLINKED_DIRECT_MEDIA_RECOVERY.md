@@ -36,7 +36,8 @@ PYTHONPATH=src python scripts/reconcile-unlinked-direct-media.py <SOURCE_ITEM_UU
 ```
 
 The plan checks all requirements:
-- Source is still `ingesting`, has no linked Clip, and is **not** part of the
+- Source is `ingesting` **or `failed`** (after Temporal retries are exhausted),
+  has no linked Clip, and is **not** part of the
   separately leased remote acquisition workflow
 - Proof has the exact source/workflow identity, valid structured stage and raw
   keys, the canonical source hash and a matching durable DomainEvent
@@ -71,6 +72,12 @@ row lock, verifies the unmodified proof and original canonical URL, checks
 the matching audit event and SHA uniqueness, then creates the Clip and updates
 the SourceItem to `ready` in **one database transaction**. It writes the
 verified evidence fingerprint and a recovery DomainEvent.
+
+If a durable direct-promotion proof remains unresolved, ordinary ingestion
+is blocked *before downloading again*. Do not clear the proof manually to
+retry, since existing R2 footage might still be recoverable. Terminal-source
+staging cleanup also preserves the proof-linked stage and all attempt stages
+for a failed source, including incomplete multipart uploads.
 
 It does not call Temporal start, mutate or reupload R2 media, restart polling,
 publish footage, change rights or channel authority, or erase history.
