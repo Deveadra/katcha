@@ -55,11 +55,11 @@ def validate_proof(proof: object, source_id: uuid.UUID) -> bool:
     sha, ext = proof["sha256"], proof["extension"]
     if not isinstance(sha, str) or not _VALID_SHA.fullmatch(sha):
         return False
-    if ext not in _VALID_EXTENSIONS:
+    if not isinstance(ext, str) or ext not in _VALID_EXTENSIONS:
         return False
     if proof["raw_key"] != ObjectStore.raw_key(sha, ext):
         return False
-    if not isinstance(proof["size_bytes"], int) or not (
+    if type(proof["size_bytes"]) is not int or not (
         0 < proof["size_bytes"] <= MAX_MEDIA_BYTES
     ):
         return False
