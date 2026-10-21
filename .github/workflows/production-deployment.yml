@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: Exact accepted current main SHA (40 lowercase hex)
+        description: Exact previously CI-published commit on accepted main ancestry (40 lowercase hex)
         required: true
         type: string
       running_workflows:
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Verify current main CI and GHCR publication
+      - name: Verify candidate main ancestry, CI and GHCR publication
         shell: bash
         run: |
           PYTHONPATH=src python scripts/check_production_release.py "$TARGET_SHA"
@@ -134,7 +134,15 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, branch: "main"
             });
             if (main.data.commit.sha !== sha) {
-              throw new Error("Main advanced while waiting for protected approval");
+              const {data: ancestry} = await github.rest.repos.compareCommitsWithBasehead({
+                owner: context.repo.owner, repo: context.repo.repo,
+                basehead: sha + "..." + main.data.commit.sha
+              });
+              if (ancestry.status !== "ahead" ||
+                  ancestry.behind_by !== 0 ||
+                  ancestry.merge_base_commit?.sha !== sha) {
+                throw new Error("Pinned candidate is not an accepted main ancestor");
+              }
             }
             const issued_at = Math.floor(Date.now() / 1000);
             const expires_at = issued_at + 1200;

@@ -160,6 +160,43 @@ def test_release_validation_accepts_exact_successful_publication(
     app.eligible(OLD, NEW)
 
 
+def test_verified_ancestor_release_is_eligible_after_main_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    fixture = responses()
+    ahead = "c" * 40
+    fixture["/branches/main"] = {"commit": {"sha": ahead}}
+    fixture["/compare/" + NEW + "..." + ahead] = {
+        "status": "ahead", "behind_by": 0,
+        "merge_base_commit": {"sha": NEW},
+    }
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    assert app.eligible(OLD, NEW) is False
+
+    fixture["/compare/" + NEW + "..." + ahead]["merge_base_commit"]["sha"] = OLD
+    with pytest.raises(app.Blocked, match="no longer an accepted main ancestor"):
+        app.eligible(OLD, NEW)
+    fixture["/compare/" + NEW + "..." + ahead]["merge_base_commit"] = None
+    with pytest.raises(app.Blocked, match="no longer an accepted main ancestor"):
+        app.eligible(OLD, NEW)
+
+
+def test_deployment_preserves_pinned_target_after_fetch_of_newer_main() -> None:
+    source = SOURCE.read_text()
+    assert 'run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)' in source
+    assert '"merge-base", "--is-ancestor", target, "origin/main"' in source
+    assert 'run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)' in source
+    workflow = (ROOT / ".github/workflows/production-deployment.yml").read_text()
+    assert "compareCommitsWithBasehead" in workflow
+    assert 'ancestry.merge_base_commit?.sha !== sha' in workflow
+    assert "environment: katcha-production" in workflow
+
+
 def test_deployer_fails_closed_on_migration_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1013,7 +1050,6 @@ def test_handoff_policy_pins_exact_migration_and_target_inventory(monkeypatch, s
     with pytest.raises(app.Blocked):
         app.eligible(OLD, NEW, "approve-additive-through-0066")
 
-
 def _plan_fixture(monkeypatch, *, revision=None, changes=None, active=6):
     app = module()
     revision = revision or app.LATEST_REVISION
@@ -1038,6 +1074,10 @@ def _plan_fixture(monkeypatch, *, revision=None, changes=None, active=6):
         "temporal_pending_activity_check": "PASSED",
     })
     monkeypatch.setattr(app, "pinned", lambda _path: (OLD, False))
+    monkeypatch.setattr(
+        app, "accepted_main_ancestry",
+        lambda target: calls.append(("accepted", target)),
+    )
 
     def github(path):
         calls.append(("github", path))
@@ -1168,12 +1208,13 @@ def test_release_plan_current_pin_requires_current_main(monkeypatch):
     app, _, calls = _plan_fixture(monkeypatch)
     monkeypatch.setattr(app, "pinned", lambda _path: (NEW, False))
     assert app.plan_release(NEW)["status"] == "CURRENT"
-    assert ("github", "/branches/main") in calls
+    assert ("accepted", NEW) in calls
 
-    monkeypatch.setattr(
-        app, "github", lambda _path: {"commit": {"sha": OLD}},
-    )
-    with pytest.raises(app.Blocked, match="not accepted current main"):
+    def reject_ancestry(_target):
+        raise app.Blocked("candidate is no longer an accepted main ancestor")
+
+    monkeypatch.setattr(app, "accepted_main_ancestry", reject_ancestry)
+    with pytest.raises(app.Blocked, match="accepted main ancestor"):
         app.plan_release(NEW)
 
 
