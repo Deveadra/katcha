@@ -1,6 +1,6 @@
 # OCI production rollout preflight — running-container attestation
 
-**Status: implemented as a read-only preflight; no production rollout executor.**
+**Status: read-only runtime preflight implemented. A separate signed, manually approved host-pull deployment executor also exists, but production deployment remains disabled by default.**
 
 The GHCR publisher and release observer cannot establish what is actually
 running on OCI. A merged commit and an image build do not update the active
@@ -48,7 +48,7 @@ Candidate mode rejects mixed API/global pins until supervised reconciliation.
 These commands do not enable an observer timer or update production. Do not
 manually replace the live checkout just to acquire this preflight script.
 
-## Outstanding gates before an actual autonomous deployment
+## Outstanding gates before an unattended automatic deployment
 
 1. Independent verified image digests, a dedicated disabled-by-default
    deployment permission gate, and serialized exclusive host lock.
