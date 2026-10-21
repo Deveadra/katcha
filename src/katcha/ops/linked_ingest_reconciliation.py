@@ -106,6 +106,8 @@ async def plan_linked_clip_recovery(
             reasons.append("remote_acquisition_separate")
         if not snapshot["workflow_id"]:
             reasons.append("workflow_identity_missing")
+        elif _display_workflow_id(snapshot["workflow_id"]) == "<redacted>":
+            reasons.append("workflow_identity_untrusted")
         if clip is None:
             reasons.append("linked_clip_missing")
         else:
