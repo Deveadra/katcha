@@ -48,6 +48,9 @@ def _fields(source: SourceItem, clip: Clip | None) -> dict[str, Any]:
     return {
         "source_id": str(source.id),
         "source_status": source.status,
+        "source_metadata_digest": hashlib.sha256(
+            json.dumps(source.source_metadata or {}, sort_keys=True).encode()
+        ).hexdigest(),
         "source_updated_at": source.updated_at.isoformat() if source.updated_at else None,
         "workflow_id": source.workflow_id,
         "linked_clip_id": str(source.clip_id) if source.clip_id else None,
