@@ -166,7 +166,8 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     files = comparison.get("files")
     if (comparison.get("status") != "ahead"
         or comparison.get("behind_by") != 0
-        or comparison.get("merge_base_commit", {}).get("sha") != old
+        or not isinstance(comparison.get("merge_base_commit"), dict)
+        or comparison["merge_base_commit"].get("sha") != old
         or not isinstance(files, list) or not files or len(files) >= 300
         or not 0 < comparison.get("total_commits", 0) <= 250):
         raise Blocked("candidate ancestry or comparison is unverified")
@@ -1054,7 +1055,7 @@ def plan_release(target: str) -> dict[str, Any]:
         "temporal_running_count": active,
         "temporal_pending_activity_check": state["temporal_pending_activity_check"],
         "workflow_review": (
-            "six-or-fewer-or-more_active_executions_require_review"
+            "active_executions_require_review"
             if active else "no_running_executions_observed"
         ),
         "default_workflow_policy": "refuse",
