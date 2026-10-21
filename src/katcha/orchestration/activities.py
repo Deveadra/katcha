@@ -250,8 +250,16 @@ def _ingest_direct_source(source_uuid: uuid.UUID, canonical: str) -> dict[str, s
         )
 
         stage = "content-addressed object reconciliation"
-        if not deduped and not store.exists(storage_key):
+        raw_exists = not deduped and store.exists(storage_key)
+        if not deduped and not raw_exists:
             store.move(stage_key, storage_key)
+        elif raw_exists:
+            # A raw/ key may survive a crash before Clip persistence. Never
+            # assume that its filename proves the bytes are intact.
+            stage = "existing raw object SHA-256 verification"
+            verify_stored_sha256(
+                store, storage_key, transferred.sha256, transferred.size_bytes
+            )
 
         stage = "direct clip persistence"
         with session_scope() as session:
