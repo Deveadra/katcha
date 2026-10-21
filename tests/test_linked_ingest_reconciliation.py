@@ -241,6 +241,23 @@ async def test_preview_refuses_unreconciled_or_unowned_media(saved, case, blocke
 
 
 @pytest.mark.asyncio
+async def test_untrusted_workflow_identity_cannot_be_approved_or_exposed(saved):
+    source_id, _, _, store = fixture_source()
+    with db.session_scope() as session:
+        session.get(SourceItem, source_id).workflow_id = (
+            "https://private.example/run?token=DO_NOT_LOG"
+        )
+    plan = await recovery.plan_linked_clip_recovery(
+        source_id, temporal_client=Temporal(), store=store,
+    )
+    assert plan["eligible"] is False
+    assert "workflow_identity_untrusted" in plan["blockers"]
+    assert plan["source_snapshot"] is None
+    assert plan["workflow_id"] == "<redacted>"
+    assert "DO_NOT_LOG" not in str(plan)
+
+
+@pytest.mark.asyncio
 async def test_invalid_approval_token_never_queries_remote_services(saved):
     source_id, _, _, store = fixture_source()
     temporal = Temporal()
