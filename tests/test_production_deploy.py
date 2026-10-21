@@ -188,7 +188,7 @@ def test_verified_ancestor_release_is_eligible_after_main_advances(
 
 def test_deployment_preserves_pinned_target_after_fetch_of_newer_main() -> None:
     source = SOURCE.read_text()
-    assert 'run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)' not in source
+    assert 'run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)' in source
     assert 'run("git", "-C", str(REPO), "merge-base", "--is-ancestor", target, "origin/main")' in source
     assert 'run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)' in source
     workflow = (ROOT / ".github/workflows/production-deployment.yml").read_text()
