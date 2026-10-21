@@ -2,8 +2,8 @@
 """Read-only production release eligibility. Never contacts OCI or changes a host.
 
 An image tag existing is not sufficient evidence for an approved production
-release. Both whole-workflow results must be successful for the exact current
-main SHA. This check is intentionally separate from deployment authorization.
+release. Both whole-workflow results must be successful for the exact pinned
+SHA, which must be an accepted main ancestor. This is not deploy authorization.
 """
 from __future__ import annotations
 
@@ -188,10 +188,12 @@ def accepted_main_ancestry(sha: str, main_sha: str) -> None:
     if sha == main_sha:
         return
     comparison = api_get(f"/compare/{sha}...{main_sha}")
+    base = comparison.get("merge_base_commit") if isinstance(comparison, dict) else None
     if (not isinstance(comparison, dict)
         or comparison.get("status") != "ahead"
         or comparison.get("behind_by") != 0
-        or comparison.get("merge_base_commit", {}).get("sha") != sha):
+        or not isinstance(base, dict)
+        or base.get("sha") != sha):
         raise ReleaseNotEligible("release candidate is not an accepted main ancestor")
 
 
