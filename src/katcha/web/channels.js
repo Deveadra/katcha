@@ -35,6 +35,8 @@ const state = {
     trendSchedule: null,
     trendRuntime: null,
     trendRuntimeError: "",
+    trendDelivery: null,
+    trendDeliveryError: "",
     trendLoadError: "",
     trendBusy: false,
     voiceToggleBusy: false,
@@ -872,6 +874,7 @@ async function loadChannel() {
         state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
         state.trendPolicy = null; state.trendRuns = []; state.trendSchedule = null;
         state.trendRuntime = null; state.trendRuntimeError = "";
+        state.trendDelivery = null; state.trendDeliveryError = "";
         state.trendLoadError = "";
     }
     const channel = activeChannel();
@@ -893,14 +896,16 @@ async function loadChannel() {
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runs?limit=5"),
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-schedule"),
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runtime"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/delivery-progress"),
         ]);
         if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
-        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns", "trendSchedule", "trendRuntime"];
+        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns", "trendSchedule", "trendRuntime", "trendDelivery"];
         const failures = [];
         const trendFailures = [];
         panels.forEach((result, index) => {
             if (result.status === "fulfilled") state[names[index]] = result.value;
             else if (index === 8) state.trendRuntimeError = result.reason.message;
+            else if (index === 9) state.trendDeliveryError = result.reason.message;
             else if (index >= 5) trendFailures.push(names[index] + ": " + result.reason.message);
             else failures.push(names[index] + ": " + result.reason.message);
         });
@@ -2352,13 +2357,37 @@ function renderTrendAutomation() {
     }
     const runs = Array.isArray(state.trendRuns) ? state.trendRuns : [];
     const host = $("trend-automation-runs");
+    const delivered = Array.isArray(state.trendDelivery?.episodes)
+        ? state.trendDelivery.episodes : [];
+    const evidence = state.trendDeliveryError
+        ? '<p>Episode delivery evidence unavailable.</p>'
+        : !delivered.length
+            ? '<p>No autonomous trend episodes recorded for this channel yet.</p>'
+            : '<div class="trend-automation-run"><strong>Episode delivery evidence</strong>' +
+                '<p>' + escapeHtml(state.trendDelivery.scripted_count +
+                ' selected scripts · ' + state.trendDelivery.verified_render_count +
+                ' verified renders · ' + state.trendDelivery.stalled_count +
+                ' overdue or failed') + '</p></div>' +
+                delivered.map((episode) => {
+                    const stage = 'Episode ' + String(episode.episode_id).slice(0, 8) +
+                        ' · ' + trendStatusReason(episode.stage);
+                    const proof = episode.render_verified ? 'Verified render receipt' :
+                        episode.render_manifest_recorded ? 'Render manifest only; no verified output' :
+                        episode.narration_assets_recorded ? 'Narration assets recorded' :
+                        episode.script_selected ? 'Selected script saved' :
+                        'No script or video artifact recorded';
+                    return '<div class="trend-automation-run"><strong>' + escapeHtml(stage) +
+                        '</strong><p>' + escapeHtml(proof + ' · ' +
+                        trendStatusReason(episode.health) + ' · Next: ' +
+                        trendStatusReason(episode.next_step)) + '</p></div>';
+                }).join('');
     if (!runs.length) {
-        host.textContent = state.trendLoadError
+        host.innerHTML = evidence + '<p>' + escapeHtml(state.trendLoadError
             ? "Scan history unavailable."
-            : "No autonomous trend scans recorded for this channel yet. A schedule must also be running.";
+            : "No autonomous trend scans recorded for this channel yet. A schedule must also be running.") + '</p>';
         return;
     }
-    host.innerHTML = runs.map((run) => {
+    host.innerHTML = evidence + runs.map((run) => {
         const dispatch = run.run_metadata?.editorial_dispatch;
         let detail = !dispatch ? "No editorial handoff recorded (planning-only or older scan)." :
             dispatch.status === "blocked" ? "Editorial blocked: " + trendStatusReason(dispatch.reason) :
@@ -2396,11 +2425,15 @@ async function refreshTrendAutomation() {
     const button = $("refresh-trend-automation");
     button.disabled = true;
     try {
-        const [policy, runs, schedule, runtime] = await Promise.all([
+        const [policy, runs, schedule, runtime, delivery] = await Promise.all([
             api(prefix + "activation-policy"),
             api(prefix + "activation-runs?limit=5"),
             api(prefix + "activation-schedule"),
             api(prefix + "activation-runtime").then(
+                (value) => ({value, error: ""}),
+                (error) => ({value: null, error: error.message}),
+            ),
+            api(prefix + "delivery-progress").then(
                 (value) => ({value, error: ""}),
                 (error) => ({value: null, error: error.message}),
             ),
@@ -2411,6 +2444,8 @@ async function refreshTrendAutomation() {
         state.trendSchedule = schedule;
         state.trendRuntime = runtime.value;
         state.trendRuntimeError = runtime.error;
+        state.trendDelivery = delivery.value;
+        state.trendDeliveryError = delivery.error;
         state.trendLoadError = "";
         renderTrendAutomation();
     } catch (error) {

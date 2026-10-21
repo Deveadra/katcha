@@ -83,6 +83,31 @@ const channelRuns = {
     "channel-2": [],
 };
 
+const channelDelivery = {
+    "channel-1": {
+        channel_profile_id: "channel-1", scripted_count: 1,
+        verified_render_count: 0, stalled_count: 1,
+        episodes: [{
+            episode_id: "fixture-episode-1", status: "rendering",
+            stage: "render_manifest_ready", script_selected: true,
+            narration_assets_recorded: 1, render_manifest_recorded: true,
+            render_verified: false, health: "stage_stalled",
+            next_step: "inspect_episode_workflow",
+        }],
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", scripted_count: 1,
+        verified_render_count: 1, stalled_count: 0,
+        episodes: [{
+            episode_id: "fixture-episode-2", status: "rendered",
+            stage: "render_verified", script_selected: true,
+            narration_assets_recorded: 1, render_manifest_recorded: true,
+            render_verified: true, health: "render_verified",
+            next_step: "review_or_publication_handoff",
+        }],
+    },
+};
+
 let draftPreviewAttempts = 0;
 let linkedPaginationFixture = false;
 let failActivityOverviewOnce = false;
@@ -730,6 +755,10 @@ const analytics = [
             /^\/v1\/channels\/channel-[12]\/trends\/activation-runs$/.test(url.pathname)
         ) {
             data = channelRuns[url.pathname.split("/")[3]];
+        } else if (
+            url.pathname.endsWith("/trends/delivery-progress")
+        ) {
+            data = channelDelivery[url.pathname.split("/")[3]];
         } else if (url.pathname === "/v1/channels/channel-1") {
             data = summary;
         } else if (url.pathname === "/v1/channels/channel-2") {
@@ -1197,6 +1226,10 @@ const analytics = [
     assert.match(await page.locator("#trend-automation-runs").innerText(), /Editorial blocked/);
     assert.match(await page.locator("#trend-automation-runs").innerText(), /Editorial Auto Start Not Authorized/);
     assert.match(await page.locator("#trend-automation-runs").innerText(), /No editorial handoff recorded/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /Render manifest only; no verified output/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /0 verified renders/);
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/delivery-progress") &&
+        row.method !== "GET").length, 0, "delivery evidence must be read-only");
     assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-policy") &&
         row.method === "POST").length, 0, "page load cannot enable spending");
 
