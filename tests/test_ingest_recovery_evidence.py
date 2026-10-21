@@ -327,6 +327,59 @@ async def test_storage_credentials_and_provider_errors_never_leave_report(saved)
 
 
 @pytest.mark.asyncio
+async def test_untrusted_stage_name_is_not_echoed_into_recovery_report(saved):
+    source_id = new_source()
+    malicious = f"staging/direct/{source_id}/private?secret=DO_NOT_EMIT"
+    report = await evidence.inspect_held_ingest(
+        source_id,
+        temporal_client=Temporal(WorkflowExecutionStatus.FAILED),
+        store=Storage(source_id, objects=[{"Key": malicious}]),
+    )
+    assert report["direct_staging"]["completed_objects"] == 1
+    assert report["direct_staging"]["sample_keys"] == []
+    assert report["assessment"] == "media_or_staging_requires_review"
+    assert "DO_NOT_EMIT" not in str(report)
+
+
+@pytest.mark.asyncio
+async def test_unusual_workflow_id_is_used_exactly_but_redacted_in_report(saved):
+    source_id = new_source()
+    unexpected = "https://private.example/workflow?token=DO_NOT_EMIT"
+    with db.session_scope() as session:
+        session.get(SourceItem, source_id).workflow_id = unexpected
+    client = Temporal(WorkflowExecutionStatus.FAILED)
+    report = await evidence.inspect_held_ingest(
+        source_id, temporal_client=client, store=Storage(source_id)
+    )
+    assert client.lookups == [unexpected]
+    assert report["workflow_id"] == "<redacted>"
+    assert "DO_NOT_EMIT" not in str(report)
+
+
+@pytest.mark.asyncio
+async def test_paginated_listing_call_count_is_bounded_even_for_empty_pages(saved):
+    source_id = new_source()
+
+    class Endless(Storage):
+        def list_objects_v2(self, **params):
+            self.calls.append(("objects", params))
+            return {
+                "Contents": [],
+                "IsTruncated": True,
+                "NextContinuationToken": str(len(self.calls)),
+            }
+
+    store = Endless(source_id)
+    report = await evidence.inspect_held_ingest(
+        source_id, temporal_client=Temporal(WorkflowExecutionStatus.FAILED),
+        store=store, max_records=2000,
+    )
+    assert report["assessment"] == "evidence_incomplete"
+    assert len(store.calls) <= evidence.MAX_INVENTORY_PAGES + 1
+    assert report["direct_staging"]["visibility"] == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_changed_source_after_visibility_probe_blocks_stale_assessment(saved):
     source_id = new_source()
     class Concurrent(Storage):
