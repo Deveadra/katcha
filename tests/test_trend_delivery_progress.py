@@ -12,7 +12,6 @@ def test_delivery_progress_distinguishes_manifests_from_verified_outputs(
     fixture_work,
 ):
     _, channel, other, ids = fixture_work
-    now = datetime.now(UTC)
     with session_scope() as session:
         episode = session.get(ShortEpisode, ids["short_episode"])
         episode.trend_opportunity_id = uuid.uuid4()
