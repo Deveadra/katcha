@@ -32,6 +32,7 @@ from katcha.services.trend_auto_activation import (
     list_activation_decisions,
     list_activation_runs,
 )
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeScript
 from katcha.trend_activation_models import (
     TrendActivationDecision,
     TrendActivationPerformanceSnapshot,
@@ -158,6 +159,32 @@ class TrendActivationRunResponse(BaseModel):
     run_metadata: dict[str, Any]
     started_at: datetime
     completed_at: datetime | None
+
+
+class TrendDeliveryEpisodeResponse(BaseModel):
+    episode_id: uuid.UUID
+    status: str
+    stage: str
+    created_at: datetime
+    updated_at: datetime
+    script_selected: bool = False
+    narration_assets_recorded: int = 0
+    render_manifest_recorded: bool = False
+    render_verified: bool = False
+    render_asset_id: uuid.UUID | None = None
+    health: str
+    next_step: str
+
+
+class TrendDeliveryProgressResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    checked_at: datetime
+    episodes: list[TrendDeliveryEpisodeResponse]
+    scripted_count: int
+    verified_render_count: int
+    stalled_count: int
+    # Data-plane evidence only: a running Temporal workflow does not count
+    # as a saved script, narration asset, or verified video.
 
 
 class TrendActivationDecisionResponse(BaseModel):
@@ -433,6 +460,121 @@ def get_trend_activation_runs(
     limit: int = Query(default=50, ge=1, le=250),
 ) -> list[TrendActivationRun]:
     return list_activation_runs(channel_profile_id, limit=limit)
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/delivery-progress",
+    response_model=TrendDeliveryProgressResponse,
+)
+def get_trend_delivery_progress(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=10, ge=1, le=25),
+) -> TrendDeliveryProgressResponse:
+    """Report saved per-channel episode artifacts, not workflow start claims."""
+    checked_at = datetime.now(UTC)
+    with session_scope() as session:
+        episodes = list(
+            session.scalars(
+                select(ShortEpisode)
+                .where(
+                    ShortEpisode.channel_profile_id == channel_profile_id,
+                    ShortEpisode.trend_opportunity_id.is_not(None),
+                )
+                .order_by(ShortEpisode.created_at.desc(), ShortEpisode.id.desc())
+                .limit(limit)
+            )
+        )
+        episode_ids = [row.id for row in episodes]
+        scripts = set()
+        assets: dict[uuid.UUID, list[ShortEpisodeAsset]] = {}
+        if episode_ids:
+            scripts = set(
+                session.scalars(
+                    select(ShortEpisodeScript.id).where(
+                        ShortEpisodeScript.short_episode_id.in_(episode_ids),
+                        ShortEpisodeScript.selected.is_(True),
+                    )
+                )
+            )
+            for asset in session.scalars(
+                select(ShortEpisodeAsset).where(
+                    ShortEpisodeAsset.short_episode_id.in_(episode_ids),
+                )
+            ):
+                assets.setdefault(asset.short_episode_id, []).append(asset)
+
+        results: list[TrendDeliveryEpisodeResponse] = []
+        for row in episodes:
+            saved = assets.get(row.id, [])
+            verified = next(
+                (
+                    asset for asset in saved
+                    if asset.kind == "render"
+                    and (asset.asset_metadata or {}).get("verified") is True
+                ),
+                None,
+            )
+            narration_count = sum(
+                1 for asset in saved if asset.kind.startswith("narration_")
+            )
+            scripted = bool(row.selected_script_id and row.selected_script_id in scripts)
+            updated_at = _utc_schedule_time(row.updated_at or row.created_at)
+            age = checked_at - updated_at if updated_at else timedelta(0)
+            if row.status in {"failed", "rejected"}:
+                health = row.status
+                next_step = "operator_attention" if row.status == "failed" else "new_candidate"
+            elif verified is not None:
+                health = "render_verified"
+                next_step = (
+                    "review_or_publication_handoff"
+                    if row.status not in {"approved", "published"}
+                    else "publication_status"
+                )
+            elif row.status == "planned":
+                health = "planning_overdue" if age > timedelta(hours=24) else "planned"
+                next_step = "editorial_dispatch_or_authorization"
+            elif age > timedelta(hours=6):
+                health = "stage_stalled"
+                next_step = "inspect_episode_workflow"
+            elif row.render_manifest:
+                health = "render_pending"
+                next_step = "verify_render_output"
+            elif narration_count:
+                health = "narration_recorded"
+                next_step = "editorial_review_or_render"
+            elif scripted:
+                health = "script_recorded"
+                next_step = "narration"
+            else:
+                health = "in_progress"
+                next_step = "script_generation"
+            results.append(
+                TrendDeliveryEpisodeResponse(
+                    episode_id=row.id,
+                    status=row.status,
+                    stage=row.stage,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at or row.created_at,
+                    script_selected=scripted,
+                    narration_assets_recorded=narration_count,
+                    render_manifest_recorded=bool(row.render_manifest),
+                    render_verified=verified is not None,
+                    render_asset_id=verified.id if verified is not None else None,
+                    health=health,
+                    next_step=next_step,
+                )
+            )
+    return TrendDeliveryProgressResponse(
+        channel_profile_id=channel_profile_id,
+        checked_at=checked_at,
+        episodes=results,
+        scripted_count=sum(episode.script_selected for episode in results),
+        verified_render_count=sum(episode.render_verified for episode in results),
+        stalled_count=sum(
+            episode.health in {"stage_stalled", "planning_overdue", "failed"}
+            for episode in results
+        ),
+    )
 
 
 @router.get(
