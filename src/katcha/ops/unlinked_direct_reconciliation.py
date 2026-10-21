@@ -22,6 +22,7 @@ from katcha.integrations.download import canonicalize_url
 from katcha.integrations.object_streaming import inspect_stored_media, verify_stored_sha256
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
+from katcha.orchestration.activities import _extract_video_shape
 from katcha.ops.direct_promotion_provenance import (
     PROOF_KEY,
     proof_fingerprint,
@@ -237,6 +238,8 @@ async def finalize_unlinked_direct_recovery(
             source.status != expected["status"]
             or (str(source.clip_id) if source.clip_id else None) != expected["clip_id"]
             or source.workflow_id != expected["workflow_id"]
+            or hashlib.sha256(canonicalize_url(source.source_url).encode()).hexdigest()
+            != expected["canonical_digest"]
             or metadata.get(PROOF_KEY) != claim
             or hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
             != expected["source_digest"]
@@ -246,7 +249,9 @@ async def finalize_unlinked_direct_recovery(
             is not None
         ):
             raise RecoveryApprovalError("Source/Clip provenance changed before commit")
+        duration, width, height = _extract_video_shape(claim["media_metadata"])
         clip = Clip(
+            duration_seconds=duration, width=width, height=height,
             sha256=claim["sha256"],
             storage_key=claim["raw_key"],
             extension=claim["extension"],
