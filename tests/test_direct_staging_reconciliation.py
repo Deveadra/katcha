@@ -156,6 +156,13 @@ def test_verified_promotion_stage_is_never_garbage_collected(saved, status):
                 "sha256": "a" * 64,
             }
         }
+        if status == SourceStatus.READY.value:
+            clip = Clip(
+                id=uuid.uuid4(), sha256="a" * 64,
+                storage_key=f"raw/aa/{'a' * 64}.mp4",
+            )
+            session.add(clip)
+            row.clip_id = clip.id
     store = FakeStore(
         [{"Contents": [obj(claimed), obj(other_attempt)], "IsTruncated": False}],
         [{"Uploads": [upload(claimed)], "IsTruncated": False}],
