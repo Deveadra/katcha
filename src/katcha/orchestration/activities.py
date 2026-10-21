@@ -24,6 +24,7 @@ from katcha.integrations.object_streaming import (
 )
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
+from katcha.ops.direct_promotion_provenance import record_verified_direct_promotion
 from katcha.orchestration.failure_details import MediaPreparationError, failure_details
 from katcha.orchestration.ingest_recovery import RECOVERY_KEY
 
@@ -234,9 +235,31 @@ def _ingest_direct_source(source_uuid: uuid.UUID, canonical: str) -> dict[str, s
                 transferred.sha256, transferred.extension
             )
 
+        # The verified source-to-sha claim is committed before the stage is
+        # promoted into raw/. A crash after copying no longer loses ownership
+        # evidence; a different retry may not overwrite an unresolved claim.
+        stage = "durable direct-media provenance checkpoint"
+        record_verified_direct_promotion(
+            source_uuid,
+            canonical_url=canonical,
+            stage_key=stage_key,
+            sha256=transferred.sha256,
+            size_bytes=transferred.size_bytes,
+            extension=transferred.extension,
+            media_metadata=metadata,
+        )
+
         stage = "content-addressed object reconciliation"
-        if not deduped and not store.exists(storage_key):
+        raw_exists = not deduped and store.exists(storage_key)
+        if not deduped and not raw_exists:
             store.move(stage_key, storage_key)
+        elif raw_exists:
+            # A raw/ key may survive a crash before Clip persistence. Never
+            # assume that its filename proves the bytes are intact.
+            stage = "existing raw object SHA-256 verification"
+            verify_stored_sha256(
+                store, storage_key, transferred.sha256, transferred.size_bytes
+            )
 
         stage = "direct clip persistence"
         with session_scope() as session:
