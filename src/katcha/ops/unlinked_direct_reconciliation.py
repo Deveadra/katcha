@@ -22,7 +22,6 @@ from katcha.integrations.download import canonicalize_url
 from katcha.integrations.object_streaming import inspect_stored_media, verify_stored_sha256
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
-from katcha.orchestration.activities import _extract_video_shape
 from katcha.ops.direct_promotion_provenance import (
     PROOF_KEY,
     proof_fingerprint,
@@ -31,6 +30,7 @@ from katcha.ops.direct_promotion_provenance import (
 )
 from katcha.ops.ingest_recovery_evidence import inspect_held_ingest
 from katcha.ops.linked_ingest_reconciliation import RecoveryApprovalError
+from katcha.orchestration.activities import _extract_video_shape
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL = frozenset({"COMPLETED", "FAILED", "CANCELED", "TERMINATED", "TIMED_OUT"})
