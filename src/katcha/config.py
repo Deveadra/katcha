@@ -213,6 +213,12 @@ class CloudflareAccessPrincipalSettings(BaseModel):
 
 
 class Settings(BaseSettings):
+    browser_service_url: str | None = None
+    browser_service_token: SecretStr | None = None
+    remote_acquisition_enabled: bool = False
+    remote_acquisition_auto_dispatch_enabled: bool = True
+    remote_acquisition_max_bytes: int = Field(default=4 * 1024**3, ge=1, le=64 * 1024**3)
+
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
         env_file=".env",

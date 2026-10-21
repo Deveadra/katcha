@@ -74,11 +74,12 @@ def matching_runs(
 
 
 
-# Only a completed publication with all six built images and independent
+# Only a completed publication with all seven built images and independent
 # anonymous-pull verification is a deployable release. The image workflow
 # also runs on scheduled/manual CI; those legitimate no-op executions must
 # not invalidate the most recent verified push release of the same SHA.
 PUBLISHED_IMAGES = {
+    "katcha-browser",
     "katcha-control",
     "katcha-ingest",
     "katcha-analysis",
@@ -159,7 +160,7 @@ def verified_publications(
                 raise ReleaseNotEligible("production image build evidence incomplete")
             builds.add(prefix)
         if builds != PUBLISHED_IMAGES:
-            raise ReleaseNotEligible("not all six runtime images were verified")
+            raise ReleaseNotEligible("not all seven runtime images were verified")
         return [run]
     raise ReleaseNotEligible("no completed image publication for the current revision")
 

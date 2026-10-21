@@ -29,6 +29,7 @@ jobs:
       storage: ${{ steps.plan.outputs.storage }}
       renderer: ${{ steps.plan.outputs.renderer }}
       explorer: ${{ steps.plan.outputs.explorer }}
+      server_browser: ${{ steps.plan.outputs.server_browser }}
     steps:
       - name: Classify changed files
         id: plan
@@ -43,6 +44,7 @@ jobs:
               "storage",
               "renderer",
               "explorer",
+              "server_browser",
             ];
 
             if (context.eventName !== "pull_request") {
@@ -119,6 +121,10 @@ jobs:
                   "tests/test_brand_previews.py",
                   "tests/test_packaging_thumbnails.py"
                 ),
+              server_browser:
+                ciChanged ||
+                prefix("src/katcha/services/server_browser", "src/katcha/services/browser_client", "tests/test_server_browser") ||
+                exact("pyproject.toml", "Dockerfile.browser", "docker-compose.yml", "docker-compose.intelligence.yml", "deploy/docker-compose.production.yml"),
               explorer:
                 ciChanged ||
                 prefix("web-tests/", "src/katcha/web/") ||
@@ -215,6 +221,32 @@ jobs:
           set -o pipefail
           python -m pip install 'pytest-timeout>=2.3,<3'
           timeout --signal=INT --kill-after=15s 900s pytest -vv --timeout=120 --timeout-method=signal
+
+      - name: Verify reviewed production schemas against isolated PostgreSQL
+        run: |
+          set -euo pipefail
+          schema_container=katcha-gate-0065-ci
+          cleanup_schema_container() {
+            docker rm -f "$schema_container" >/dev/null 2>&1 || true
+          }
+          trap cleanup_schema_container EXIT
+          docker run -d --name "$schema_container" --network none \
+            -e POSTGRES_PASSWORD=gate-test-only postgres:16-alpine
+          schema_ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec "$schema_container" pg_isready -U postgres >/dev/null; then
+              schema_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$schema_ready" != true ]; then
+            docker logs "$schema_container"
+            exit 1
+          fi
+          KATCHA_SCHEMA_TEST_CONTAINER="$schema_container" \
+            timeout --signal=TERM --kill-after=15s 300s \
+            pytest -q tests/test_production_deploy_postgres.py
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
@@ -625,6 +657,27 @@ jobs:
         if: always()
         run: docker compose --env-file .env.example down -v
 
+  server-browser:
+    name: Server browser Chromium acceptance
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.server_browser == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python browser runtime
+        run: python -m pip install -e '.[dev,browser]'
+      - name: Install matching Chromium and operating system dependencies
+        run: python -m playwright install --with-deps chromium
+      - name: Exercise real server browser sessions and isolation
+        env:
+          KATCHA_TEST_REAL_BROWSER: "1"
+        run: pytest -q tests/test_server_browser.py
+
   explorer:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.explorer == 'true'
@@ -680,6 +733,7 @@ jobs:
       - renderer
       - ranked-render-e2e
       - explorer
+      - server-browser
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

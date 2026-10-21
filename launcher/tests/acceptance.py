@@ -24,20 +24,52 @@ def request(path, body=None):
         connection.close()
 
 
+def _startup_diagnostics(snapshot):
+    """Only report launcher's already-redacted status fields, not environment data."""
+    if not isinstance(snapshot, dict):
+        return "No runtime status was returned."
+    events = []
+    for row in (snapshot.get("events") or [])[-12:]:
+        if isinstance(row, dict):
+            events.append({
+                "component": row.get("component"),
+                "level": row.get("level"),
+                "message": str(row.get("message") or "")[:800],
+            })
+    return json.dumps({
+        "phase": snapshot.get("phase"),
+        "stage": snapshot.get("stage"),
+        "events": events,
+    }, indent=2)[:12000]
+
+
 def wait_for(target, seconds):
     deadline = time.monotonic() + seconds
+    last_snapshot = None
     while time.monotonic() < deadline:
         try:
             snapshot = json.loads(request("/runtime/status"))
         except OSError:
             time.sleep(2)
             continue
+        last_snapshot = snapshot
         if snapshot["phase"] == target:
             return snapshot
-        if snapshot["phase"] == "failed":
-            raise RuntimeError(json.dumps(snapshot["events"][-20:], indent=2))
+        if snapshot["phase"] == "failed" or (
+            snapshot["phase"] == "degraded"
+            and snapshot.get("stage") == "automation warm-up failed"
+        ):
+            # A warm-up error leaves the GUI available and phase=degraded.
+            # Treating only phase=failed as fatal hides its cause for 30 minutes.
+            raise RuntimeError(
+                "Katcha startup terminated before ready: "
+                + _startup_diagnostics(snapshot)
+            )
         time.sleep(2)
-    raise TimeoutError(f"Katcha did not reach {target}")
+    raise TimeoutError(
+        f"Katcha did not reach {target}. Last runtime state: "
+        + _startup_diagnostics(last_snapshot)
+    )
 
 
 def wait_for_workspace(seconds):
@@ -108,6 +140,7 @@ if __name__ == "__main__":
         print(f"Initial full readiness: {time.monotonic() - cold_started:.2f}s", flush=True)
         services = {row["Service"] for row in state["services"]}
         assert {
+            "browser",
             "postgres",
             "temporal",
             "minio",

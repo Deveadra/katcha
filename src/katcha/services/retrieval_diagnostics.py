@@ -17,8 +17,10 @@ from katcha.orchestration.failure_details import safe_failure_text
 
 def retrieval_capabilities() -> dict:
     from katcha.config import get_settings
+    from katcha.services.browser_client import browser_configuration
 
     return {
+        "interactive_browser": browser_configuration(),
         "observed_at": datetime.now(UTC).isoformat(),
         "execution_location": "Katcha server; independent of the browser running Katcha",
         "public_page_reading": {

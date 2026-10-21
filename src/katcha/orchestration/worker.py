@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 
 from sqlalchemy import select
@@ -14,12 +15,19 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.models import SourceItem
 from katcha.ops.download_route import managed_route
+from katcha.orchestration.acquisition_activities import (
+    reconcile_remote_acquisition,
+    remote_source_acquisition,
+    supervise_acquisitions,
+)
+from katcha.orchestration.acquisition_workflows import RemoteAcquisitionWorkflow
 from katcha.orchestration.activities import (
     enqueue_ingested_analysis_activity,
     ingest_source,
     mark_source_failed,
     prepare_authorized_passthrough_activity,
 )
+from katcha.orchestration.ingest_recovery import check_ingesting_source
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
     apply_packaging_thumbnail_activity,
@@ -88,7 +96,20 @@ async def _resume_persisted_ingest_and_publication_work(
 
     resumed = 0
     present = 0
+    # Cap outstanding Temporal visibility checks during process restart. A
+    # serial timeout per stale row would otherwise delay worker readiness by
+    # minutes/hours; no INGESTING source is started in either case.
+    in_progress = [row for row in sources if row.status == "ingesting"]
+    for offset in range(0, len(in_progress), 8):
+        inspected = await asyncio.gather(*(
+            check_ingesting_source(client, row)
+            for row in in_progress[offset : offset + 8]
+        ))
+        present += sum(inspected)
+
     for row in sources:
+        if row.status == "ingesting":
+            continue
         try:
             await client.start_workflow(
                 ClipIngestWorkflow.run,
@@ -158,9 +179,11 @@ async def main() -> None:
         ingest_worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,
-            workflows=[ClipIngestWorkflow],
+            workflows=[ClipIngestWorkflow, RemoteAcquisitionWorkflow],
             activities=[
                 ingest_source,
+                remote_source_acquisition,
+                reconcile_remote_acquisition,
                 mark_source_failed,
                 enqueue_ingested_analysis_activity,
                 prepare_authorized_passthrough_activity,
@@ -199,7 +222,13 @@ async def main() -> None:
             activity_executor=activity_executor,
         )
         async with managed_route():
-            await run_worker_group([ingest_worker, publishing_worker])
+            supervisor = asyncio.create_task(supervise_acquisitions(client, settings))
+            try:
+                await run_worker_group([ingest_worker, publishing_worker])
+            finally:
+                supervisor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await supervisor
 
 
 if __name__ == "__main__":

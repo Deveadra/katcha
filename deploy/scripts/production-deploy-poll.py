@@ -91,7 +91,9 @@ def authorized_request(
         or not isinstance(payload["policy"], str)
         or payload["policy"] not in {"refuse", "approved-resume"}
         or not isinstance(payload["migration_policy"], str)
-        or payload["migration_policy"] not in {"refuse", "approve-additive-0064"}
+        or payload["migration_policy"] not in {
+            "refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066",
+        }
         or payload["host"] != HOST
         or type(payload["issued_at"]) is not int
         or type(payload["expires_at"]) is not int

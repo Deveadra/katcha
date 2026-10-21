@@ -21,6 +21,13 @@ class WorkflowRecoveryContract:
 
 
 WORKFLOW_RECOVERY_CONTRACTS: dict[str, WorkflowRecoveryContract] = {
+    "RemoteAcquisitionWorkflow": WorkflowRecoveryContract(
+        "RemoteAcquisitionWorkflow",
+        RecoveryMode.PERSISTED_RECONCILE,
+        "worker",
+        "AcquisitionJob and transfer cursors persist claims, generations and validation state; "
+        "the ingestion supervisor restarts deterministic workflows without replaying providers.",
+    ),
     "ClipIngestWorkflow": WorkflowRecoveryContract(
         "ClipIngestWorkflow",
         RecoveryMode.PERSISTED_RECONCILE,

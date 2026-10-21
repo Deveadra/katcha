@@ -84,3 +84,19 @@ def test_api_override_only_changes_api_image_and_public_revision(
         "renderer", "migrate", "backup-writer", "backup-reader", "telegram-worker",
     ):
         assert updated[name]["environment"]["KATCHA_API_RELEASE_SHA"] == ""
+
+
+def test_browser_rpc_reaches_actual_goal_worker_without_host_access(tmp_path: Path) -> None:
+    services = _render(tmp_path, None)
+    browser = services["browser"]
+    assert browser["image"] == f"ghcr.io/deveadra/katcha-browser:{BASE_SHA}"
+    assert not browser.get("ports")
+    assert not browser.get("volumes")
+    assert browser["read_only"] and browser["init"]
+    assert set(browser["environment"]) == {"KATCHA_BROWSER_SERVICE_TOKEN"}
+    for role in ("api", "intelligence-worker"):
+        env = services[role]["environment"]
+        assert env["KATCHA_BROWSER_SERVICE_URL"] == "http://browser:8010"
+        assert env["KATCHA_BROWSER_SERVICE_TOKEN"] == (
+            browser["environment"]["KATCHA_BROWSER_SERVICE_TOKEN"]
+        )

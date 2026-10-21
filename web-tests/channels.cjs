@@ -19,6 +19,95 @@ const server = spawn(
 
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
+const channelPolicies = {
+    "channel-1": {
+        id: "trend-policy-1", channel_profile_id: "channel-1", version: 4,
+        enabled: true, min_opportunity_score: "0.78", min_confidence: "0.60",
+        min_calibrated_score: "0.72", min_rights_readiness: "0.90",
+        min_lead_time_minutes: 180, max_activations_per_day: 2,
+        cooldown_minutes: 160, max_backlog: 4,
+        min_budget_headroom_usd: "6.50", max_opportunities_per_run: 12,
+        policy_metadata: {
+            auto_start_editorial: false, editorial_max_starts_per_scan: 1,
+            retained_custom_guard: "important",
+        },
+    },
+    "channel-2": null,
+};
+const channelSchedules = {
+    "channel-1": {
+        channel_profile_id: "channel-1", registered: false, enabled: false,
+        interval_hours: null, workflow_id: null, generation: null,
+        reconcile_pending: false, runtime_verified: false,
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", registered: false, enabled: false,
+        interval_hours: null, workflow_id: null, generation: null,
+        reconcile_pending: false, runtime_verified: false,
+    },
+};
+const channelRuntimes = {
+    "channel-1": {
+        channel_profile_id: "channel-1", status: "not_registered",
+        runtime_verified: false, editorial_queue_ready: false,
+        schedule_running: false,
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", status: "not_registered",
+        runtime_verified: false, editorial_queue_ready: false,
+        schedule_running: false,
+    },
+};
+const channelRuns = {
+    "channel-1": [
+        {
+            id: "trend-run-1", status: "completed",
+            started_at: now, completed_at: now, activated_count: 2,
+            run_metadata: {
+                trend_refresh: {
+                    status: "completed", topics_scored: 3,
+                    qualified_opportunities: 1, evidence_packets_built: 2,
+                },
+                editorial_dispatch: {
+                    status: "blocked", reason: "editorial_auto_start_not_authorized",
+                    started: [], failed: [],
+                },
+            },
+        },
+        {
+            id: "trend-run-old", status: "completed",
+            started_at: now, completed_at: now, activated_count: 1,
+            run_metadata: {},
+        },
+    ],
+    "channel-2": [],
+};
+
+const channelDelivery = {
+    "channel-1": {
+        channel_profile_id: "channel-1", scripted_count: 1,
+        verified_render_count: 0, stalled_count: 1,
+        episodes: [{
+            episode_id: "fixture-episode-1", status: "rendering",
+            stage: "render_manifest_ready", script_selected: true,
+            narration_assets_recorded: 1, render_manifest_recorded: true,
+            render_verified: false, health: "stage_stalled",
+            next_step: "inspect_episode_workflow",
+        }],
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", scripted_count: 1,
+        verified_render_count: 1, stalled_count: 0,
+        episodes: [{
+            episode_id: "fixture-episode-2", status: "rendered",
+            stage: "render_verified", script_selected: true,
+            narration_assets_recorded: 1, render_manifest_recorded: true,
+            render_verified: true, health: "render_verified",
+            next_step: "review_or_publication_handoff",
+        }],
+    },
+};
+
 let draftPreviewAttempts = 0;
 let linkedPaginationFixture = false;
 let failActivityOverviewOnce = false;
@@ -616,6 +705,60 @@ const analytics = [
                 contentType: "audio/mpeg",
                 body: Buffer.from("fixture-elevenlabs-audio"),
             });
+        } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-policy$/.test(url.pathname)
+        ) {
+            const channelId = url.pathname.split("/")[3];
+            if (req.method() === "POST") {
+                const previous = channelPolicies[channelId];
+                channelPolicies[channelId] = {
+                    ...(previous || {}),
+                    ...body,
+                    id: "trend-policy-" + channelId,
+                    channel_profile_id: channelId,
+                    version: (previous?.version || 0) + 1,
+                    policy_metadata: {
+                        ...body.metadata,
+                        auto_start_editorial: body.auto_start_editorial,
+                        editorial_max_starts_per_scan: body.editorial_max_starts_per_scan,
+                    },
+                };
+            }
+            data = channelPolicies[channelId];
+        } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-schedule$/.test(url.pathname)
+        ) {
+            const channelId = url.pathname.split("/")[3];
+            if (req.method() === "POST") {
+                const previous = channelSchedules[channelId];
+                channelSchedules[channelId] = {
+                    ...previous,
+                    registered: true,
+                    enabled: true,
+                    interval_hours: body.interval_hours,
+                    workflow_id: "trend-activation-schedule-" + channelId,
+                    generation: (previous.generation || 0) + 1,
+                    reconcile_pending: false,
+                    runtime_verified: false,
+                };
+                data = {
+                    channel_profile_id: channelId,
+                    interval_hours: body.interval_hours,
+                    workflow_id: channelSchedules[channelId].workflow_id,
+                };
+            } else data = channelSchedules[channelId];
+        } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-runtime$/.test(url.pathname)
+        ) {
+            data = channelRuntimes[url.pathname.split("/")[3]];
+        } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-runs$/.test(url.pathname)
+        ) {
+            data = channelRuns[url.pathname.split("/")[3]];
+        } else if (
+            url.pathname.endsWith("/trends/delivery-progress")
+        ) {
+            data = channelDelivery[url.pathname.split("/")[3]];
         } else if (url.pathname === "/v1/channels/channel-1") {
             data = summary;
         } else if (url.pathname === "/v1/channels/channel-2") {
@@ -1078,6 +1221,107 @@ const analytics = [
     assert.match(await page.locator("#schedule").innerText(), /Fri · 18:00/);
     assert.match(await page.locator("#brand-panel").innerText(), /fixture_brand/);
     assert.match(await page.locator("#automation-panel").innerText(), /Review Required/);
+    assert.equal(await page.locator("#trend-plan-enabled").isChecked(), true);
+    assert.equal(await page.locator("#trend-editorial-enabled").isChecked(), false);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /Editorial blocked/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /Editorial Auto Start Not Authorized/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /No editorial handoff recorded/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /Render manifest only; no verified output/);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /0 verified renders/);
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/delivery-progress") &&
+        row.method !== "GET").length, 0, "delivery evidence must be read-only");
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-policy") &&
+        row.method === "POST").length, 0, "page load cannot enable spending");
+
+    await page.locator('[data-channel-tab="settings"]').click();
+    assert.match(await page.locator("#trend-automation-runs").innerText(),
+        /Trend scoring: 3 topic/);
+    await page.locator("#trend-editorial-enabled").check();
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page.locator("#save-trend-automation").click();
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-policy") &&
+        row.method === "POST").length, 0, "dismissed paid-action confirmation does not mutate policy");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#save-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
+        .textContent === "Editorial authorized");
+    const policyWrites = requests.filter((row) =>
+        row.path === "/v1/channels/channel-1/trends/activation-policy" && row.method === "POST");
+    assert.equal(policyWrites.length, 1);
+    assert.equal(policyWrites[0].body.auto_start_editorial, true);
+    assert.equal(policyWrites[0].body.enabled, true);
+    assert.equal(policyWrites[0].body.min_opportunity_score, "0.78");
+    assert.equal(policyWrites[0].body.min_budget_headroom_usd, "6.50");
+    assert.equal(policyWrites[0].body.metadata.retained_custom_guard, "important");
+    assert.equal(channelPolicies["channel-1"].version, 5);
+    assert.equal(await page.locator("#register-trend-schedule").isEnabled(), true,
+        "saving enabled channel policy must unlock recurring scan registration");
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /No recurring trend scan registered/);
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-schedule") &&
+        row.method === "POST").length, 0, "loading automation status cannot register scans");
+    await page.locator("#trend-schedule-hours").selectOption("3");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page.locator("#register-trend-schedule").click();
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-schedule") &&
+        row.method === "POST").length, 0, "cancelled schedule confirmation has no side effects");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#register-trend-schedule").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Registered every 3 hour"));
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /Live Temporal worker health has not been verified/);
+    const writes = requests.filter((row) =>
+        row.path === "/v1/channels/channel-1/trends/activation-schedule" &&
+        row.method === "POST");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.interval_hours, 3);
+    assert.equal(channelSchedules["channel-1"].runtime_verified, false);
+    channelRuntimes["channel-1"] = {
+        channel_profile_id: "channel-1", status: "queues_recently_polled",
+        schedule_running: true, runtime_verified: true,
+        editorial_queue_ready: true, checked_at: "2026-10-18T17:00:00Z",
+    };
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("discovery, trend scoring, intelligence and editorial queues"));
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-runtime") &&
+        row.method === "POST").length, 0,
+        "read-only runtime checks cannot dispatch work");
+    channelRuntimes["channel-1"].status = "discovery_worker_not_observed";
+    channelRuntimes["channel-1"].runtime_verified = false;
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Automatic research and source ingestion may be stalled"));
+    channelRuntimes["channel-1"].status = "trend_worker_not_observed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Scheduled scans may run without fresh opportunities"));
+    channelRuntimes["channel-1"].status = "editorial_worker_not_observed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("scripts and renders may stall"));
+    channelSchedules["channel-1"].scan_health = "scan_overdue";
+    channelSchedules["channel-1"].scan_overdue = true;
+    channelSchedules["channel-1"].last_scheduled_scan_started_at = "2026-10-18T08:00:00Z";
+    channelSchedules["channel-1"].last_scheduled_scan_status = "completed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("OVERDUE: no new scheduled scan"));
+    assert.match(await page.locator("#trend-schedule-status").innerText(),
+        /Latest scheduled scan:.*Completed/);
+    assert.match(await page.locator("#trend-schedule-status").innerText(),
+        /not current worker availability/);
+    channelSchedules["channel-1"].scan_health = null;
+    channelSchedules["channel-1"].scan_overdue = false;
+    channelSchedules["channel-1"].last_scheduled_scan_started_at = null;
+    channelSchedules["channel-1"].last_scheduled_scan_status = null;
+    assert.equal(await page.locator("#save-trend-automation").isEnabled(), true,
+        "schedule registration must not lock subsequent policy changes");
+
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-automation-message")
+        .textContent.includes("Policy v5"));
+    await page.locator('[data-channel-tab="overview"]').click();
+
     assert.equal(await page.locator("#elevenlabs-state").innerText(), "CONNECTED");
     assert.equal(await page.locator("#elevenlabs-default-voice").inputValue(), "voice-ranksnaxx");
     assert.equal(await page.locator("#elevenlabs-longform-primary").inputValue(), "voice-ranksnaxx");
@@ -1264,6 +1508,20 @@ const analytics = [
     await page.getByText(/Channel added to Katcha and selected/).waitFor();
     assert.equal(await page.locator("#channel").inputValue(), "channel-2");
     assert.match(await page.locator("#channel").innerText(), /Fixture News/);
+    // Channel isolation after OAuth has made the second profile selectable.
+    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
+        .textContent === "Not configured");
+    assert.equal(await page.locator("#trend-editorial-enabled").isChecked(), false);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /No autonomous trend scans/);
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /No recurring trend scan registered/);
+    assert.equal(channelSchedules["channel-2"].registered, false);
+    assert.equal(requests.filter((row) =>
+        row.path === "/v1/channels/channel-2/trends/activation-policy" &&
+        row.method === "POST").length, 0);
+    await page.locator("#channel").selectOption("channel-1");
+    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
+        .textContent === "Editorial authorized");
+
     assert(
         requests.some(
             (request) =>

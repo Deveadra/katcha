@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -322,7 +323,7 @@ class AcquisitionReceipt(Base):
     fetch_url_if_allowed: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     response_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    bytes_received: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bytes_received: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     mime: Mapped[str | None] = mapped_column(String(160), nullable=True)
     media_probe: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -376,7 +377,7 @@ class MediaAssetValidation(Base):
     perceptual_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
     duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     mime: Mapped[str] = mapped_column(String(160), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     duration_seconds: Mapped[float | None] = mapped_column(nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)

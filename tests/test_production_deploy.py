@@ -122,7 +122,17 @@ def responses(migrations: bool = False) -> dict[str, object]:
         **image, "id": 102, "conclusion": "failure",
         "run_started_at": "2026-10-15T12:02:00Z",
     }
+    app = module()
+    proofs = {
+        "/contents/" + path + "?ref=" + NEW: {"path": path, "sha": blob, "type": "file"}
+        for path, blob in app.REVIEWED_MIGRATIONS.items()
+    }
     return {
+        **proofs,
+        "/contents/migrations/versions?ref=" + NEW: [
+            {"name": Path(path).name, "type": "file", "sha": blob}
+            for path, blob in app.REVIEWED_MIGRATIONS.items()
+        ],
         "/branches/main": {"commit": {"sha": NEW}},
         "/actions/workflows/ci.yml/runs?head_sha=" + NEW + "&per_page=100":
             {"workflow_runs": [ci], "total_count": 1},
@@ -284,6 +294,10 @@ def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     assert "deployments: write" in source
     assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
     assert "MIGRATION_POLICY: ${{ inputs.migration_policy }}" in source
+    assert ("options: [refuse, approve-additive-0064, approve-additive-through-0065, "
+            "approve-additive-through-0066]") in source
+    assert ('["refuse", "approve-additive-0064", "approve-additive-through-0065", '
+            '"approve-additive-through-0066"]') in source
     assert "crypto.createHmac" in source
     assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source
@@ -484,6 +498,9 @@ def test_approved_additive_migration_requires_exact_immutable_blob(
     fixture["/contents/" + app.MIGRATION_FILE + "?ref=" + NEW] = {
         "path": app.MIGRATION_FILE, "sha": app.MIGRATION_BLOB, "type": "file",
     }
+    fixture["/contents/migrations/versions?ref=" + NEW] = [
+        {"name": Path(app.MIGRATION_FILE).name, "type": "file", "sha": app.MIGRATION_BLOB},
+    ]
     monkeypatch.setattr(app, "github", lambda p: fixture[p])
     monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
         "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
@@ -520,19 +537,27 @@ def test_additive_schema_preflight_and_postflight_require_exact_revision(
         "table": "",
         "columns": "",
         "primary": "",
+        "settings_constraints": "application_ai_settings_pkey:p:PRIMARY KEY (key)",
+        "settings_indexes": (
+            "application_ai_settings_pkey:CREATE UNIQUE INDEX application_ai_settings_pkey "
+            "ON public.application_ai_settings USING btree (key)"
+        ),
+        "settings_defaults": "",
+        "acquisition_table": "",
     }
     monkeypatch.setattr(app, "database_query", lambda k: state[k])
     app.database_migration_preflight()
-    with pytest.raises(app.Blocked, match="reviewed target revision"):
+    with pytest.raises(app.Blocked, match="reviewed 0065 schema"):
         app.database_release_preflight(migration=False)
     state["revision"] = app.AFTER_REVISION
     state["table"] = "application_ai_settings"
     state["columns"] = "key:character varying:NO:64\nvalue:text:NO:"
     state["primary"] = "key"
     app.database_migration_postflight()
-    app.database_release_preflight(migration=False)
+    with pytest.raises(app.Blocked, match="reviewed 0065 schema"):
+        app.database_release_preflight(migration=False)
     with pytest.raises(app.Blocked, match="reviewed additive migration base"):
-        app.database_release_preflight(migration=True)
+        app.database_release_preflight(migration=True, migration_policy="approve-additive-0064")
     state["primary"] = "other_key"
     with pytest.raises(app.Blocked, match="schema differs"):
         app.database_migration_postflight()
@@ -627,6 +652,13 @@ def test_readiness_is_read_only_without_deployment_flag(
         "table": "application_ai_settings",
         "columns": "key:character varying:NO:64\nvalue:text:NO:",
         "primary": "key",
+        "settings_constraints": "application_ai_settings_pkey:p:PRIMARY KEY (key)",
+        "settings_indexes": (
+            "application_ai_settings_pkey:CREATE UNIQUE INDEX application_ai_settings_pkey "
+            "ON public.application_ai_settings USING btree (key)"
+        ),
+        "settings_defaults": "",
+        "acquisition_table": "",
     }
     monkeypatch.setattr(app, "database_query", lambda key: observations[key])
     monkeypatch.setattr(app, "temporal_inventory", lambda policy: (
@@ -636,7 +668,9 @@ def test_readiness_is_read_only_without_deployment_flag(
     assert result["status"] == "REVIEW_REQUIRED"
     assert result["temporal_running_count"] == 1
     assert result["database_start_revision"] == app.AFTER_REVISION
-    assert result["database_schema_state"] == "0064_already_applied_and_verified"
+    assert result["database_schema_state"] == (
+        "0064_verified_requires_approved_additive_through_0065"
+    )
 
     # The 0063→0064 path remains eligible only for separately approved
     # migration releases. Readiness alone must not authorize any migration.
@@ -647,7 +681,7 @@ def test_readiness_is_read_only_without_deployment_flag(
 
     # Neither unknown/future revisions nor schema drift are accepted.
     observations["revision"] = "0065_unreviewed"
-    with pytest.raises(app.Blocked, match="outside the reviewed"):
+    with pytest.raises(app.Blocked, match="outside reviewed"):
         app.readiness()
     observations.update(
         revision=app.AFTER_REVISION, table="application_ai_settings",
@@ -801,3 +835,180 @@ def test_stop_supervisor_rejects_failed_reset_or_concurrent_restart(
     with pytest.raises(app.Blocked):
         app.stop_supervisor()
     assert reset
+
+
+@pytest.mark.parametrize("has_browser", [False, True])
+def test_runtime_uses_service_inventory_from_exact_release(monkeypatch, has_browser):
+    app = module()
+    services = app.EXPECTED if has_browser else app.EXPECTED - {"browser"}
+
+    def command(*args, **kwargs):
+        if args[:4] == ("git", "-C", str(app.REPO), "show"):
+            assert args[4] == OLD + ":deploy/docker-compose.production.yml"
+            return "services:\n  browser:\n" if has_browser else "services:\n  api:\n"
+        if args[:2] == ("docker", "ps"):
+            return "\n".join(sorted(services))
+        if args[:2] == ("docker", "inspect"):
+            name = args[2]
+            return json.dumps([{
+                "Config": {
+                    "Labels": {"com.docker.compose.service": name},
+                    "Image": "ghcr.io/deveadra/" + app.IMAGE_FOR_SERVICE.get(name, name)
+                             + ":" + OLD,
+                },
+                "State": {"Running": True, "Status": "running",
+                          "Health": {"Status": "healthy"}},
+            }])
+        pytest.fail("Unexpected operation")
+
+    monkeypatch.setattr(app, "run", command)
+    monkeypatch.setattr(app.urllib.request, "urlopen", lambda *args, **kwargs:
+                        io.StringIO(json.dumps({"release_sha": OLD})))
+    app.runtime(OLD)
+
+
+def test_runtime_requires_browser_in_release_that_defines_it(monkeypatch):
+    app = module()
+
+    def command(*args, **kwargs):
+        if args[0] == "git":
+            return "services:\n  browser:\n"
+        return "\n".join(sorted(app.EXPECTED - {"browser"}))
+
+    monkeypatch.setattr(app, "run", command)
+    with pytest.raises(app.Blocked, match="service count"):
+        app.runtime(OLD)
+
+
+@pytest.mark.parametrize("add_settings", [False, True])
+def test_reviewed_0065_addition_requires_explicit_policy_and_both_pinned_blobs(
+    monkeypatch, add_settings,
+):
+    app = module()
+    fixture = responses()
+    changes = [{"filename": app.MIGRATION_0065_FILE, "status": "added"}]
+    if add_settings:
+        changes.append({"filename": app.MIGRATION_FILE, "status": "added"})
+    fixture["/compare/" + OLD + "..." + NEW]["files"] = changes
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kwargs: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    for policy in ("refuse", "approve-additive-0064"):
+        with pytest.raises(app.Blocked, match="approval missing"):
+            app.eligible(OLD, NEW, policy)
+    assert app.eligible(OLD, NEW, "approve-additive-through-0065") is True
+    for path in app.REVIEWED_MIGRATIONS:
+        key = "/contents/" + path + "?ref=" + NEW
+        original = fixture[key]["sha"]
+        fixture[key]["sha"] = "f" * 40
+        with pytest.raises(app.Blocked, match="differs from reviewed blob"):
+            app.eligible(OLD, NEW, "approve-additive-through-0065")
+        fixture[key]["sha"] = original
+
+
+@pytest.mark.parametrize("change", [
+    {"filename": "migrations/versions/0065_acquisition_jobs.py", "status": "modified"},
+    {"filename": "migrations/versions/0065_acquisition_jobs.py", "status": "removed"},
+    {"filename": "migrations/env.py", "status": "modified"},
+    {"filename": "migrations/versions/0066_future.py", "status": "added"},
+    {"filename": "app.txt", "status": "renamed",
+     "previous_filename": "migrations/versions/0063_authoritative_search_ledger.py"},
+])
+def test_reviewed_0065_policy_never_authorizes_other_migration_changes(monkeypatch, change):
+    app = module()
+    fixture = responses()
+    fixture["/compare/" + OLD + "..." + NEW]["files"] = [change]
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kwargs: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW, "approve-additive-through-0065")
+
+
+@pytest.mark.parametrize("inventory", [
+    [{"name": "0064_application_ai_settings.py"}],
+    [{"name": "0065_acquisition_jobs.py"}, {"name": "0066_future.py"}],
+    {}, None,
+])
+def test_migration_free_release_rejects_unknown_or_unavailable_target_head(monkeypatch, inventory):
+    app = module()
+    fixture = responses()
+    fixture["/contents/migrations/versions?ref=" + NEW] = inventory
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kwargs: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW)
+
+
+def test_reviewed_0065_blob_matches_additive_source():
+    import ast
+
+    app = module()
+    source = (ROOT / app.MIGRATION_0065_FILE).read_bytes()
+    git_blob = hashlib.sha1(f"blob {len(source)}".encode() + b"\0" + source).hexdigest()
+    assert git_blob == app.MIGRATION_0065_BLOB
+    tree = ast.parse(source)
+    upgrade = next(node for node in tree.body
+                   if isinstance(node, ast.FunctionDef) and node.name == "upgrade")
+    operations = [node for node in ast.walk(upgrade) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id == "op"]
+    assert [node.func.attr for node in operations] == [
+        "create_table", "create_index", "create_index",
+    ]
+    assert operations[0].args[0].value == "acquisition_jobs"
+    assert 'down_revision = "0064_application_ai_settings"' in source.decode()
+
+
+@pytest.mark.parametrize("policy", ["approve-additive-0064", "approve-additive-through-0065"])
+def test_signed_request_binds_exact_reviewed_migration_policy(policy):
+    app = poller()
+    request, key = signed_request()
+    payload = request["payload"]
+    payload["migration_policy"] = policy
+    payload.pop("signature")
+    payload["signature"] = hmac.new(key, app.canonical(payload), hashlib.sha256).hexdigest()
+    assert app.authorized_request(request, key, 1500)["migration_policy"] == policy
+    payload["migration_policy"] = "refuse"
+    with pytest.raises(app.RequestBlocked, match="signature"):
+        app.authorized_request(request, key, 1500)
+
+
+@pytest.mark.parametrize("status", ["added", "modified", "removed"])
+def test_handoff_policy_pins_exact_migration_and_target_inventory(monkeypatch, status):
+    app = module()
+    fixture = responses()
+    fixture["/compare/" + OLD + "..." + NEW]["files"] = [
+        {"filename": app.HANDOFF_FILE, "status": status},
+    ]
+    fixture["/contents/migrations/versions?ref=" + NEW].append({
+        "name": Path(app.HANDOFF_FILE).name, "type": "file", "sha": app.HANDOFF_BLOB,
+    })
+    key = "/contents/" + app.HANDOFF_FILE + "?ref=" + NEW
+    fixture[key] = {"path": app.HANDOFF_FILE, "type": "file", "sha": app.HANDOFF_BLOB}
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kwargs: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW, "approve-additive-through-0065")
+    if status != "added":
+        with pytest.raises(app.Blocked):
+            app.eligible(OLD, NEW, "approve-additive-through-0066")
+        return
+    assert app.eligible(OLD, NEW, "approve-additive-through-0066")
+    source = (ROOT / app.HANDOFF_FILE).read_bytes()
+    assert hashlib.sha1(f"blob {len(source)}".encode() + b"\0" + source).hexdigest() == (
+        app.HANDOFF_BLOB
+    )
+    fixture[key]["sha"] = "f" * 40
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW, "approve-additive-through-0066")

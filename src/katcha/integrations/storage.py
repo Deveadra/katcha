@@ -19,7 +19,8 @@ class ObjectStore:
 
     def _client(self, endpoint_url: str | None):
         config = Config(
-            s3={"addressing_style": "path" if self.settings.s3_force_path_style else "auto"}
+            signature_version="s3v4",
+            s3={"addressing_style": "path" if self.settings.s3_force_path_style else "auto"},
         )
         client_kwargs: dict[str, Any] = {
             "region_name": self.settings.s3_region,
@@ -47,9 +48,7 @@ class ObjectStore:
         )
         kwargs: dict[str, object] = {"Bucket": self.settings.s3_bucket}
         if self.settings.s3_region not in {"auto", "us-east-1"}:
-            kwargs["CreateBucketConfiguration"] = {
-                "LocationConstraint": self.settings.s3_region
-            }
+            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.settings.s3_region}
         self.client.create_bucket(**kwargs)
 
     def exists(self, key: str) -> bool:
@@ -159,6 +158,27 @@ class ObjectStore:
                 Bucket=self.settings.s3_bucket,
                 Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
             )
+
+    def copy(
+        self, source_key: str, destination_key: str, *, content_type: str | None = None
+    ) -> None:
+        """Server-side managed copy, including objects larger than S3's single-copy limit."""
+        from boto3.s3.transfer import TransferConfig
+
+        assert_mutation_authority("storage.copy", settings=self.settings)
+        self.client.copy(
+            {"Bucket": self.settings.s3_bucket, "Key": source_key},
+            self.settings.s3_bucket,
+            destination_key,
+            ExtraArgs={"ContentType": content_type, "MetadataDirective": "REPLACE"}
+            if content_type
+            else None,
+            Config=TransferConfig(
+                multipart_threshold=64 * 1024**2,
+                multipart_chunksize=64 * 1024**2,
+                max_concurrency=2,
+            ),
+        )
 
     def move(self, source_key: str, destination_key: str) -> None:
         if source_key == destination_key:

@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
+from katcha.automation_schedule_models import AutomationSchedule
+from katcha.db import session_scope
 from katcha.orchestration.client import (
     start_channel_trend_activation,
     start_channel_trend_activation_performance,
     start_channel_trend_activation_schedule,
 )
+from katcha.orchestration.trend_runtime_readiness import inspect_trend_schedule_runtime
 from katcha.services.automation_schedules import (
     locked_schedule_for_reconcile,
     register_channel_trend_activation_schedule,
@@ -28,6 +32,7 @@ from katcha.services.trend_auto_activation import (
     list_activation_decisions,
     list_activation_runs,
 )
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeScript
 from katcha.trend_activation_models import (
     TrendActivationDecision,
     TrendActivationPerformanceSnapshot,
@@ -99,6 +104,46 @@ class TrendActivationScheduleResponse(BaseModel):
     interval_hours: int
 
 
+class TrendActivationScheduleStatusResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    registered: bool
+    enabled: bool
+    interval_hours: int | None = None
+    workflow_id: str | None = None
+    generation: int | None = None
+    reconcile_pending: bool = False
+    # Registration is persisted evidence, NOT proof Temporal is healthy.
+    runtime_verified: bool = False
+    # A persisted, channel-scoped scheduled scan is proof of work, not a
+    # heartbeat or proof that the worker is currently available.
+    last_scheduled_scan_run_id: uuid.UUID | None = None
+    last_scheduled_scan_started_at: datetime | None = None
+    last_scheduled_scan_completed_at: datetime | None = None
+    last_scheduled_scan_status: str | None = None
+    scan_health: str = "not_registered"
+    scan_overdue: bool = False
+
+
+class TrendActivationRuntimeResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    checked_at: datetime
+    status: str
+    schedule_running: bool = False
+    intelligence_workflow_pollers_recent: bool = False
+    intelligence_activity_pollers_recent: bool = False
+    discovery_workflow_pollers_recent: bool = False
+    discovery_activity_pollers_recent: bool = False
+    trend_workflow_pollers_recent: bool = False
+    trend_activity_pollers_recent: bool = False
+    production_workflow_pollers_recent: bool = False
+    production_activity_pollers_recent: bool = False
+    runtime_verified: bool = False
+    discovery_queue_ready: bool = False
+    trend_queue_ready: bool = False
+    editorial_queue_ready: bool = False
+    reason: str | None = None
+
+
 class TrendActivationRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -114,6 +159,32 @@ class TrendActivationRunResponse(BaseModel):
     run_metadata: dict[str, Any]
     started_at: datetime
     completed_at: datetime | None
+
+
+class TrendDeliveryEpisodeResponse(BaseModel):
+    episode_id: uuid.UUID
+    status: str
+    stage: str
+    created_at: datetime
+    updated_at: datetime
+    script_selected: bool = False
+    narration_assets_recorded: int = 0
+    render_manifest_recorded: bool = False
+    render_verified: bool = False
+    render_asset_id: uuid.UUID | None = None
+    health: str
+    next_step: str
+
+
+class TrendDeliveryProgressResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    checked_at: datetime
+    episodes: list[TrendDeliveryEpisodeResponse]
+    scripted_count: int
+    verified_render_count: int
+    stalled_count: int
+    # Data-plane evidence only: a running Temporal workflow does not count
+    # as a saved script, narration asset, or verified video.
 
 
 class TrendActivationDecisionResponse(BaseModel):
@@ -228,6 +299,118 @@ async def scan_trend_activation(
     )
 
 
+def _utc_schedule_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-schedule",
+    response_model=TrendActivationScheduleStatusResponse,
+)
+def get_trend_activation_schedule(
+    channel_profile_id: uuid.UUID,
+) -> TrendActivationScheduleStatusResponse:
+    """Report persisted scheduled work separately from live worker availability."""
+    with session_scope() as session:
+        schedule = session.scalar(
+            select(AutomationSchedule).where(
+                AutomationSchedule.schedule_key
+                == f"channel_trend_activation:{channel_profile_id}"
+            )
+        )
+        if schedule is None:
+            return TrendActivationScheduleStatusResponse(
+                channel_profile_id=channel_profile_id,
+                registered=False,
+                enabled=False,
+            )
+        latest_scan = session.scalar(
+            select(TrendActivationRun)
+            .where(
+                TrendActivationRun.channel_profile_id == channel_profile_id,
+                TrendActivationRun.run_key.like("scheduled-%"),
+            )
+            .order_by(TrendActivationRun.started_at.desc())
+            .limit(1)
+        )
+        interval = int((schedule.schedule_config or {}).get("interval_hours") or 0)
+        # Allow a scan to finish and a reconciliation cycle to run before
+        # reporting a breach. This is an observation SLA, not a promise
+        # about the exact next Temporal wake-up.
+        reference = _utc_schedule_time(
+            latest_scan.started_at if latest_scan else schedule.updated_at or schedule.created_at
+        )
+        overdue = bool(
+            schedule.enabled
+            and interval > 0
+            and reference is not None
+            and datetime.now(UTC) - reference > timedelta(hours=2 * interval, minutes=30)
+        )
+        if not schedule.enabled:
+            scan_health = "disabled"
+        elif schedule.supersedes_workflow_id is not None:
+            scan_health = "reconcile_pending"
+        elif latest_scan is None:
+            scan_health = "first_scan_overdue" if overdue else "awaiting_first_scan"
+        elif latest_scan.status == "running":
+            scan_health = (
+                "scan_stalled"
+                if datetime.now(UTC) - _utc_schedule_time(latest_scan.started_at)
+                > timedelta(minutes=30)
+                else "scan_in_progress"
+            )
+        elif latest_scan.status == "disabled":
+            scan_health = "scan_policy_disabled"
+        elif latest_scan.status != "completed":
+            scan_health = "last_scan_not_completed"
+        else:
+            scan_health = "scan_overdue" if overdue else "recent_scan"
+        return TrendActivationScheduleStatusResponse(
+            channel_profile_id=channel_profile_id,
+            registered=True,
+            enabled=schedule.enabled,
+            interval_hours=interval or None,
+            workflow_id=schedule.workflow_id,
+            generation=schedule.generation,
+            reconcile_pending=schedule.supersedes_workflow_id is not None,
+            last_scheduled_scan_run_id=latest_scan.id if latest_scan else None,
+            last_scheduled_scan_started_at=latest_scan.started_at if latest_scan else None,
+            last_scheduled_scan_completed_at=latest_scan.completed_at if latest_scan else None,
+            last_scheduled_scan_status=latest_scan.status if latest_scan else None,
+            scan_health=scan_health,
+            scan_overdue=overdue,
+        )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-runtime",
+    response_model=TrendActivationRuntimeResponse,
+)
+async def get_trend_activation_runtime(
+    channel_profile_id: uuid.UUID,
+) -> TrendActivationRuntimeResponse:
+    """Observe Temporal without triggering registration, scans, or spend."""
+    schedule = get_trend_activation_schedule(channel_profile_id)
+    if not schedule.registered or not schedule.enabled or not schedule.workflow_id:
+        return TrendActivationRuntimeResponse(
+            channel_profile_id=channel_profile_id,
+            checked_at=datetime.now(UTC),
+            status="not_registered" if not schedule.registered else "schedule_disabled",
+            reason=(
+                "no_registered_schedule"
+                if not schedule.registered
+                else "registered_schedule_disabled"
+            ),
+        )
+    data = await inspect_trend_schedule_runtime(schedule.workflow_id)
+    return TrendActivationRuntimeResponse(
+        channel_profile_id=channel_profile_id,
+        **data,
+    )
+
+
 @router.post(
     "/channels/{channel_profile_id}/trends/activation-schedule",
     response_model=TrendActivationScheduleResponse,
@@ -277,6 +460,121 @@ def get_trend_activation_runs(
     limit: int = Query(default=50, ge=1, le=250),
 ) -> list[TrendActivationRun]:
     return list_activation_runs(channel_profile_id, limit=limit)
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/delivery-progress",
+    response_model=TrendDeliveryProgressResponse,
+)
+def get_trend_delivery_progress(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=10, ge=1, le=25),
+) -> TrendDeliveryProgressResponse:
+    """Report saved per-channel episode artifacts, not workflow start claims."""
+    checked_at = datetime.now(UTC)
+    with session_scope() as session:
+        episodes = list(
+            session.scalars(
+                select(ShortEpisode)
+                .where(
+                    ShortEpisode.channel_profile_id == channel_profile_id,
+                    ShortEpisode.trend_opportunity_id.is_not(None),
+                )
+                .order_by(ShortEpisode.created_at.desc(), ShortEpisode.id.desc())
+                .limit(limit)
+            )
+        )
+        episode_ids = [row.id for row in episodes]
+        scripts = set()
+        assets: dict[uuid.UUID, list[ShortEpisodeAsset]] = {}
+        if episode_ids:
+            scripts = set(
+                session.scalars(
+                    select(ShortEpisodeScript.id).where(
+                        ShortEpisodeScript.short_episode_id.in_(episode_ids),
+                        ShortEpisodeScript.selected.is_(True),
+                    )
+                )
+            )
+            for asset in session.scalars(
+                select(ShortEpisodeAsset).where(
+                    ShortEpisodeAsset.short_episode_id.in_(episode_ids),
+                )
+            ):
+                assets.setdefault(asset.short_episode_id, []).append(asset)
+
+        results: list[TrendDeliveryEpisodeResponse] = []
+        for row in episodes:
+            saved = assets.get(row.id, [])
+            verified = next(
+                (
+                    asset for asset in saved
+                    if asset.kind == "render"
+                    and (asset.asset_metadata or {}).get("verified") is True
+                ),
+                None,
+            )
+            narration_count = sum(
+                1 for asset in saved if asset.kind.startswith("narration_")
+            )
+            scripted = bool(row.selected_script_id and row.selected_script_id in scripts)
+            updated_at = _utc_schedule_time(row.updated_at or row.created_at)
+            age = checked_at - updated_at if updated_at else timedelta(0)
+            if row.status in {"failed", "rejected"}:
+                health = row.status
+                next_step = "operator_attention" if row.status == "failed" else "new_candidate"
+            elif verified is not None:
+                health = "render_verified"
+                next_step = (
+                    "review_or_publication_handoff"
+                    if row.status not in {"approved", "published"}
+                    else "publication_status"
+                )
+            elif row.status == "planned":
+                health = "planning_overdue" if age > timedelta(hours=24) else "planned"
+                next_step = "editorial_dispatch_or_authorization"
+            elif age > timedelta(hours=6):
+                health = "stage_stalled"
+                next_step = "inspect_episode_workflow"
+            elif row.render_manifest:
+                health = "render_pending"
+                next_step = "verify_render_output"
+            elif narration_count:
+                health = "narration_recorded"
+                next_step = "editorial_review_or_render"
+            elif scripted:
+                health = "script_recorded"
+                next_step = "narration"
+            else:
+                health = "in_progress"
+                next_step = "script_generation"
+            results.append(
+                TrendDeliveryEpisodeResponse(
+                    episode_id=row.id,
+                    status=row.status,
+                    stage=row.stage,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at or row.created_at,
+                    script_selected=scripted,
+                    narration_assets_recorded=narration_count,
+                    render_manifest_recorded=bool(row.render_manifest),
+                    render_verified=verified is not None,
+                    render_asset_id=verified.id if verified is not None else None,
+                    health=health,
+                    next_step=next_step,
+                )
+            )
+    return TrendDeliveryProgressResponse(
+        channel_profile_id=channel_profile_id,
+        checked_at=checked_at,
+        episodes=results,
+        scripted_count=sum(episode.script_selected for episode in results),
+        verified_render_count=sum(episode.render_verified for episode in results),
+        stalled_count=sum(
+            episode.health in {"stage_stalled", "planning_overdue", "failed"}
+            for episode in results
+        ),
+    )
 
 
 @router.get(

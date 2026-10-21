@@ -30,6 +30,15 @@ const state = {
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
+    trendPolicy: null,
+    trendRuns: [],
+    trendSchedule: null,
+    trendRuntime: null,
+    trendRuntimeError: "",
+    trendDelivery: null,
+    trendDeliveryError: "",
+    trendLoadError: "",
+    trendBusy: false,
     voiceToggleBusy: false,
     oauthResult: launchParams.get("youtube") || "",
     oauthConnectionId: launchParams.get("connection") || "",
@@ -863,6 +872,10 @@ async function loadChannel() {
         clearProductionPreviews();
         state.summary = null; state.operations = null; state.publications=[];state.productions=[];state.brands=[];
         state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
+        state.trendPolicy = null; state.trendRuns = []; state.trendSchedule = null;
+        state.trendRuntime = null; state.trendRuntimeError = "";
+        state.trendDelivery = null; state.trendDeliveryError = "";
+        state.trendLoadError = "";
     }
     const channel = activeChannel();
     try {
@@ -879,14 +892,24 @@ async function loadChannel() {
             ),
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-policy"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runs?limit=5"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-schedule"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runtime"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/delivery-progress"),
         ]);
         if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
-        const names = ["summary", "operations", "publications", "productions", "brands"];
+        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns", "trendSchedule", "trendRuntime", "trendDelivery"];
         const failures = [];
+        const trendFailures = [];
         panels.forEach((result, index) => {
             if (result.status === "fulfilled") state[names[index]] = result.value;
+            else if (index === 8) state.trendRuntimeError = result.reason.message;
+            else if (index === 9) state.trendDeliveryError = result.reason.message;
+            else if (index >= 5) trendFailures.push(names[index] + ": " + result.reason.message);
             else failures.push(names[index] + ": " + result.reason.message);
         });
+        state.trendLoadError = trendFailures.join("; ");
         state.pageOffsets.publications = state.publications.length;
         state.pageOffsets.productions = state.productions.length;
         $("more-publications").hidden = state.publications.length < 250;
@@ -978,6 +1001,7 @@ function renderAll() {
     renderGrowth();
     renderProductions();
     renderControls();
+    renderTrendAutomation();
     renderProviders();
 }
 
@@ -2238,6 +2262,322 @@ function renderControls() {
     }
 }
 
+function trendStatusReason(value) {
+    return friendly(String(value || "unavailable")).replaceAll(" Ai ", " AI ");
+}
+
+function renderTrendAutomation() {
+    const policy = state.trendPolicy;
+    const metadata = policy?.policy_metadata || {};
+    const enabled = policy?.enabled === true;
+    const editorial = metadata.auto_start_editorial === true;
+    const badge = $("trend-automation-badge");
+    badge.textContent = !policy ? "Not configured" : !enabled ? "Paused" :
+        editorial ? "Editorial authorized" : "Planning only";
+    $("trend-plan-enabled").checked = enabled;
+    $("trend-editorial-enabled").checked = editorial;
+    const max = Number(metadata.editorial_max_starts_per_scan);
+    $("trend-editorial-limit").value = max === 2 ? "2" : "1";
+    $("save-trend-automation").disabled = Boolean(state.trendLoadError) || state.trendBusy;
+    const schedule = state.trendSchedule;
+    $("register-trend-schedule").disabled = !enabled || state.trendBusy || Boolean(state.trendLoadError);
+    const hours = Number(schedule?.interval_hours || 6);
+    $("trend-schedule-hours").value = [1, 3, 6, 12, 24].includes(hours) ? String(hours) : "6";
+    $("trend-schedule-status").textContent = state.trendLoadError
+        ? "Schedule status unavailable."
+        : !schedule?.registered ? "No recurring trend scan registered. New opportunities will not be scanned automatically by this schedule."
+        : !schedule.enabled ? "Schedule is disabled."
+        : "Registered every " + schedule.interval_hours + " hour(s), generation " +
+            schedule.generation + (schedule.reconcile_pending ? "; reconciliation pending" : "") +
+            ". Live Temporal worker health has not been verified.";
+    if (schedule?.registered && schedule.enabled && schedule.scan_health) {
+        const scanHealth = {
+            awaiting_first_scan: "Waiting for the first scheduled scan receipt.",
+            first_scan_overdue: "OVERDUE: no scheduled scan has been recorded after the grace window.",
+            scan_in_progress: "A scheduled scan has started; completion is not yet recorded.",
+            scan_stalled: "POSSIBLY STALLED: a scheduled scan has been running for over 30 minutes.",
+            scan_policy_disabled: "The scheduled scan ran, but the channel's planning policy was disabled.",
+            last_scan_not_completed: "The latest scheduled scan did not complete successfully.",
+            scan_overdue: "OVERDUE: no new scheduled scan within the expected observation window.",
+            recent_scan: "Recent scheduled scan receipt recorded.",
+            reconcile_pending: "Schedule reconciliation is pending; execution may be interrupted.",
+        };
+        const label = scanHealth[schedule.scan_health] || "Scan execution status is unknown.";
+        $("trend-schedule-status").textContent += " " + label;
+        if (schedule.last_scheduled_scan_started_at) {
+            const started = new Date(schedule.last_scheduled_scan_started_at);
+            const observedAt = Number.isNaN(started.getTime())
+                ? schedule.last_scheduled_scan_started_at
+                : started.toLocaleString(undefined, {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                });
+            $("trend-schedule-status").textContent += " Latest scheduled scan: " +
+                observedAt + " (" +
+                friendly(schedule.last_scheduled_scan_status || "unknown") + ").";
+        }
+        if (schedule.scan_overdue && !["scan_overdue", "first_scan_overdue"].includes(schedule.scan_health)) {
+            $("trend-schedule-status").textContent += " Scan cadence is also overdue.";
+        }
+        $("trend-schedule-status").textContent +=
+            " A scan receipt confirms past execution, not current worker availability.";
+    }
+    const runtime = state.trendRuntime;
+    if (schedule?.registered && schedule.enabled) {
+        const states = {
+            queues_recently_polled: "Temporal reports recent pollers for discovery, trend scoring, intelligence and editorial queues; the scheduled workflow is running.",
+            discovery_worker_not_observed: "No recent discovery workflow/activity pollers. Automatic research and source ingestion may be stalled.",
+            discovery_queue_unavailable: "Discovery task queue could not be checked; automatic research readiness is unknown.",
+            trend_worker_not_observed: "No recent trend-scoring workflow/activity pollers. Scheduled scans may run without fresh opportunities.",
+            trend_queue_unavailable: "Trend-scoring task queue could not be checked; fresh opportunity scoring is unverified.",
+            editorial_worker_not_observed: "The production/editorial queue has no recent workflow/activity pollers; scripts and renders may stall.",
+            editorial_queue_unavailable: "Production/editorial task queue could not be checked.",
+            intelligence_worker_not_observed: "The schedule is running, but intelligence workflow/activity pollers were not both observed recently.",
+            intelligence_queue_unavailable: "The intelligence task queue could not be checked.",
+            workflow_not_running: "Registered schedule is not running in Temporal.",
+            workflow_unavailable: "Temporal could not describe the registered schedule.",
+            probe_timeout: "Temporal diagnostic timed out; current readiness is unknown.",
+            unavailable: "Temporal connection unavailable; current readiness is unknown.",
+        };
+        $("trend-schedule-status").textContent += " Runtime: " +
+            (runtime ? (states[runtime.status] || friendly(runtime.status)) :
+                "Unknown" + (state.trendRuntimeError ? " (diagnostic request failed)" : " (not checked)")) +
+            " Pollers are readiness evidence, not proof of rendered content.";
+    }
+    const description = $("trend-automation-message");
+    if (state.trendLoadError) {
+        description.textContent = "Cannot load policy or scan history: " +
+            state.trendLoadError + ". Refresh before making changes.";
+    } else if (!policy) {
+        description.textContent = "No policy exists yet. Both planning and AI editorial are off. Saving creates a versioned channel policy.";
+    } else {
+        description.textContent = "Policy v" + policy.version +
+            ". Planning " + (enabled ? "on" : "off") +
+            "; AI editorial " + (editorial ? "authorized" : "off") +
+            ". Saving does not launch a scan or publish a video.";
+    }
+    const runs = Array.isArray(state.trendRuns) ? state.trendRuns : [];
+    const host = $("trend-automation-runs");
+    const delivered = Array.isArray(state.trendDelivery?.episodes)
+        ? state.trendDelivery.episodes : [];
+    const evidence = state.trendDeliveryError
+        ? '<p>Episode delivery evidence unavailable.</p>'
+        : !delivered.length
+            ? '<p>No autonomous trend episodes recorded for this channel yet.</p>'
+            : '<div class="trend-automation-run"><strong>Episode delivery evidence</strong>' +
+                '<p>' + escapeHtml(state.trendDelivery.scripted_count +
+                ' selected scripts · ' + state.trendDelivery.verified_render_count +
+                ' verified renders · ' + state.trendDelivery.stalled_count +
+                ' overdue or failed') + '</p></div>' +
+                delivered.map((episode) => {
+                    const stage = 'Episode ' + String(episode.episode_id).slice(0, 8) +
+                        ' · ' + trendStatusReason(episode.stage);
+                    const proof = episode.render_verified ? 'Verified render receipt' :
+                        episode.render_manifest_recorded ? 'Render manifest only; no verified output' :
+                        episode.narration_assets_recorded ? 'Narration assets recorded' :
+                        episode.script_selected ? 'Selected script saved' :
+                        'No script or video artifact recorded';
+                    return '<div class="trend-automation-run"><strong>' + escapeHtml(stage) +
+                        '</strong><p>' + escapeHtml(proof + ' · ' +
+                        trendStatusReason(episode.health) + ' · Next: ' +
+                        trendStatusReason(episode.next_step)) + '</p></div>';
+                }).join('');
+    if (!runs.length) {
+        host.innerHTML = evidence + '<p>' + escapeHtml(state.trendLoadError
+            ? "Scan history unavailable."
+            : "No autonomous trend scans recorded for this channel yet. A schedule must also be running.") + '</p>';
+        return;
+    }
+    host.innerHTML = evidence + runs.map((run) => {
+        const dispatch = run.run_metadata?.editorial_dispatch;
+        let detail = !dispatch ? "No editorial handoff recorded (planning-only or older scan)." :
+            dispatch.status === "blocked" ? "Editorial blocked: " + trendStatusReason(dispatch.reason) :
+            dispatch.status === "dispatched" ? (dispatch.started?.length || 0) + " editorial workflow(s) started" :
+            dispatch.status === "partial_failure" ? "Dispatch retry needed; " + (dispatch.failed?.length || 0) + " failed" :
+            "No new eligible editorial work";
+        if ((dispatch?.skipped || []).length) detail += " · " + dispatch.skipped.length + " plan(s) skipped";
+        const refresh = run.run_metadata?.trend_refresh;
+        if (refresh) {
+            const status = refresh.status;
+            const scored = Number(refresh.topics_scored || 0);
+            const qualified = Number(refresh.qualified_opportunities || 0);
+            const scoredLabel = status === "completed"
+                ? (scored ? "Trend scoring: " + scored + " topic(s), " + qualified + " qualified" :
+                    "Trend scoring: no stored topics or signals scored")
+                : status === "awaiting_configuration" ? "Trend scoring blocked: no channel watch configured"
+                : status === "withheld_source_coverage" ? "Trend scoring blocked: insufficient source coverage"
+                : status === "planning_disabled" ? "Trend scoring skipped: planning policy disabled"
+                : status === "refresh_failed" ? "Trend scoring failed: trend worker unavailable or errored"
+                : "Trend scoring outcome: " + trendStatusReason(status);
+            detail = scoredLabel + " · " + detail;
+        }
+        return '<div class="trend-automation-run"><strong>' +
+            escapeHtml(friendly(run.status)) + '</strong> <small>' +
+            escapeHtml(dateText(run.completed_at || run.started_at)) +
+            '</small><p>' + escapeHtml(Number(run.activated_count || 0) +
+                " episode plan(s) created · " + detail) + '</p></div>';
+    }).join("");
+}
+
+async function refreshTrendAutomation() {
+    if (!state.channelId || state.trendBusy) return;
+    const channelId = state.channelId;
+    const prefix = "/v1/channels/" + encodeURIComponent(channelId) + "/trends/";
+    const button = $("refresh-trend-automation");
+    button.disabled = true;
+    try {
+        const [policy, runs, schedule, runtime, delivery] = await Promise.all([
+            api(prefix + "activation-policy"),
+            api(prefix + "activation-runs?limit=5"),
+            api(prefix + "activation-schedule"),
+            api(prefix + "activation-runtime").then(
+                (value) => ({value, error: ""}),
+                (error) => ({value: null, error: error.message}),
+            ),
+            api(prefix + "delivery-progress").then(
+                (value) => ({value, error: ""}),
+                (error) => ({value: null, error: error.message}),
+            ),
+        ]);
+        if (channelId !== state.channelId) return;
+        state.trendPolicy = policy;
+        state.trendRuns = runs;
+        state.trendSchedule = schedule;
+        state.trendRuntime = runtime.value;
+        state.trendRuntimeError = runtime.error;
+        state.trendDelivery = delivery.value;
+        state.trendDeliveryError = delivery.error;
+        state.trendLoadError = "";
+        renderTrendAutomation();
+    } catch (error) {
+        if (channelId !== state.channelId) return;
+        state.trendLoadError = error.message;
+        renderTrendAutomation();
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function registerTrendSchedule() {
+    const channelId = state.channelId;
+    if (!channelId || state.trendBusy || state.trendLoadError) return;
+    if (!state.trendPolicy?.enabled) {
+        $("trend-schedule-status").textContent =
+            "Save an enabled trend-planning policy before registering recurring scans.";
+        return;
+    }
+    const interval = Number($("trend-schedule-hours").value);
+    if (![1, 3, 6, 12, 24].includes(interval)) return;
+    const hasPaidEditorial = state.trendPolicy.policy_metadata?.auto_start_editorial === true;
+    if (!window.confirm(
+        "Register a recurring trend scan every " + interval + " hour(s)? " +
+        "The first scan may start immediately. " +
+        (hasPaidEditorial
+            ? "This channel authorizes paid AI editorial for qualified episodes."
+            : "Planning is enabled; paid AI editorial is not authorized.") +
+        " Existing budget and publication gates remain in force."
+    )) return;
+    const button = $("register-trend-schedule");
+    state.trendBusy = true;
+    button.disabled = true;
+    $("trend-schedule-status").textContent = "Registering the recurring scan…";
+    try {
+        const prefix = "/v1/channels/" + encodeURIComponent(channelId) + "/trends/";
+        // Recheck current policy so a recently disabled channel cannot be
+        // inadvertently scheduled through a stale browser tab.
+        const policy = await api(prefix + "activation-policy");
+        if (channelId !== state.channelId) return;
+        if (!policy?.enabled || policy.version !== state.trendPolicy?.version) {
+            throw new Error("The channel policy changed. Refresh before scheduling.");
+        }
+        await api(prefix + "activation-schedule", {
+            method: "POST", body: JSON.stringify({interval_hours: interval}),
+        });
+        if (channelId !== state.channelId) return;
+        state.trendSchedule = await api(prefix + "activation-schedule");
+        if (channelId !== state.channelId) return;
+        // Re-read runtime after registration; the previous pre-registration
+        // observation is no longer valid. Probe errors never undo registration.
+        state.trendRuntime = null;
+        state.trendRuntimeError = "";
+        const runtime = await api(prefix + "activation-runtime").then(
+            (value) => ({value, error: ""}),
+            (error) => ({value: null, error: error.message}),
+        );
+        if (channelId !== state.channelId) return;
+        state.trendRuntime = runtime.value;
+        state.trendRuntimeError = runtime.error;
+        renderTrendAutomation();
+        setStatus("Recurring trend scan registered. Verify scan receipts and actual media output.", "success");
+    } catch (error) {
+        if (channelId !== state.channelId) return;
+        $("trend-schedule-status").textContent = "Schedule registration failed: " + error.message;
+        setStatus(error.message, "error");
+    } finally {
+        state.trendBusy = false;
+        button.disabled = !state.trendPolicy?.enabled || Boolean(state.trendLoadError);
+        $("save-trend-automation").disabled = Boolean(state.trendLoadError);
+    }
+}
+
+async function saveTrendAutomation(event) {
+    event.preventDefault();
+    if (state.trendBusy || !state.channelId || state.trendLoadError) return;
+    const channelId = state.channelId;
+    const enabled = $("trend-plan-enabled").checked;
+    const editorial = $("trend-editorial-enabled").checked;
+    const limit = Number($("trend-editorial-limit").value);
+    if (editorial && !enabled) {
+        $("trend-automation-message").textContent = "Enable automatic trend planning before authorizing AI editorial.";
+        return;
+    }
+    if (editorial && state.trendPolicy?.policy_metadata?.auto_start_editorial !== true &&
+        !window.confirm("Allow Katcha to start paid AI script and voice work for qualified " +
+            "episodes on this channel? Budget and review controls remain active.")) return;
+    const button = $("save-trend-automation");
+    state.trendBusy = true;
+    button.disabled = true;
+    $("trend-automation-message").textContent = "Checking for concurrent channel-policy changes…";
+    try {
+        const prefix = "/v1/channels/" + encodeURIComponent(channelId) + "/trends/";
+        const current = await api(prefix + "activation-policy");
+        if (channelId !== state.channelId) return;
+        if ((current?.version || null) !== (state.trendPolicy?.version || null)) {
+            throw new Error("Channel policy changed elsewhere. Refresh and review before saving.");
+        }
+        const fields = [
+            "min_opportunity_score", "min_confidence", "min_calibrated_score",
+            "min_rights_readiness", "min_lead_time_minutes",
+            "max_activations_per_day", "cooldown_minutes", "max_backlog",
+            "min_budget_headroom_usd", "max_opportunities_per_run",
+        ];
+        const payload = {
+            enabled,
+            auto_start_editorial: editorial,
+            editorial_max_starts_per_scan: limit,
+            metadata: { ...(current?.policy_metadata || {}) },
+            actor: "channel-studio",
+        };
+        for (const key of fields) if (current?.[key] != null) payload[key] = current[key];
+        const saved = await api(prefix + "activation-policy", {
+            method: "POST", body: JSON.stringify(payload),
+        });
+        if (channelId !== state.channelId) return;
+        state.trendPolicy = saved;
+        state.trendLoadError = "";
+        renderTrendAutomation();
+        setStatus("Autonomous editorial settings saved for this channel. No scan was started.", "success");
+    } catch (error) {
+        if (channelId !== state.channelId) return;
+        $("trend-automation-message").textContent = "Save failed: " + error.message;
+        setStatus(error.message, "error");
+    } finally {
+        state.trendBusy = false;
+        button.disabled = Boolean(state.trendLoadError);
+        $("register-trend-schedule").disabled =
+            !state.trendPolicy?.enabled || Boolean(state.trendLoadError);
+    }
+}
+
 async function refreshIntelligence() {
     try {
         setStatus("Starting channel intelligence refresh…");
@@ -2357,6 +2697,9 @@ $("channel-activity-list").addEventListener("click", openChannelActivityCard);
 $("channel-activity-list").addEventListener("keydown", openChannelActivityCard);
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("trend-automation-form").addEventListener("submit", saveTrendAutomation);
+$("refresh-trend-automation").addEventListener("click", refreshTrendAutomation);
+$("register-trend-schedule").addEventListener("click", registerTrendSchedule);
 $("elevenlabs-enabled").addEventListener("change", async (event) => {
     await setElevenLabsEnabled(event.target.checked);
 });
