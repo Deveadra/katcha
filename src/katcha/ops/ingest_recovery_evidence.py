@@ -104,11 +104,19 @@ async def _describe(client: Any, workflow_id: str | None) -> dict[str, Any]:
     state = description.status
     if not isinstance(state, WorkflowExecutionStatus):
         return {"visibility": "unverified", "status": None, "terminal": None}
-    return {
+    run_id = getattr(description, "run_id", None)
+    try:
+        verified_run_id = str(uuid.UUID(run_id)) if isinstance(run_id, str) else None
+    except ValueError:
+        verified_run_id = None
+    result: dict[str, Any] = {
         "visibility": "verified",
         "status": state.name,
         "terminal": state in _TERMINAL,
     }
+    if verified_run_id is not None:
+        result["run_id"] = verified_run_id
+    return result
 
 
 def _inventory(store: ObjectStore, source_id: uuid.UUID, limit: int) -> dict[str, Any]:
