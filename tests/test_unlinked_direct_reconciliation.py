@@ -168,7 +168,7 @@ async def test_supervised_recovery_reconstructs_original_clip_without_r2_changes
         ("remote", "leased_remote_acquisition_excluded"),
         ("bytes", "raw_object_not_verified"),
         ("other_clip", "existing_clip_collision_requires_review"),
-        ("already_ready", "source_not_ingesting"),
+        ("already_ready", "source_not_recoverable"),
     ],
 )
 async def test_unknown_or_conflicting_media_never_approves(saved, monkeypatch, failure, reason):
@@ -202,6 +202,32 @@ async def test_unknown_or_conflicting_media_never_approves(saved, monkeypatch, f
     assert reason in plan["blockers"]
     assert plan["eligible"] is False
     assert plan["approval_fingerprint"] is None
+
+
+@pytest.mark.asyncio
+async def test_failed_source_with_durable_proof_can_be_reconciled(saved, monkeypatch):
+    source_id, store, claim = source_with_verified_claim(monkeypatch)
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        source.status = SourceStatus.FAILED.value
+        source.error = "Ingest exhausted its Temporal retry policy"
+    temporal = Temporal(status=WorkflowExecutionStatus.FAILED)
+    plan = await recovery.plan_unlinked_direct_recovery(
+        source_id, temporal_client=temporal, store=store,
+    )
+    assert plan["eligible"] is True
+    assert plan["proof_sha256"] == claim["sha256"]
+    outcome = await recovery.finalize_unlinked_direct_recovery(
+        source_id, approved_fingerprint=plan["approval_fingerprint"],
+        temporal_client=temporal, store=store,
+    )
+    assert outcome["status"] == SourceStatus.READY.value
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        assert source.error is None
+        assert source.clip_id is not None
+        assert source.source_metadata["direct_promotion_proof"] == claim
+    assert store.mutations == 0
 
 
 @pytest.mark.asyncio
