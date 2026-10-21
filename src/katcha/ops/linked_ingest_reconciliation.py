@@ -108,8 +108,10 @@ async def plan_linked_clip_recovery(
         reasons.append("source_missing")
     else:
         clip = snapshot["clip"]
-        if snapshot["source_status"] != SourceStatus.INGESTING.value:
-            reasons.append("source_not_ingesting")
+        if snapshot["source_status"] not in {
+            SourceStatus.INGESTING.value, SourceStatus.FAILED.value,
+        }:
+            reasons.append("source_not_recoverable")
         if snapshot["remote_acquisition_job_recorded"]:
             reasons.append("remote_acquisition_separate")
         if not snapshot["workflow_id"]:
