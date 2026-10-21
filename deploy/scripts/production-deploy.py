@@ -967,8 +967,6 @@ def readiness() -> dict[str, Any]:
         "note": "Read-only preflight. Not a deployment authorization.",
     }
 
-
-
 def plan_release(target: str) -> dict[str, Any]:
     """Read-only release-specific diagnosis of the current OCI production host.
 
@@ -981,6 +979,8 @@ def plan_release(target: str) -> dict[str, Any]:
     state = readiness()  # Attests host/runtime/schema and every Temporal execution.
     old, _ = pinned(ENV)
     if old == target:
+        if github("/branches/main").get("commit", {}).get("sha") != target:
+            raise Blocked("provided target is not accepted current main")
         return {
             "status": "CURRENT", "current_sha": old, "target_sha": target,
             "database_revision": state["database_start_revision"],
@@ -996,7 +996,8 @@ def plan_release(target: str) -> dict[str, Any]:
     files = comparison.get("files")
     commits = comparison.get("total_commits")
     if (comparison.get("status") != "ahead" or comparison.get("behind_by") != 0
-        or comparison.get("merge_base_commit", {}).get("sha") != old
+        or not isinstance(comparison.get("merge_base_commit"), dict)
+        or comparison["merge_base_commit"].get("sha") != old
         or type(commits) is not int or not 0 < commits <= 250
         or not isinstance(files, list) or not 0 < len(files) < 300):
         raise Blocked("candidate ancestry or comparison exceeds reviewed limits")
