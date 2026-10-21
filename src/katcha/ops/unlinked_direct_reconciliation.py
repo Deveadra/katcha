@@ -126,8 +126,10 @@ async def plan_unlinked_direct_recovery(
     reasons: list[str] = []
     if snapshot != current or report.get("source_changed_during_inspection"):
         reasons.append("source_changed")
-    if snapshot["status"] != SourceStatus.INGESTING.value:
-        reasons.append("source_not_ingesting")
+    if snapshot["status"] not in {
+        SourceStatus.INGESTING.value, SourceStatus.FAILED.value,
+    }:
+        reasons.append("source_not_recoverable")
     if snapshot["clip_id"]:
         reasons.append("already_linked")
     if snapshot["remote_acquisition"]:
