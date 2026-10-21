@@ -22,7 +22,6 @@ from katcha.services.automation_schedules import (
     locked_schedule_for_reconcile,
     register_channel_trend_activation_schedule,
 )
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeScript
 from katcha.services.trend_activation_performance import (
     latest_activation_performance,
     list_activation_performance,
@@ -33,6 +32,7 @@ from katcha.services.trend_auto_activation import (
     list_activation_decisions,
     list_activation_runs,
 )
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeScript
 from katcha.trend_activation_models import (
     TrendActivationDecision,
     TrendActivationPerformanceSnapshot,
