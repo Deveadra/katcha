@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -90,8 +89,11 @@ async def test_pre_promotion_claim_and_audit_link_source_to_exact_bytes(saved, m
     before = db_state(source_id)
     again = provenance.record_verified_direct_promotion(
         source_id,
-        canonical_url=before["metadata"][provenance.PROOF_KEY]
-        and "https://publisher.example.org/" + str(source_id) + ".mp4?private=token",
+        canonical_url=(
+            "https://publisher.example.org/"
+            + str(source_id)
+            + ".mp4?private=token"
+        ),
         stage_key=stage(source_id),
         sha256=claim["sha256"],
         size_bytes=len(VIDEO),
