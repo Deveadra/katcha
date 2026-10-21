@@ -29,7 +29,7 @@ _VALID_SHA = re.compile(r"^[0-9a-f]{64}$")
 _VALID_EXTENSIONS = frozenset({"mp4", "mov", "m4v", "webm", "mkv"})
 _VALID_STAGE = re.compile(
     r"^staging/direct/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/"
-    r"[0-9a-f]{32}\\.(mp4|mov|m4v|webm|mkv)$"
+    r"[0-9a-f]{32}\.(mp4|mov|m4v|webm|mkv)$"
 )
 
 
