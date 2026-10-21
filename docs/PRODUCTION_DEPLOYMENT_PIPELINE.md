@@ -1,6 +1,6 @@
 # Katcha production deployment pipeline
 
-Status: **image publication, release observation, and read-only runtime attestation implemented; production promotion NOT enabled**.
+Status: **CI-gated image publication, read-only release observation, runtime attestation and protected host-pull production promotion implemented; production promotion remains disabled by default**. Fully unattended/continuous production promotion is not enabled.
 See [host observer](PRODUCTION_RELEASE_OBSERVER.md) for the opt-in,
 non-deploying hourly inspection path. The observer reports configured
 release drift and risk flags; it does not deploy or attest running images.
@@ -25,7 +25,7 @@ the active OCI production primary.
   `KATCHA_RELEASE_SHA`. Publishing new GHCR images does **not** modify this
   file or restart the host.
 
-## Stage 1: CI-gated image publication (this PR)
+## Stage 1: CI-gated image publication
 
 1. PR checks build only affected images without pushing.
 2. CI on accepted `main` completes **successfully**.
@@ -34,7 +34,7 @@ the active OCI production primary.
    that have already been superseded on `main`.
 4. It checks out the exact CI-tested SHA, builds multi-architecture images,
    publishes SHA and compatibility `:main` tags, and verifies anonymous pulls
-   and OCI image revision labels for all six images.
+   and OCI image revision labels for all seven verified runtime image targets.
 5. Any failure keeps the SHA **not publish-accepted**; no production mutation is
    performed. Existing images may remain in GHCR. A successful image workflow
    is not evidence that production was upgraded.
@@ -69,23 +69,31 @@ process. **Do not improvise a concurrent Compose promotion or restart systemd**
 without verifying/controlling supervisor behavior, lock ownership, and rollback.
 A full host restart will naturally restart workers (not duplicate them), with
 each service resolving its appropriate stored immutable release pin.
-The routine autonomous promotion stage below remains unimplemented.
+The signed, supervised full-stack host-pull promotion exists but remains
+disabled by default; automatic unattended promotion remains unimplemented.
 
 ## Publication evidence correction (CD-105)
 
 The main CI workflow also runs on a schedule. Its completed events must never
 trigger GHCR publishing or masquerade as a new deployable release. The image
 job now skips those events at job level, while the release-eligibility checker
-requires **actual successful build jobs for all six images and a successful
+requires **actual successful build jobs for all seven runtime images and a successful
 anonymous-pull verification job**, on an attempted publication associated with
 the accepted push CI. Fully skipped workflow runs are inert and do not supersede
 a validated publication; a later failed real build/verification blocks. The
 association window is bounded to avoid exhausting anonymous GitHub API limits
 when a main SHA stays unchanged. Image tags alone are not approval.
 
-## Stage 2: verified production promotion (NOT implemented)
+## Stage 2: supervised host-pull production promotion (implemented, OFF)
 
-Before automatic live deployment, implement **and independently review**:
+The approved host-pull executor and signed GitHub release request are
+implemented behind independent GitHub and OCI opt-in gates. See
+[PRODUCTION_DEPLOYMENT_RUNBOOK.md](PRODUCTION_DEPLOYMENT_RUNBOOK.md) for the
+explicit maintenance-window procedure and read-only exact-SHA
+`--plan-release` migration/drift diagnosis. **Neither GHCR publication nor
+the hourly observer promotes a release.**
+
+Before considering fully unattended promotion, separately implement and review:
 
 - A candidate release record bound to the exact successful CI workflow run,
   the successful image workflow run and independently checked immutable image

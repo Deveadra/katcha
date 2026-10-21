@@ -7,11 +7,12 @@ import re
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from katcha.api.control_auth import require_control_channel, require_control_scope
 from katcha.db import session_scope
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip
@@ -108,7 +109,11 @@ def _stream_object(
         )
     start_text, end_text = match.groups()
     if not start_text and not end_text:
-        raise HTTPException(status_code=416, detail="empty media byte range")
+        raise HTTPException(
+            status_code=416,
+            detail="empty media byte range",
+            headers={"Content-Range": f"bytes */{size}"},
+        )
     if start_text:
         start = int(start_text)
         end = int(end_text) if end_text else size - 1
@@ -144,12 +149,10 @@ def stream_source_clip(clip_id: uuid.UUID, request: Request) -> StreamingRespons
     return _stream_object(request, key, f"clip-{clip_id}.{extension}")
 
 
-@router.get("/episodes/{episode_id}/media")
-def stream_episode_render(
-    episode_id: uuid.UUID,
-    request: Request,
-    generation: int | None = Query(default=None, ge=1),
-) -> StreamingResponse:
+def _episode_render_asset(
+    episode_id: uuid.UUID, generation: int | None,
+) -> tuple[str, uuid.UUID]:
+    """Re-read the selected render so an old ticket cannot follow a replaced key."""
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_id)
         if episode is None:
@@ -182,7 +185,62 @@ def stream_episode_render(
                 status_code=409,
                 detail="render asset does not match frozen manifest",
             )
-    return _stream_object(request, key, f"episode-{episode_id}.mp4")
+        return key, episode.channel_profile_id
+
+
+def _episode_review_scope(
+    episode_id: uuid.UUID, key: str, channel_profile_id: uuid.UUID,
+    generation: int | None,
+) -> dict[str, str]:
+    return {
+        "kind": "studio_episode",
+        "id": str(episode_id),
+        "storage_key": key,
+        "channel_profile_id": str(channel_profile_id),
+        "generation": str(generation) if generation is not None else "latest",
+    }
+
+
+@router.post("/episodes/{episode_id}/media-session")
+def episode_media_session(
+    episode_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    generation: int | None = Query(default=None, ge=1),
+) -> dict[str, object]:
+    """Mint an exact-media short-lived cookie for native browser range requests."""
+    from katcha.api.main import _make_review_session
+
+    require_control_scope(request, "channels:read")
+    key, owner = _episode_render_asset(episode_id, generation)
+    require_control_channel(request, owner)
+    path = f"/v1/studio/episodes/{episode_id}/media"
+    result = _make_review_session(
+        response, path, _episode_review_scope(episode_id, key, owner, generation)
+    )
+    if generation is not None:
+        result["media_url"] = f"{path}?generation={generation}"
+    return result
+
+
+@router.get("/episodes/{episode_id}/media")
+def stream_episode_render(
+    episode_id: uuid.UUID,
+    request: Request,
+    generation: int | None = Query(default=None, ge=1),
+) -> StreamingResponse:
+    from katcha.api.main import _verify_review_cookie
+
+    key, owner = _episode_render_asset(episode_id, generation)
+    if not _verify_review_cookie(
+        request, _episode_review_scope(episode_id, key, owner, generation)
+    ):
+        require_control_scope(request, "channels:read")
+        require_control_channel(request, owner)
+    return _stream_object(
+        request, key, f"episode-{episode_id}.mp4",
+        cache_control="private, no-store",
+    )
 
 
 @router.post(
