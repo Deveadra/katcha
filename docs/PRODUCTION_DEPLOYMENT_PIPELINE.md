@@ -1,6 +1,6 @@
 # Katcha production deployment pipeline
 
-Status: **image publication, release observation, and read-only runtime attestation implemented; production promotion NOT enabled**.
+Status: **CI-gated image publication, read-only release observation, runtime attestation and protected host-pull production promotion implemented; production promotion remains disabled by default**. Fully unattended/continuous production promotion is not enabled.
 See [host observer](PRODUCTION_RELEASE_OBSERVER.md) for the opt-in,
 non-deploying hourly inspection path. The observer reports configured
 release drift and risk flags; it does not deploy or attest running images.
@@ -69,7 +69,8 @@ process. **Do not improvise a concurrent Compose promotion or restart systemd**
 without verifying/controlling supervisor behavior, lock ownership, and rollback.
 A full host restart will naturally restart workers (not duplicate them), with
 each service resolving its appropriate stored immutable release pin.
-The routine autonomous promotion stage below remains unimplemented.
+The signed, supervised full-stack host-pull promotion exists but remains
+disabled by default; automatic unattended promotion remains unimplemented.
 
 ## Publication evidence correction (CD-105)
 
@@ -83,9 +84,16 @@ a validated publication; a later failed real build/verification blocks. The
 association window is bounded to avoid exhausting anonymous GitHub API limits
 when a main SHA stays unchanged. Image tags alone are not approval.
 
-## Stage 2: verified production promotion (NOT implemented)
+## Stage 2: supervised host-pull production promotion (implemented, OFF)
 
-Before automatic live deployment, implement **and independently review**:
+The approved host-pull executor and signed GitHub release request are
+implemented behind independent GitHub and OCI opt-in gates. See
+[PRODUCTION_DEPLOYMENT_RUNBOOK.md](PRODUCTION_DEPLOYMENT_RUNBOOK.md) for the
+explicit maintenance-window procedure and read-only exact-SHA
+`--plan-release` migration/drift diagnosis. **Neither GHCR publication nor
+the hourly observer promotes a release.**
+
+Before considering fully unattended promotion, separately implement and review:
 
 - A candidate release record bound to the exact successful CI workflow run,
   the successful image workflow run and independently checked immutable image
