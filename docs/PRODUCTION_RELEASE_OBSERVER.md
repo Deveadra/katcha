@@ -20,8 +20,11 @@ The candidate must be accepted `main`, supported by successful exact-head CI
 and **later** successful runtime image publication, and descend from the
 currently configured global SHA. Compare evidence must be complete and bounded;
 300-file results, more than 250 commits, non-descendants and malformed evidence
-fail closed. The output identifies migration, worker and infrastructure changes.
-A second `main` lookup detects an update during observation.
+fail closed. The output identifies migration, worker and infrastructure changes,
+remaining commit/file headroom, and `cadence_review_due: true` when drift
+reaches 75 commits or 100 changed files. These are early review thresholds,
+not deployment permissions. A second `main` lookup detects an update during
+observation.
 
 Output is a single JSON line, with states `CURRENT`, `REVIEW_REQUIRED`,
 or `BLOCKED`; `BLOCKED` exits 2. These are **configuration observations**,
@@ -69,15 +72,22 @@ To disable the observer only:
 sudo systemctl disable --now katcha-release-observer.timer
 ```
 
-## Remaining release controller work
+## Separate production deployment controller
 
-The eventual promotion executor must be independently implemented and reviewed.
-It requires a dedicated opt-in gate `KATCHA_PRODUCTION_DEPLOY_ENABLED=true`
-(default false), host-local serialized release lease, actual running image
-digest and leader/fence checks, fresh backup and restore evidence, backward
-migration and Temporal workflow compatibility, bounded worker drain,
-supervisor-safe application replacement, public health/version and workspace
-acceptance, and a durable failure/rollback record.
+A protected, signed host-pull production deployer is implemented, but remains
+**disabled by default**, independently of this release observer. The reviewed
+deployment gate, bounded release comparator, exact migration policies, backup
+and restore, Temporal inventory and full-stack supervisor-safe restart live in
+`deploy/scripts/production-deploy.py`. See
+[PRODUCTION_DEPLOYMENT_RUNBOOK.md](PRODUCTION_DEPLOYMENT_RUNBOOK.md).
+
+Enabling the **read-only observer** does not enable production deployment.
+The running checkout must include the observer files before installing them;
+do not manually replace the running source just to start monitoring. After
+the next approved release, consider enabling the observer hourly and reviewing
+any `cadence_review_due` status before the delta approaches 250 commits or
+300 files. A journald observation is **not** a notification unless an external
+alerting path is separately connected.
 
 Never reuse OCI recovery, cleanup or paid-compute enablement as routine deploy
 authorization. A release that includes incompatible migrations or Temporal

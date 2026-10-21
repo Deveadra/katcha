@@ -210,3 +210,35 @@ def test_install_requires_explicit_opt_in() -> None:
     assert "systemctl enable --now katcha-release-observer.timer" in script
     assert "systemctl restart katcha.service" not in script
     assert "docker compose" not in script
+
+
+@pytest.mark.parametrize(
+    ("commits", "files", "review_due"),
+    [
+        (32, 55, False),
+        (75, 55, True),
+        (32, 100, True),
+        (249, 299, True),
+    ],
+)
+def test_release_observer_warns_before_hard_deployment_limits(
+    commits, files, review_due,
+):
+    def api(path):
+        if path.startswith("/compare/"):
+            return {
+                "status": "ahead", "behind_by": 0,
+                "merge_base_commit": {"sha": OLD},
+                "total_commits": commits,
+                "files": [
+                    {"filename": f"src/fixture_{i}.py", "status": "modified"}
+                    for i in range(files)
+                ],
+            }
+        raise AssertionError("unexpected read")
+
+    result = observer.compare_releases(api, OLD, NEW)
+    assert result["cadence_review_due"] is review_due
+    assert result["commits_until_hard_limit"] == 250 - commits
+    assert result["changed_files_until_hard_limit"] == 299 - files
+    assert result["requires_supervised_compatibility_review"] is True

@@ -1049,3 +1049,177 @@ def test_handoff_policy_pins_exact_migration_and_target_inventory(monkeypatch, s
     fixture[key]["sha"] = "f" * 40
     with pytest.raises(app.Blocked):
         app.eligible(OLD, NEW, "approve-additive-through-0066")
+
+def _plan_fixture(monkeypatch, *, revision=None, changes=None, active=6):
+    app = module()
+    revision = revision or app.LATEST_REVISION
+    chosen_changes = changes if changes is not None else [
+        {"filename": app.HANDOFF_FILE, "status": "added"},
+    ]
+    comparison = {
+        "status": "ahead", "behind_by": 0,
+        "merge_base_commit": {"sha": OLD},
+        "total_commits": 32,
+        # A migration-free release still changes application code. GitHub
+        # returns a nonempty changed-file list for a genuine newer commit.
+        "files": chosen_changes or [
+            {"filename": "src/katcha/web/settings.js", "status": "modified"},
+        ],
+    }
+    calls = []
+    monkeypatch.setattr(app, "readiness", lambda: {
+        "status": "REVIEW_REQUIRED",
+        "database_start_revision": revision,
+        "temporal_running_count": active,
+        "temporal_pending_activity_check": "PASSED",
+    })
+    monkeypatch.setattr(app, "pinned", lambda _path: (OLD, False))
+    monkeypatch.setattr(
+        app, "accepted_main_ancestry",
+        lambda target: calls.append(("accepted", target)),
+    )
+
+    def github(path):
+        calls.append(("github", path))
+        if path == f"/compare/{OLD}...{NEW}":
+            return comparison
+        if path == "/branches/main":
+            return {"commit": {"sha": NEW}}
+        if path == f"/contents/migrations/versions?ref={NEW}":
+            return [{"name": "0066_acquisition_handoff.py", "type": "file"}]
+        raise AssertionError(f"unexpected URL: {path}")
+
+    monkeypatch.setattr(app, "github", github)
+
+    def eligible(old, target, policy):
+        calls.append(("eligible", old, target, policy))
+        return bool(chosen_changes)
+
+    monkeypatch.setattr(app, "eligible", eligible)
+    monkeypatch.setattr(
+        app, "database_release_preflight",
+        lambda migrated, policy: calls.append(("schema", migrated, policy)),
+    )
+    return app, comparison, calls
+
+
+def test_release_plan_recognizes_0065_to_0066_and_six_active_workflows(
+    monkeypatch,
+):
+    app, _, calls = _plan_fixture(monkeypatch)
+    output = app.plan_release(NEW)
+    assert output["status"] == "REVIEW_REQUIRED"
+    assert output["current_sha"] == OLD
+    assert output["target_sha"] == NEW
+    assert output["commits_behind"] == 32
+    assert output["changed_files"] == 1
+    assert output["database_revision"] == app.LATEST_REVISION
+    assert output["migration_files"] == [app.HANDOFF_FILE]
+    assert output["candidate_migration_policy"] == "approve-additive-through-0066"
+    assert output["schema_change"] is True
+    assert output["temporal_running_count"] == 6
+    assert output["default_workflow_policy"] == "refuse"
+    assert output["deployment_authorized"] is False
+    assert ("eligible", OLD, NEW, "approve-additive-through-0066") in calls
+    assert ("schema", True, "approve-additive-through-0066") in calls
+    assert not any("deploy" in str(call) for call in calls)
+
+
+def test_release_plan_rejects_0066_jump_from_unreviewed_database(monkeypatch):
+    app, _, calls = _plan_fixture(monkeypatch, revision="0064_application_ai_settings")
+    with pytest.raises(app.Blocked, match="requires verified 0065"):
+        app.plan_release(NEW)
+    assert not any(call[0] in {"eligible", "schema"} for call in calls)
+
+
+def test_release_plan_refuses_missing_0066_even_if_no_migration_changed(monkeypatch):
+    app, _, _ = _plan_fixture(monkeypatch, changes=[])
+    with pytest.raises(app.Blocked, match="target includes 0066"):
+        app.plan_release(NEW)
+
+
+@pytest.mark.parametrize(
+    ("commits", "files"),
+    [(251, 1), (32, 300), (0, 1), (1, 0)],
+)
+def test_release_plan_rejects_oversized_or_incomplete_comparison(
+    monkeypatch, commits, files,
+):
+    app, comparison, calls = _plan_fixture(monkeypatch)
+    comparison["total_commits"] = commits
+    comparison["files"] = [
+        {"filename": f"src/fixture_{i}.py", "status": "added"}
+        for i in range(files)
+    ]
+    with pytest.raises(app.Blocked, match="exceeds reviewed limits"):
+        app.plan_release(NEW)
+    assert not any(call[0] in {"eligible", "schema"} for call in calls)
+
+
+@pytest.mark.parametrize("changes", [
+    [{"filename": "migrations/versions/0066_acquisition_handoff.py", "status": "modified"}],
+    [{"filename": "migrations/versions/0067_future.py", "status": "added"}],
+    [
+        {"filename": "migrations/versions/0065_acquisition_jobs.py", "status": "added"},
+        {"filename": "migrations/versions/0066_acquisition_handoff.py", "status": "added"},
+    ],
+])
+def test_release_plan_rejects_unknown_or_out_of_order_migrations(monkeypatch, changes):
+    app, _, _ = _plan_fixture(monkeypatch, changes=changes)
+    with pytest.raises(app.Blocked, match="migration chain"):
+        app.plan_release(NEW)
+
+
+def test_release_plan_keeps_unchanged_revision_on_migration_free_target(monkeypatch):
+    app, _, calls = _plan_fixture(
+        monkeypatch, revision="0066_acquisition_handoff",
+        changes=[], active=0,
+    )
+    result = app.plan_release(NEW)
+    assert result["database_revision"] == "0066_acquisition_handoff"
+    assert result["candidate_migration_policy"] == "refuse"
+    assert result["schema_change"] is False
+    assert result["temporal_running_count"] == 0
+    assert result["deployment_authorized"] is False
+    assert ("eligible", OLD, NEW, "refuse") in calls
+
+
+def test_release_plan_never_deploys_or_changes_authorization(monkeypatch):
+    app, _, _ = _plan_fixture(monkeypatch)
+    monkeypatch.setattr(
+        app, "deploy",
+        lambda *_args, **_kw: pytest.fail("read-only plan must not deploy"),
+    )
+    monkeypatch.setattr(
+        app, "authorized",
+        lambda: pytest.fail("read-only plan must not enable deployment"),
+    )
+    assert app.plan_release(NEW)["status"] == "REVIEW_REQUIRED"
+
+
+def test_release_plan_requires_exact_sha(monkeypatch):
+    app, _, calls = _plan_fixture(monkeypatch)
+    with pytest.raises(app.Blocked, match="exact 40-character"):
+        app.plan_release("main")
+    assert not calls
+
+
+def test_release_plan_current_pin_requires_current_main(monkeypatch):
+    app, _, calls = _plan_fixture(monkeypatch)
+    monkeypatch.setattr(app, "pinned", lambda _path: (NEW, False))
+    assert app.plan_release(NEW)["status"] == "CURRENT"
+    assert ("accepted", NEW) in calls
+
+    def reject_ancestry(_target):
+        raise app.Blocked("candidate is no longer an accepted main ancestor")
+
+    monkeypatch.setattr(app, "accepted_main_ancestry", reject_ancestry)
+    with pytest.raises(app.Blocked, match="accepted main ancestor"):
+        app.plan_release(NEW)
+
+
+def test_release_plan_rejects_invalid_merge_base(monkeypatch):
+    app, comparison, _ = _plan_fixture(monkeypatch)
+    comparison["merge_base_commit"] = None
+    with pytest.raises(app.Blocked, match="candidate ancestry"):
+        app.plan_release(NEW)
