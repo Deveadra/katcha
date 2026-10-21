@@ -185,7 +185,7 @@ This is read-only and explicitly returns `deployment_authorized: false`.
 It checks accepted exact-head CI and published images, commit/file comparison
 limits (at most 250 commits and fewer than 300 changed files), the actual
 database revision, immutable migration blobs, and pending Temporal activity
-safety. It returns a **candidate** `migration_policy` for operator review,
+safety. It returns a **candidate** `candidate_migration_policy` for operator review,
 not permission to execute. The chosen policy remains independently enforced
 by the signed deployment request and host executor. `BLOCKED` means **stop**,
 not use a more permissive policy or skip the check.
