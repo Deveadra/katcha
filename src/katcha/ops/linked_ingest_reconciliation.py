@@ -64,6 +64,14 @@ def _fields(source: SourceItem, clip: Clip | None) -> dict[str, Any]:
             "size_bytes": clip.size_bytes,
             "storage_key": clip.storage_key,
             "status": clip.status,
+            "extension": clip.extension,
+            "media_metadata_digest": hashlib.sha256(
+                json.dumps(clip.media_metadata or {}, sort_keys=True).encode()
+            ).hexdigest(),
+            "has_video_metadata": any(
+                isinstance(stream, dict) and stream.get("codec_type") == "video"
+                for stream in ((clip.media_metadata or {}).get("streams") or [])
+            ),
             "updated_at": clip.updated_at.isoformat() if clip.updated_at else None,
         } if clip else None,
     }
