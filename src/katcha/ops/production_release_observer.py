@@ -91,6 +91,11 @@ def compare_releases(api_get: Callable[[str], Any], old: str, new: str) -> dict[
     return {
         "commits": count,
         "changed_files": len(paths),
+        # Warning thresholds leave ample margin before the deployment
+        # executor's hard 250-commit / 299-file comparison ceiling.
+        "cadence_review_due": count >= 75 or len(paths) >= 100,
+        "commits_until_hard_limit": 250 - count,
+        "changed_files_until_hard_limit": 299 - len(paths),
         "migration_changes": any(
             p.startswith("migrations/") or p == "alembic.ini" for p in paths
         ),

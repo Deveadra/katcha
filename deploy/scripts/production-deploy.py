@@ -183,7 +183,8 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     files = comparison.get("files")
     if (comparison.get("status") != "ahead"
         or comparison.get("behind_by") != 0
-        or comparison.get("merge_base_commit", {}).get("sha") != old
+        or not isinstance(comparison.get("merge_base_commit"), dict)
+        or comparison["merge_base_commit"].get("sha") != old
         or not isinstance(files, list) or not files or len(files) >= 300
         or not 0 < comparison.get("total_commits", 0) <= 250):
         raise Blocked("candidate ancestry or comparison is unverified")
@@ -984,7 +985,113 @@ def readiness() -> dict[str, Any]:
     }
 
 
+def plan_release(target: str) -> dict[str, Any]:
+    """Read-only release-specific diagnosis of the current OCI production host.
+
+    The plan computes a *candidate* migration policy from the exact checked
+    comparison and actual database revision, then invokes the existing strict
+    release/migration validators. It never grants migration/workflow approval.
+    """
+    if not SHA.fullmatch(target):
+        raise Blocked("target must be an exact 40-character release SHA")
+    state = readiness()  # Attests host/runtime/schema and every Temporal execution.
+    old, _ = pinned(ENV)
+    if old == target:
+        accepted_main_ancestry(target)
+        return {
+            "status": "CURRENT", "current_sha": old, "target_sha": target,
+            "database_revision": state["database_start_revision"],
+            "temporal_running_count": state["temporal_running_count"],
+            "deployment_authorized": False,
+        }
+
+    comparison = github("/compare/" + old + "..." + target)
+    if not isinstance(comparison, dict):
+        raise Blocked("candidate comparison unavailable")
+    # Never accept GitHub's 300-file truncated comparison or a huge commit
+    # range, even when a particular migration filename happens to be visible.
+    files = comparison.get("files")
+    commits = comparison.get("total_commits")
+    if (comparison.get("status") != "ahead" or comparison.get("behind_by") != 0
+        or not isinstance(comparison.get("merge_base_commit"), dict)
+        or comparison["merge_base_commit"].get("sha") != old
+        or type(commits) is not int or not 0 < commits <= 250
+        or not isinstance(files, list) or not 0 < len(files) < 300):
+        raise Blocked("candidate ancestry or comparison exceeds reviewed limits")
+    changed_migrations = []
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+            raise Blocked("candidate changed-file metadata malformed")
+        name = item["filename"]
+        if name.startswith(("migrations/", "alembic/")) or name == "alembic.ini":
+            changed_migrations.append((name, item.get("status")))
+
+    start_revision = state["database_start_revision"]
+    if not changed_migrations:
+        policy = "refuse"
+    elif changed_migrations == [(HANDOFF_FILE, "added")]:
+        if start_revision != LATEST_REVISION:
+            raise Blocked("0066-only release requires verified 0065 production database")
+        policy = "approve-additive-through-0066"
+    elif (start_revision in {BEFORE_REVISION, AFTER_REVISION}
+          and all(kind == "added" for _, kind in changed_migrations)
+          and set(name for name, _ in changed_migrations)
+          <= set(REVIEWED_MIGRATIONS)
+          and MIGRATION_0065_FILE in {name for name, _ in changed_migrations}):
+        policy = "approve-additive-through-0065"
+    elif changed_migrations == [(MIGRATION_FILE, "added")] and (
+        start_revision == BEFORE_REVISION
+    ):
+        policy = "approve-additive-0064"
+    else:
+        raise Blocked("migration chain is not a supported single release step")
+
+    migration = eligible(old, target, policy)
+    database_release_preflight(migration, policy)
+    inventory = github("/contents/migrations/versions?ref=" + target)
+    if not isinstance(inventory, list):
+        raise Blocked("target migration inventory unavailable")
+    if not migration and any(
+        item.get("name") == Path(HANDOFF_FILE).name
+        for item in inventory if isinstance(item, dict)
+    ) and start_revision != HANDOFF_REVISION:
+        raise Blocked("target includes 0066 but production is below verified 0066")
+
+    accepted_main_ancestry(target)
+
+    active = state["temporal_running_count"]
+    return {
+        "status": "REVIEW_REQUIRED",
+        "current_sha": old, "target_sha": target,
+        "commits_behind": commits, "changed_files": len(files),
+        "commit_limit": 250, "changed_file_limit_exclusive": 300,
+        "database_revision": start_revision,
+        "migration_files": [name for name, _ in changed_migrations],
+        "candidate_migration_policy": policy,
+        "schema_change": migration,
+        "temporal_running_count": active,
+        "temporal_pending_activity_check": state["temporal_pending_activity_check"],
+        "workflow_review": (
+            "active_executions_require_review"
+            if active else "no_running_executions_observed"
+        ),
+        "default_workflow_policy": "refuse",
+        "deployment_authorized": False,
+        "next_action": (
+            "review_active_workflows_and_forward_only_migration_before_approval"
+            if active or migration else "review_maintenance_window_and_backup_restore"
+        ),
+    }
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--plan-release":
+        try:
+            print(json.dumps(plan_release(sys.argv[2]), sort_keys=True))
+            return 0
+        except (Blocked, OSError, ValueError, KeyError, TypeError) as exc:
+            print(json.dumps({"status": "BLOCKED", "reason": str(exc)}))
+            return 2
     if sys.argv[1:] == ["--readiness"]:
         try:
             print(json.dumps(readiness(), sort_keys=True))
