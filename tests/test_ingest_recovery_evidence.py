@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import uuid
 from types import SimpleNamespace
 
@@ -11,7 +10,6 @@ import pytest
 from botocore.exceptions import ClientError
 from sqlalchemy import select
 from temporalio.client import WorkflowExecutionStatus
-
 from test_command_goals import saved as saved_fixture
 
 from katcha import db
@@ -201,7 +199,7 @@ async def test_recorded_remote_acquisition_not_misclassified_as_direct(saved):
 @pytest.mark.asyncio
 async def test_linked_clip_sha_can_be_verified_with_explicit_opt_in(saved):
     payload = b"complete-media-byte-proof"
-    clip_id, sha = add_clip(payload)
+    clip_id, _sha = add_clip(payload)
     source_id = new_source(clip_id=clip_id)
     store = Storage(source_id, payload=payload)
     basic = await evidence.inspect_held_ingest(
@@ -219,7 +217,6 @@ async def test_linked_clip_sha_can_be_verified_with_explicit_opt_in(saved):
     assert verified["linked_clip_storage"]["sha256_check"] == "verified"
     assert verified["assessment"] == "media_or_staging_requires_review"
     assert verified["retry_authorized"] is False
-    assert sha in verified["operator_next_step"] or sha not in verified["operator_next_step"]
 
 
 @pytest.mark.asyncio
@@ -250,7 +247,7 @@ async def test_hash_mismatch_with_equal_size_is_detected(saved):
     report = await evidence.inspect_held_ingest(
         source_id,
         temporal_client=Temporal(WorkflowExecutionStatus.FAILED),
-        store=Storage(source_id, payload=b"invalid-byt"),
+        store=Storage(source_id, payload=b"invalid-vide"),
         verify_sha256=True,
     )
     assert report["linked_clip_storage"]["sha256_check"] == "mismatch"
