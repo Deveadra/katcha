@@ -9,21 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from botocore.exceptions import ClientError
-from sqlalchemy import select
 from temporalio.client import RPCError, RPCStatusCode, WorkflowExecutionStatus
 
 from katcha.db import session_scope
 from katcha.domain import SourceStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, SourceItem
+from katcha.ops.direct_staging_reconciliation import stage_source_id
 
 DESCRIBE_TIMEOUT_SECONDS = 8.0
 MAX_INVENTORY_RECORDS = 2000
+MAX_INVENTORY_PAGES = 32
+_SAFE_WORKFLOW_ID = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 MAX_HASH_BYTES = 4 * 1024**3
 _STAGE_SUFFIX = "/"
 _TERMINAL = {
@@ -33,6 +36,12 @@ _TERMINAL = {
     WorkflowExecutionStatus.TERMINATED,
     WorkflowExecutionStatus.TIMED_OUT,
 }
+
+
+def _display_workflow_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value if _SAFE_WORKFLOW_ID.fullmatch(value) else "<redacted>"
 
 
 def _source_snapshot(source_id: uuid.UUID) -> dict[str, Any] | None:
@@ -121,7 +130,7 @@ def _inventory(store: ObjectStore, source_id: uuid.UUID, limit: int) -> dict[str
             visited: set[tuple[str, ...]] = set()
             cursor: dict[str, str] = {}
             count = 0
-            for _ in range(limit + 1):
+            for _ in range(min(limit + 1, MAX_INVENTORY_PAGES)):
                 if count >= limit:
                     result["complete"] = False
                     break
@@ -147,7 +156,10 @@ def _inventory(store: ObjectStore, source_id: uuid.UUID, limit: int) -> dict[str
                         raise ValueError("Incomplete upload missing identity")
                     count += 1
                     result[counter] += 1
-                    if len(result["sample_keys"]) < 8:
+                    if (
+                        len(result["sample_keys"]) < 8
+                        and stage_source_id(key) == source_id
+                    ):
                         result["sample_keys"].append(key)
                 if not response.get("IsTruncated"):
                     break
@@ -214,7 +226,10 @@ def _clip_storage(
             "sha256_check": "not_checked",
         }
     summary: dict[str, Any] = {
-        "state": "head_matches_record",
+        "state": (
+            "head_matches_record" if expected_size is not None
+            else "head_exists_size_unrecorded"
+        ),
         "stored_size_bytes": actual_size,
         "sha256_check": "not_requested",
     }
@@ -302,7 +317,7 @@ async def inspect_held_ingest(
     return {
         "source_id": str(source_id),
         "source_status": before["status"],
-        "workflow_id": before["workflow_id"],
+        "workflow_id": _display_workflow_id(before["workflow_id"]),
         "recovery_code": before["recovery_code"],
         "linked_clip_id": before["clip_id"],
         "clip_record_found": before["clip_record_found"],
