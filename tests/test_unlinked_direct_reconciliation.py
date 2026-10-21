@@ -86,7 +86,6 @@ async def test_pre_promotion_claim_and_audit_link_source_to_exact_bytes(saved, m
     assert provenance.proof_fingerprint(claim) == (
         db_state(source_id)["events"][0].payload["claim_sha256"]
     )
-    before = db_state(source_id)
     again = provenance.record_verified_direct_promotion(
         source_id,
         canonical_url=(
