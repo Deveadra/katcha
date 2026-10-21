@@ -276,7 +276,10 @@ async def inspect_held_ingest(
     after = _source_snapshot(source_id)
     stale = after is None or any(
         before[field] != after[field]
-        for field in ("status", "workflow_id", "clip_id", "clip")
+        for field in (
+            "status", "workflow_id", "clip_id", "clip",
+            "remote_acquisition_job_recorded",
+        )
     )
     if stale:
         assessment = "source_changed_during_inspection"
