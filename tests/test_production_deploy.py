@@ -160,6 +160,43 @@ def test_release_validation_accepts_exact_successful_publication(
     app.eligible(OLD, NEW)
 
 
+def test_verified_ancestor_release_is_eligible_after_main_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    fixture = responses()
+    ahead = "c" * 40
+    fixture["/branches/main"] = {"commit": {"sha": ahead}}
+    fixture["/compare/" + NEW + "..." + ahead] = {
+        "status": "ahead", "behind_by": 0,
+        "merge_base_commit": {"sha": NEW},
+    }
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    assert app.eligible(OLD, NEW) is False
+
+    fixture["/compare/" + NEW + "..." + ahead]["merge_base_commit"]["sha"] = OLD
+    with pytest.raises(app.Blocked, match="no longer an accepted main ancestor"):
+        app.eligible(OLD, NEW)
+    fixture["/compare/" + NEW + "..." + ahead]["merge_base_commit"] = None
+    with pytest.raises(app.Blocked, match="no longer an accepted main ancestor"):
+        app.eligible(OLD, NEW)
+
+
+def test_deployment_preserves_pinned_target_after_fetch_of_newer_main() -> None:
+    source = SOURCE.read_text()
+    assert 'run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)' in source
+    assert '"merge-base", "--is-ancestor", target, "origin/main"' in source
+    assert 'run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)' in source
+    workflow = (ROOT / ".github/workflows/production-deployment.yml").read_text()
+    assert "compareCommitsWithBasehead" in workflow
+    assert 'ancestry.merge_base_commit?.sha !== sha' in workflow
+    assert "environment: katcha-production" in workflow
+
+
 def test_deployer_fails_closed_on_migration_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

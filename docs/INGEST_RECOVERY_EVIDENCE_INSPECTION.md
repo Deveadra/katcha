@@ -69,6 +69,12 @@ Temporal service as `unavailable`, not a missing workflow.
 
 ## Next supervised recovery step
 
+For the narrow case where a SourceItem *already links* a cryptographically
+verified Clip and the exact Temporal run is terminal, review the separately
+approved transaction in `docs/LINKED_INGEST_RECONCILIATION.md`. It never
+initiates a retry. Unlinked `raw/` objects remain excluded.
+
+
 Reconcile the workflow's exact Temporal run history (including activity
 completion/retries), Clip links, full object lineage and any unlinked raw
 objects. Confirm source/channel acquisition authority and the active remote
