@@ -6,6 +6,8 @@ guard in `docs/INGEST_TEMPORAL_RECOVERY.md` intentionally holds an
 `ingesting` SourceItem rather than repeating a failed workflow.
 
 This inspector gathers **read-only observations**, not a retry authorization.
+It covers both persisted `ingesting` and terminal `failed` SourceItems; a
+failed state alone is not permission to delete staged media or replay ingestion.
 It never creates workflows, changes database rows, uploads media, deletes
 staging, aborts multipart parts, or changes the production poller.
 
