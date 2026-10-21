@@ -25,7 +25,7 @@ the active OCI production primary.
   `KATCHA_RELEASE_SHA`. Publishing new GHCR images does **not** modify this
   file or restart the host.
 
-## Stage 1: CI-gated image publication (this PR)
+## Stage 1: CI-gated image publication
 
 1. PR checks build only affected images without pushing.
 2. CI on accepted `main` completes **successfully**.
@@ -34,7 +34,7 @@ the active OCI production primary.
    that have already been superseded on `main`.
 4. It checks out the exact CI-tested SHA, builds multi-architecture images,
    publishes SHA and compatibility `:main` tags, and verifies anonymous pulls
-   and OCI image revision labels for all six images.
+   and OCI image revision labels for all seven verified runtime image targets.
 5. Any failure keeps the SHA **not publish-accepted**; no production mutation is
    performed. Existing images may remain in GHCR. A successful image workflow
    is not evidence that production was upgraded.
@@ -77,7 +77,7 @@ disabled by default; automatic unattended promotion remains unimplemented.
 The main CI workflow also runs on a schedule. Its completed events must never
 trigger GHCR publishing or masquerade as a new deployable release. The image
 job now skips those events at job level, while the release-eligibility checker
-requires **actual successful build jobs for all six images and a successful
+requires **actual successful build jobs for all seven runtime images and a successful
 anonymous-pull verification job**, on an attempted publication associated with
 the accepted push CI. Fully skipped workflow runs are inert and do not supersede
 a validated publication; a later failed real build/verification blocks. The
