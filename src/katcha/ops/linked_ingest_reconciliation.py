@@ -108,6 +108,8 @@ async def plan_linked_clip_recovery(
         else:
             if clip["status"] not in _ALLOWED_CLIP_STATUSES:
                 reasons.append("clip_status_not_eligible")
+            if not clip["has_video_metadata"]:
+                reasons.append("clip_video_metadata_missing")
             if not isinstance(clip["sha256"], str) or not _SHA256.fullmatch(clip["sha256"]):
                 reasons.append("clip_sha_invalid")
             elif clip["storage_key"] != ObjectStore.raw_key(
