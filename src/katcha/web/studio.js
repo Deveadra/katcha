@@ -18,6 +18,7 @@ const state = {
     monitorMode: "render",
     renderGeneration: null,
     renderUrl: null,
+    monitorRequestId: 0,
     mediaUrls: new Map(),
     stagedBrand: null,
     localLogoUrl: null,
@@ -55,7 +56,7 @@ function formatTime(seconds) {
     return `${String(mins).padStart(2,"0")}:${String(secs).padStart(2,"0")}.${String(ms).padStart(3,"0")}`;
 }
 function revokeMedia() {
-    if (state.renderUrl) URL.revokeObjectURL(state.renderUrl);
+    if (state.renderUrl?.startsWith("blob:")) URL.revokeObjectURL(state.renderUrl);
     state.renderUrl=null;
     for (const url of state.mediaUrls.values()) URL.revokeObjectURL(url);
     state.mediaUrls.clear();
@@ -233,9 +234,13 @@ async function selectClip(position) {
 async function sourceUrlForSelected() {
     const row=clipRows().find((item)=>Number(item.position)===Number(state.selectedPosition));
     const clipId=row?.source?.clip_id; if (!clipId) return null;
-    return blobUrl(`/v1/studio/clips/${encodeURIComponent(clipId)}/media`,`clip:${clipId}`);
+    // Native <video> sends byte-range GETs itself. Fetching a full MP4 Blob
+    // first makes long 4K review material unseekable until the entire download finishes.
+    const session=await api(`/v1/clips/${encodeURIComponent(clipId)}/media-session`,{method:"POST"});
+    return session.media_url;
 }
 async function showMonitor() {
+    const requestId=++state.monitorRequestId;
     const video=$("monitor-video"), empty=$("monitor-empty");
     $("show-render").classList.toggle("active",state.monitorMode==="render");
     $("show-source").classList.toggle("active",state.monitorMode==="source");
@@ -243,12 +248,16 @@ async function showMonitor() {
     try {
         if (state.monitorMode==="render") url=state.renderUrl;
         else url=await sourceUrlForSelected();
-    } catch (error) { message(error.message,true); }
+    } catch (error) { if (requestId===state.monitorRequestId) message(error.message,true); }
+    // An earlier async ticket request may finish after the operator selects another clip.
+    if (requestId!==state.monitorRequestId) return;
     if (!url && state.monitorMode==="render" && state.selectedPosition) {
         state.monitorMode="source"; return showMonitor();
     }
     if (url) {
-        video.src=url; empty.hidden=true;
+        // Never reload an unchanged source: doing so resets playback on seek/re-render.
+        if (video.getAttribute("src")!==url) video.src=url;
+        empty.hidden=true;
         if (state.monitorMode==="source") {
             const item=selectedBaseItem() ? draftItem(selectedBaseItem()) : null;
             video.onloadedmetadata=()=>{ if (item) video.currentTime=Number(item.source.source_start_seconds)||0; };
@@ -264,10 +273,11 @@ async function loadRenderedMedia() {
     const generation = state.renderGeneration;
     const suffix = generation ? `?generation=${encodeURIComponent(generation)}` : "";
     try {
-        state.renderUrl=await blobUrl(
-            `/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media${suffix}`,
-            `render:${state.episodeId}:${generation || "latest"}`,
+        const session=await api(
+            `/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media-session${suffix}`,
+            {method:"POST"},
         );
+        state.renderUrl=session.media_url;
     } catch {}
 }
 function renderTimeline() {
