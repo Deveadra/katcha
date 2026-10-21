@@ -24,8 +24,8 @@ from katcha.integrations.object_streaming import (
 )
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
-from katcha.orchestration.failure_details import MediaPreparationError, failure_details
 from katcha.ops.direct_promotion_provenance import record_verified_direct_promotion
+from katcha.orchestration.failure_details import MediaPreparationError, failure_details
 from katcha.orchestration.ingest_recovery import RECOVERY_KEY
 
 logger = logging.getLogger(__name__)
