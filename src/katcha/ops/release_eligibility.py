@@ -29,7 +29,8 @@ class ReleaseNotEligible(ValueError):
 
 
 def api_get(path: str) -> Any:
-    if not path.startswith("/") or "//" in path or ".." in path:
+    comparison = re.fullmatch(r"/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}", path)
+    if not path.startswith("/") or "//" in path or (".." in path and not comparison):
         raise ReleaseNotEligible("invalid GitHub API path")
     req = urllib.request.Request(
         API + path,
@@ -176,6 +177,24 @@ def evidence_timestamp(value: object) -> datetime:
     return timestamp
 
 
+def accepted_main_ancestry(sha: str, main_sha: str) -> None:
+    """Allow an immutable, CI-published main ancestor after newer merges.
+
+    The caller must separately verify successful push CI and published images
+    for *sha*, not for the newer main head.
+    """
+    if not SHA_RE.fullmatch(sha) or not SHA_RE.fullmatch(main_sha):
+        raise ReleaseNotEligible("invalid commit identity")
+    if sha == main_sha:
+        return
+    comparison = api_get(f"/compare/{sha}...{main_sha}")
+    if (not isinstance(comparison, dict)
+        or comparison.get("status") != "ahead"
+        or comparison.get("behind_by") != 0
+        or comparison.get("merge_base_commit", {}).get("sha") != sha):
+        raise ReleaseNotEligible("release candidate is not an accepted main ancestor")
+
+
 def verify_evidence(
     sha: str, main_sha: str, ci_runs: list[dict[str, Any]],
     image_runs: list[dict[str, Any]]
@@ -185,8 +204,8 @@ def verify_evidence(
         or not isinstance(main_sha, str) or not SHA_RE.fullmatch(main_sha)
     ):
         raise ReleaseNotEligible("invalid commit identity")
-    if sha != main_sha:
-        raise ReleaseNotEligible("release SHA differs from current main")
+    # Ancestry is independently checked by check_release before calling here.
+    # A later main merge does not invalidate prior immutable build evidence.
     ci = matching_runs(ci_runs, sha, CI_WORKFLOW, "push")
     images = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
     if not ci or not images:
@@ -224,6 +243,7 @@ def check_release(sha: str) -> dict[str, Any]:
     current = commit.get("sha")
     if not isinstance(current, str) or not SHA_RE.fullmatch(current):
         raise ReleaseNotEligible("invalid main commit identity")
+    accepted_main_ancestry(sha, current)
     # Both sources are fetched independently, scoped by their named workflow.
     # Pagination is deliberately bounded and all failure paths are fail-closed.
     params = urllib.parse.urlencode({"head_sha": sha, "per_page": 100})
