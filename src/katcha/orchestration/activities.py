@@ -24,7 +24,7 @@ from katcha.integrations.object_streaming import (
 )
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
-from katcha.ops.direct_promotion_provenance import record_verified_direct_promotion
+from katcha.ops.direct_promotion_provenance import PROOF_KEY, record_verified_direct_promotion
 from katcha.orchestration.failure_details import MediaPreparationError, failure_details
 from katcha.orchestration.ingest_recovery import RECOVERY_KEY
 
@@ -104,6 +104,16 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
             raise ApplicationError(
                 "Remote acquisition is still pending; wait for its verified handoff",
                 type="RemoteAcquisitionPending", non_retryable=True,
+            )
+        if (source.source_metadata or {}).get(PROOF_KEY) is not None:
+            # A previous attempt may have reached raw/ before losing its
+            # SourceItem->Clip transaction. Never redownload or overwrite its
+            # provenance evidence; reconcile it using the operator procedure.
+            raise ApplicationError(
+                "Verified direct-media promotion requires evidence reconciliation "
+                "before any new ingest attempt",
+                type="DirectMediaRecoveryRequired",
+                non_retryable=True,
             )
         source.status = SourceStatus.INGESTING.value
         source.error = None
