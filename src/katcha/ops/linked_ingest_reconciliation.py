@@ -20,7 +20,7 @@ from katcha.db import session_scope
 from katcha.domain import ClipStatus, SourceStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
-from katcha.ops.ingest_recovery_evidence import inspect_held_ingest
+from katcha.ops.ingest_recovery_evidence import _display_workflow_id, inspect_held_ingest
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_TEMPORAL = {"COMPLETED", "FAILED", "CANCELED", "TERMINATED", "TIMED_OUT"}
@@ -111,7 +111,7 @@ async def plan_linked_clip_recovery(
             if not isinstance(clip["sha256"], str) or not _SHA256.fullmatch(clip["sha256"]):
                 reasons.append("clip_sha_invalid")
             elif clip["storage_key"] != ObjectStore.raw_key(
-                clip["sha256"], str(clip["storage_key"]).rsplit(".", 1)[-1]
+                clip["sha256"], str(clip.get("extension") or "")
             ):
                 reasons.append("clip_object_key_not_content_addressed")
             if not isinstance(clip["size_bytes"], int) or clip["size_bytes"] <= 0:
@@ -144,7 +144,7 @@ async def plan_linked_clip_recovery(
     eligible = not reasons
     return {
         "source_id": str(source_id),
-        "workflow_id": snapshot["workflow_id"] if snapshot else None,
+        "workflow_id": _display_workflow_id(snapshot["workflow_id"]) if snapshot else None,
         "linked_clip_id": snapshot["linked_clip_id"] if snapshot else None,
         "clip_sha256": snapshot["clip"]["sha256"] if snapshot and snapshot["clip"] else None,
         "temporal": temporal,
@@ -161,7 +161,7 @@ async def finalize_linked_clip_recovery(
     source_id: uuid.UUID, *, approved_fingerprint: str,
     temporal_client: Any = None, store: ObjectStore | None = None,
 ) -> dict[str, Any]:
-    """Explicit evidence-bound commit. A second invocation is a safe no-op."""
+    """Explicit evidence-bound commit; repeated or stale approvals are rejected."""
     if not _SHA256.fullmatch(approved_fingerprint):
         raise RecoveryApprovalError("An exact 64-character approval fingerprint is required")
     plan = await plan_linked_clip_recovery(
