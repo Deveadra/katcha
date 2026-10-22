@@ -1,5 +1,7 @@
 # Katcha production deployment — GitHub approval, private OCI host-pull
 
+**Routine release:** Start with [Manual production deployment: repeatable checklist](PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md). It keeps the deployment timer disabled and consumes one signed request manually. This longer document covers first-time setup and exceptional maintenance.
+
 **State:** merging code publishes tested images but does not deploy them.
 The separately approved, signed host-pull deployment gate and timer stay **OFF**
 between maintenance windows. The read-only release observer can be enabled
