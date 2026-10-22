@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically send verified OCI production deployment alerts
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=3min
+AccuracySec=30s
+Unit=katcha-production-deploy-notify.service
+
+[Install]
+WantedBy=timers.target
