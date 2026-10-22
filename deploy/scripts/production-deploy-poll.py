@@ -144,6 +144,20 @@ def secure_receipts() -> None:
             raise RequestBlocked("deployment receipt directory not root-private")
 
 
+def executor_attestation(returncode: int, stdout: str, sha: str) -> str | None:
+    """A zero exit code is not evidence of a successfully deployed release."""
+    if returncode != 0:
+        return None
+    try:
+        outcome = json.loads(stdout)
+    except ValueError:
+        return None
+    if (not isinstance(outcome, dict) or outcome.get("sha") != sha
+        or outcome.get("status") not in {"DEPLOYED", "ALREADY_CURRENT"}):
+        return None
+    return outcome["status"]
+
+
 def attempt(request: dict[str, Any]) -> str:
     secure_receipts()
     path = RECEIPTS / ("nonce-" + request["nonce"] + ".json")
@@ -180,22 +194,11 @@ def attempt(request: dict[str, Any]) -> str:
              request["migration_policy"]],
             capture_output=True, text=True, timeout=7200, check=False,
         )
-        # Do not convert an exit code alone into a success receipt. The fixed
-        # executor must attest the exact release and a known terminal outcome.
-        if done.returncode == 0:
-            try:
-                outcome = json.loads(done.stdout)
-            except ValueError:
-                outcome = None
-            if (isinstance(outcome, dict)
-                and outcome.get("sha") == request["sha"]
-                and outcome.get("status") in {"DEPLOYED", "ALREADY_CURRENT"}):
-                executor_status = outcome["status"]
-                status = "SUCCEEDED"
-            else:
-                status = "FAILED_REVIEW_REQUIRED"
-        else:
-            status = "FAILED_REVIEW_REQUIRED"
+        # An executor's exit code cannot independently certify deployment.
+        executor_status = executor_attestation(
+            done.returncode, done.stdout, request["sha"],
+        )
+        status = "SUCCEEDED" if executor_status else "FAILED_REVIEW_REQUIRED"
     except (OSError, subprocess.TimeoutExpired, RequestBlocked):
         status = "FAILED_REVIEW_REQUIRED"
     # Keep a sanitized and protected audit record; never print env or secrets.
