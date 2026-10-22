@@ -1325,16 +1325,16 @@ def test_deployment_control_inspection_never_reads_signing_key(monkeypatch):
 
     class FakePath:
         def __init__(self, name, exists, size):
-            self.name, self.exists, self.size = name, exists, size
+            self.name, self.present, self.size = name, exists, size
 
         def is_symlink(self):
             return False
 
         def is_file(self):
-            return self.exists
+            return self.present
 
         def exists(self):
-            return self.exists
+            return self.present
 
         def stat(self):
             return SimpleNamespace(st_uid=0, st_mode=0o100600, st_size=self.size)
@@ -1343,17 +1343,16 @@ def test_deployment_control_inspection_never_reads_signing_key(monkeypatch):
             read.append(self.name)
             if self.name == "signing_key":
                 pytest.fail("Signing key material must never be read")
-            return NEW + "\\n"
+            return NEW + "\n"
 
     # Normal default host state: absent gate, root-only key, disabled timer.
     gate = FakePath("gate", False, 0)
-    monkeypatch.setattr(gate, "exists", lambda: False)
     monkeypatch.setattr(app, "GATE", gate)
     monkeypatch.setattr(app, "SIGNING_KEY", FakePath("signing_key", True, 65))
     monkeypatch.setattr(app, "TOOL_SOURCE", FakePath("tool_source", True, 41))
     monkeypatch.setattr(
         app.subprocess, "run",
-        lambda *a, **kw: SimpleNamespace(stdout="disabled\\n", returncode=1),
+        lambda *a, **kw: SimpleNamespace(stdout="disabled\n", returncode=1),
     )
     result = {item["name"]: item for item in app.deployment_control_diagnostics()}
     assert all(item["status"] == "PASS" for item in result.values())
