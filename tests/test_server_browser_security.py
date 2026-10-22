@@ -146,7 +146,8 @@ async def test_browser_known_precondition_failures_are_actionable(
     request = server_browser.BrowserRequest(
         scope=("actor", "channel", "goal"),
         arguments={"action": action, **(
-            {"url": "https://fixture.example/"} if action == "open" else {}
+            {"url": "https://fixture.example/"} if action == "open"
+            else {"ref": "e1"} if action == "click" else {}
         )},
     )
     result = await server_browser.execute(request, "Bearer " + token)
@@ -174,7 +175,8 @@ async def test_browser_timeout_retains_uncertainty_without_leaking_values(
     request = server_browser.BrowserRequest(
         scope=("actor", "channel", "goal"),
         arguments={"action": action, **(
-            {"url": "https://fixture.example/"} if action == "open" else {}
+            {"url": "https://fixture.example/"} if action == "open"
+            else {"ref": "e1"} if action == "click" else {}
         )},
     )
     result = await server_browser.execute(request, "Bearer " + token)
