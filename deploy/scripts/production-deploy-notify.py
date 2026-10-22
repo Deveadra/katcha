@@ -39,6 +39,15 @@ def root_private(path: Path, *, directory: bool = False) -> bool:
     return stat.st_uid == 0 and not (stat.st_mode & 0o077)
 
 
+def root_owned_read_only(path: Path) -> bool:
+    # Installed executables are 0755, and audit files may be 0644
+    # behind an already-private root-only directory.
+    if path.is_symlink() or not path.is_file():
+        return False
+    stat = path.stat()
+    return stat.st_uid == 0 and not (stat.st_mode & 0o022)
+
+
 def configuration(path: Path = ENV) -> tuple[str, str, str] | None:
     if not root_private(path):
         return None
@@ -84,7 +93,7 @@ def telegram_send(credentials: tuple[str, str, str], message: str) -> None:
             raw = response.read(8192)
         if json.loads(raw).get("ok") is not True:
             raise RuntimeError("Telegram did not accept deployment alert")
-    except Exception as exc:
+    except Exception:
         raise RuntimeError("Telegram deployment alert delivery failed") from None
 
 
@@ -108,7 +117,8 @@ def audit_confirmed(sha: str) -> bool:
     try:
         matches = sorted(ROOT.glob("*-" + sha[:12] + "/result.json"), reverse=True)
         for result_path in matches:
-            if result_path.is_symlink() or not root_private(result_path):
+            if (not root_owned_read_only(result_path)
+                or not root_private(result_path.parent, directory=True)):
                 continue
             result = json.loads(result_path.read_text(encoding="utf-8"))
             if isinstance(result, dict) and result.get("sha") == sha and result.get("status") == "DEPLOYED":
@@ -176,7 +186,7 @@ def expired_request_events(now: int) -> list[tuple[str, str]]:
     # Reuse the installed poller's HMAC validation; never trust GitHub fields alone.
     try:
         spec = importlib.util.spec_from_file_location("production_poller", POLLER)
-        if spec is None or spec.loader is None or not root_private(POLLER):
+        if spec is None or spec.loader is None or not root_owned_read_only(POLLER):
             return []
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
