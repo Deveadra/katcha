@@ -148,6 +148,25 @@ sudo /usr/local/sbin/katcha-production-deploy --readiness
 sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET_SHA"
 ```
 
+If planning instead prints `host operation did not succeed: python3`,
+the installed independent release verifier exited nonzero and the older host
+deployer discarded its specific reason. This is **not** proof of a broken
+Python installation. Inspect that installed, root-owned verifier directly:
+
+```bash
+sudo python3 /usr/local/lib/katcha-production-deploy/release_eligibility.py "$TARGET_SHA"
+```
+
+A `{"status":"BLOCKED","reason":"..."}` response identifies which CI,
+image-job, GitHub evidence or release ancestry check failed. **Do not**
+override a blocked result or infer deployment approval from workflow-level
+success. Compare the individual exact-SHA CI and seven image jobs, plus
+anonymous image-pull verification. If the installed verifier is outdated,
+refresh deployment tooling only through Step 2's reviewed installer procedure;
+do not update production application files or migration state to repair
+diagnostics. A fixed deployer includes the exact sanitized verifier rejection
+in `--plan-release` output.
+
 Expected planner output:
 
 - `status: REVIEW_REQUIRED`, **not** `BLOCKED`;
