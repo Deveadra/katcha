@@ -6,6 +6,7 @@ trap 'status=$?; printf "FFmpeg provisioning failed (exit %s) at %s\n" "$status"
 if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
   echo 'FFmpeg and ffprobe already available; skipping APT.'
 else
+  bash "$(dirname "$0")/ci-prefer-ubuntu-mirror.sh"
   echo "Refreshing APT indexes at $(date -u +%FT%TZ)"
   sudo timeout --signal=TERM --kill-after=10s 180s \
     apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
