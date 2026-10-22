@@ -6,6 +6,9 @@ on:
       - .github/workflows/production-deployment.yml
       - deploy/scripts/production-deploy.py
       - deploy/scripts/production-deploy-poll.py
+      - deploy/scripts/production-deploy-notify.py
+      - deploy/systemd/katcha-production-deploy-notify.service
+      - deploy/systemd/katcha-production-deploy-notify.timer
       - deploy/scripts/install-production-deployer.sh
       - deploy/systemd/katcha-production-deploy-poll.service
       - deploy/systemd/katcha-production-deploy-poll.timer
@@ -58,11 +61,11 @@ jobs:
       - name: Test production deployment and signing contracts
         run: |
           python -m pip install pytest
-          python -m py_compile deploy/scripts/production-deploy.py deploy/scripts/production-deploy-poll.py
+          python -m py_compile deploy/scripts/production-deploy.py deploy/scripts/production-deploy-poll.py deploy/scripts/production-deploy-notify.py
           bash -n deploy/scripts/install-production-deployer.sh
           bash -n scripts/check-production-deployment-github.sh
           # Isolated contract tests need only pytest, not app-wide SQLAlchemy fixtures.
-          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_github_auth_preflight.py
+          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_github_auth_preflight.py tests/test_production_deploy_notifications.py
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
@@ -99,6 +102,55 @@ jobs:
         shell: bash
         run: |
           PYTHONPATH=src python scripts/check_production_release.py "$TARGET_SHA"
+
+  notify-review:
+    # Deliberately outside the protected Environment: this job must run
+    # BEFORE the operator approves authorize-request.
+    if: github.event_name == 'workflow_dispatch'
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alert the operator only when GitHub requests Environment review
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.release_sha }}
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${KATCHA_TELEGRAM_BOT_TOKEN}" || -z "${KATCHA_TELEGRAM_CHAT_ID}" ]]; then
+            echo "::warning::Telegram review alert not configured in repository Actions secrets."
+            exit 0
+          fi
+          # authorize-request enters the protected Environment in parallel.
+          # Observe the real pending-deployments API, not workflow success.
+          pending=false
+          for attempt in {1..18}; do
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/pending_deployments" \
+              --jq '.[] | select(.environment.name == "katcha-production") | .environment.name' \
+              | grep -qx 'katcha-production'; then
+              pending=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$pending" != true ]]; then
+            echo "No pending Environment review observed (may already be approved)."
+            exit 0
+          fi
+          review_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf 'Katcha PRODUCTION DEPLOYMENT REVIEW REQUESTED\nRelease: %s\nProtected Environment: katcha-production\nReview this exact GitHub Actions run:\n%s\n\nApproval authorizes a signed request only; deployment is not yet complete.' \
+            "${TARGET_SHA}" "${review_url}")"
+          if ! bash scripts/notify-telegram.sh "$message"; then
+            echo "::warning::Telegram review notification failed; deployment approval is not changed."
+          fi
 
   authorize-request:
     needs: preflight
