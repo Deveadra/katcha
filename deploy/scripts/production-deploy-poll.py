@@ -168,6 +168,7 @@ def attempt(request: dict[str, Any]) -> str:
         os.close(directory_fd)
 
     status = "BLOCKED"
+    executor_status = None
     try:
         if EXECUTOR.is_symlink() or not EXECUTOR.is_file():
             raise RequestBlocked("fixed root-owned production executor missing")
@@ -179,14 +180,30 @@ def attempt(request: dict[str, Any]) -> str:
              request["migration_policy"]],
             capture_output=True, text=True, timeout=7200, check=False,
         )
-        status = "SUCCEEDED" if done.returncode == 0 else "FAILED_REVIEW_REQUIRED"
+        # Do not convert an exit code alone into a success receipt. The fixed
+        # executor must attest the exact release and a known terminal outcome.
+        if done.returncode == 0:
+            try:
+                outcome = json.loads(done.stdout)
+            except ValueError:
+                outcome = None
+            if (isinstance(outcome, dict)
+                and outcome.get("sha") == request["sha"]
+                and outcome.get("status") in {"DEPLOYED", "ALREADY_CURRENT"}):
+                executor_status = outcome["status"]
+                status = "SUCCEEDED"
+            else:
+                status = "FAILED_REVIEW_REQUIRED"
+        else:
+            status = "FAILED_REVIEW_REQUIRED"
     except (OSError, subprocess.TimeoutExpired, RequestBlocked):
         status = "FAILED_REVIEW_REQUIRED"
     # Keep a sanitized and protected audit record; never print env or secrets.
     temp = RECEIPTS / ("nonce-" + request["nonce"] + ".tmp")
     with temp.open("x", encoding="utf-8") as out:
         temp.chmod(0o600)
-        json.dump({"status": status, "id": request["id"], "sha": request["sha"]}, out)
+        json.dump({"status": status, "id": request["id"], "sha": request["sha"],
+                   "executor_status": executor_status}, out)
         out.write("\n")
         out.flush()
         os.fsync(out.fileno())
