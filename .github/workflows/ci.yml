@@ -515,7 +515,7 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.renderer == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: renderer
@@ -537,15 +537,20 @@ jobs:
             renderer-npm-${{ runner.os }}-
 
       - name: Install renderer dependencies
-        run: npm install --ignore-scripts
+        run: timeout --signal=TERM --kill-after=10s 300s npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Ensure headless browser and FFmpeg
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
-          npx remotion browser ensure
+      # Remotion pins and verifies its own headless shell version.
+      - name: Cache Remotion headless browser
+        uses: actions/cache@v4
+        with:
+          path: renderer/node_modules/.remotion/chrome-headless-shell
+          key: renderer-browser-${{ runner.os }}-${{ hashFiles('renderer/package.json') }}
+
+      - name: Ensure FFmpeg
+        run: bash ../scripts/ci-install-ffmpeg.sh
+
+      - name: Ensure Remotion headless browser
+        run: timeout --signal=TERM --kill-after=10s 300s npx remotion browser ensure --log verbose
 
       - name: Validate renderer runtime and cloud safety settings
         run: npm run test:config
@@ -604,7 +609,7 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.renderer == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       KATCHA_ENV_FILE: .env.example
     steps:
@@ -617,12 +622,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Python package and FFmpeg
+      - name: Install Python package for ranked render
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          python -m pip --version
+          timeout --signal=TERM --kill-after=15s 720s python -m pip install --progress-bar off --verbose -e .
+
+      - name: Ensure FFmpeg for ranked render
+        run: bash scripts/ci-install-ffmpeg.sh
 
       - name: Start MinIO and renderer
         run: |
@@ -671,6 +677,8 @@ jobs:
           cache: pip
       - name: Install Python browser runtime
         run: python -m pip install -e '.[dev,browser]'
+      - name: Configure Ubuntu package mirrors for browser dependencies
+        run: bash scripts/ci-prefer-ubuntu-mirror.sh
       - name: Install matching Chromium and operating system dependencies
         run: python -m playwright install --with-deps chromium
       - name: Exercise real server browser sessions and isolation
@@ -682,7 +690,7 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.explorer == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web-tests
@@ -693,15 +701,19 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web-tests/package-lock.json
-      - name: Cache Playwright Chromium
+      - name: Cache all Playwright browser engines
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
+          key: playwright-all-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - name: Install browser test dependencies
-        run: npm ci --ignore-scripts
-      - name: Install browser engines
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: timeout --signal=TERM --kill-after=10s 300s npm ci --ignore-scripts
+      - name: Configure Ubuntu package mirrors for Playwright
+        run: bash ../scripts/ci-prefer-ubuntu-mirror.sh
+      - name: Install Playwright operating system dependencies
+        run: timeout --signal=TERM --kill-after=10s 300s npx playwright install-deps chromium firefox webkit
+      - name: Ensure Chromium, Firefox, and WebKit binaries
+        run: timeout --signal=TERM --kill-after=10s 360s npx playwright install chromium firefox webkit
       - name: Validate explorer interactions and responsive layout
         run: npm test
       - name: Validate hosted sign-in and AI recovery across browser engines
