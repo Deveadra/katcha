@@ -162,8 +162,10 @@ sources** on the core VM through its existing local ingest path. Set
 and restart those services. Leave remote acquisition enabled if you still need the
 API and returning remote worker to inspect and finish already-linked jobs. The
 fallback path requires the same authorized, channel-owned `AcquisitionReceipt` that
-automatic remote dispatch requires; enabling degraded mode grants no source access,
-download rights, or production clearance.
+automatic remote dispatch requires when remote acquisition and automatic dispatch
+are enabled. If remote acquisition remains disabled, the existing local path is
+unchanged. Enabling degraded mode grants no source access, download rights, or
+production clearance.
 
 An existing source linked to a remote job continues to wait for that job's verified
 handoff. If the remote execution has an unknown or non-resumable result, Katcha keeps

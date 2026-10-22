@@ -9,6 +9,7 @@ import uuid
 from datetime import timedelta
 
 from sqlalchemy import case, select
+from sqlalchemy.orm import Session
 from temporalio import activity
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -23,7 +24,9 @@ from katcha.models import SourceItem
 from katcha.services import acquisition_jobs as jobs
 
 
-def _authorized_receipt_for_source(session, source: SourceItem):
+def _authorized_receipt_for_source(
+    session: Session, source: SourceItem
+) -> AcquisitionReceipt | None:
     metadata = source.source_metadata or {}
     channel = metadata.get("channel_profile_id")
     if not channel:
