@@ -44,7 +44,10 @@ def retrieval_capabilities() -> dict:
             "Client-browser sign-in does not authenticate the worker.",
             "ffprobe_available": shutil.which("ffprobe") is not None,
             "ffmpeg_available": shutil.which("ffmpeg") is not None,
+            "dependency_check_location": "API/goal process, not a probe of the ingestion worker",
             "live_download_verified": False,
+            "live_download_verification_state": "not_tested",
+            "live_download_note": "No external media transfer is performed by this capability check",
         },
         "scene_verification": {
             "automatic_action_verification_available": False,
@@ -54,6 +57,15 @@ def retrieval_capabilities() -> dict:
         "discovery_configuration_tool": "discovery_adapters",
         "source_failure_tool": "source_item_status",
     }
+
+
+async def retrieval_capabilities_checked() -> dict:
+    """Combine static capabilities with live browser readiness, never a provider claim."""
+    from katcha.services.browser_client import probe_browser_service
+
+    result = retrieval_capabilities()
+    result["interactive_browser"] = await probe_browser_service()
+    return result
 
 
 def source_item_status(channel_id: uuid.UUID, source_item_id: uuid.UUID) -> dict:
