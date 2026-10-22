@@ -47,7 +47,9 @@ def retrieval_capabilities() -> dict:
             "dependency_check_location": "API/goal process, not a probe of the ingestion worker",
             "live_download_verified": False,
             "live_download_verification_state": "not_tested",
-            "live_download_note": "No external media transfer is performed by this capability check",
+            "live_download_note": (
+                "No external media transfer is performed by this capability check"
+            ),
         },
         "scene_verification": {
             "automatic_action_verification_available": False,
