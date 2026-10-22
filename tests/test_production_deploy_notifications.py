@@ -171,3 +171,41 @@ def test_notification_timer_is_independent_and_installer_is_passive():
     assert "katcha-production-deploy-notify.timer" in installer
     assert "systemctl enable" not in installer
     assert "systemctl restart" not in installer
+
+
+def test_extensionless_installed_poller_can_detect_expired_request(monkeypatch, tmp_path):
+    app = notify()
+    executable = tmp_path / "production-deploy-poll"
+    executable.write_text(
+        "def key_from_file(): return b'key'\n"
+        "def fetch_requests():\n"
+        "    return [{'id': 99, 'payload': {'issued_at': 1000, 'expires_at': 2200}}]\n"
+        "def authorized_request(entry, key, now):\n"
+        "    assert now == 2200\n"
+        "    return {'id': 99, 'sha': 'a' * 40, 'nonce': 'c' * 32}\n"
+    )
+    monkeypatch.setattr(app, "POLLER", executable)
+    monkeypatch.setattr(app, "RECEIPTS", tmp_path)
+    monkeypatch.setattr(app, "root_owned_read_only", lambda _: True)
+    result = app.expired_request_events(10000)
+    assert len(result) == 1
+    assert result[0][0] == "expired-" + "c" * 32
+    assert "EXPIRED WITHOUT A HOST RECEIPT" in result[0][1]
+    (tmp_path / ("nonce-" + "c" * 32 + ".json")).write_text("{}")
+    assert app.expired_request_events(10000) == []
+
+
+def test_success_audit_must_match_exact_release_and_deployed_state(monkeypatch, tmp_path):
+    app = notify()
+    audit = tmp_path / ("20261022T000000Z-" + SHA[:12])
+    audit.mkdir()
+    result = audit / "result.json"
+    monkeypatch.setattr(app, "ROOT", tmp_path)
+    monkeypatch.setattr(app, "root_private", lambda *a, **k: True)
+    monkeypatch.setattr(app, "root_owned_read_only", lambda _: True)
+    result.write_text(json.dumps({"status": "DEPLOYED", "sha": OTHER}))
+    assert app.audit_confirmed(SHA) is False
+    result.write_text(json.dumps({"status": "RECOVERY_REQUIRED", "sha": SHA}))
+    assert app.audit_confirmed(SHA) is False
+    result.write_text(json.dumps({"status": "DEPLOYED", "sha": SHA}))
+    assert app.audit_confirmed(SHA) is True
