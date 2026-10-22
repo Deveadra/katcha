@@ -144,6 +144,27 @@ TARGET_SHA='PASTE_APPROVED_EXACT_40_CHARACTER_SHA'
   echo "STOP: use an exact approved 40-character lowercase SHA"
   false
 }
+sudo /usr/local/sbin/katcha-production-deploy --diagnose-release "$TARGET_SHA"
+```
+
+**This is the default first stop for troubleshooting.** The root-owned
+deployment doctor is read-only: it does not open either deployment gate,
+request a GitHub deployment, restart services, write migration state, inspect
+signing-key material, or change running Temporal workflows. Its JSON has:
+- `checks[]`: a named `PASS`, `BLOCKED`, `UNKNOWN` or `REVIEW_REQUIRED`
+  result for target SHA, host, signed-request metadata, local gate, timer,
+  installed tool version, host readiness, candidate comparison and release;
+- `next_actions[]`: the exact failed or review-dependent checks to address;
+- `release_plan`: the existing reviewed migration and Temporal proposal **only
+  if** all planning checks completed. This is never deployment authorization.
+
+A `REVIEW_REQUIRED` summary is expected with active Temporal workflows or
+an additive migration. A `BLOCKED` report exits code 2. If tooling is older
+and `--diagnose-release` is unrecognized, refresh **only** root-owned tooling
+using Step 2, then rerun the same command. To obtain the original raw
+preflight objects for comparison, the existing read-only commands remain:
+
+```bash
 sudo /usr/local/sbin/katcha-production-deploy --readiness
 sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET_SHA"
 ```

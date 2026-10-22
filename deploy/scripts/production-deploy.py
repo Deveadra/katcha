@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from typing import Any
 REPO = Path("/opt/katcha")
 ENV = Path("/etc/katcha/katcha.env")
 GATE = Path("/etc/katcha/production-deploy.enabled")
+SIGNING_KEY = Path("/etc/katcha/production-deploy.key")
+TOOL_SOURCE = Path("/usr/local/lib/katcha-production-deploy/installed-source-sha")
 STATE = Path("/srv/katcha/deployments")
 LOCK = Path("/run/lock/katcha-production-deployment.lock")
 SUPERVISOR_LEASE_DIR = Path("/run/katcha-production-supervisor")
@@ -1142,7 +1145,247 @@ def plan_release(target: str) -> dict[str, Any]:
     }
 
 
+
+def _diagnostic_check(
+    name: str, status: str, detail: str, next_action: str | None = None,
+    **evidence: Any,
+) -> dict[str, Any]:
+    """Consistent read-only operator evidence; never include credential values."""
+    result: dict[str, Any] = {"name": name, "status": status, "detail": detail}
+    if next_action:
+        result["next_action"] = next_action
+    if evidence:
+        result["evidence"] = evidence
+    return result
+
+
+def deployment_control_diagnostics() -> list[dict[str, Any]]:
+    """Inspect local deploy controls without enabling a gate or reading a signing key."""
+    checks: list[dict[str, Any]] = []
+    if GATE.is_symlink():
+        checks.append(_diagnostic_check(
+            "host_deployment_gate", "BLOCKED", "Host gate is a symlink.",
+            "Investigate the gate path; do not authorize deployment.",
+        ))
+    elif not GATE.exists():
+        checks.append(_diagnostic_check(
+            "host_deployment_gate", "PASS", "Host gate is OFF (normal manual state).",
+        ))
+    elif not GATE.is_file():
+        checks.append(_diagnostic_check(
+            "host_deployment_gate", "BLOCKED", "Host gate is not a regular file.",
+            "Investigate the host gate path before requesting deployment.",
+        ))
+    else:
+        gate_stat = GATE.stat()
+        if gate_stat.st_uid != 0 or gate_stat.st_mode & 0o077:
+            checks.append(_diagnostic_check(
+                "host_deployment_gate", "BLOCKED", "Host gate owner or permissions unsafe.",
+                "Restore the root-only gate state using the approved runbook.",
+            ))
+        elif GATE.read_text(encoding="utf-8").strip() == (
+            "KATCHA_PRODUCTION_DEPLOY_ENABLED=true"
+        ):
+            checks.append(_diagnostic_check(
+                "host_deployment_gate", "REVIEW_REQUIRED", "Host gate is ON.",
+                "Confirm this is an approved one-shot window; otherwise turn it OFF.",
+            ))
+        else:
+            checks.append(_diagnostic_check(
+                "host_deployment_gate", "BLOCKED", "Host gate contents are unexpected.",
+                "Inspect the host deployment gate before continuing.",
+            ))
+
+    if SIGNING_KEY.is_symlink() or not SIGNING_KEY.is_file():
+        checks.append(_diagnostic_check(
+            "signing_key_metadata", "BLOCKED", "Root-only signing key file is missing or unsafe.",
+            "Restore the existing signing key through the documented recovery path.",
+        ))
+    else:
+        key_stat = SIGNING_KEY.stat()
+        if (key_stat.st_uid != 0 or stat.S_IMODE(key_stat.st_mode) != 0o600
+            or key_stat.st_size != 65):
+            checks.append(_diagnostic_check(
+                "signing_key_metadata", "BLOCKED",
+                "Signing key owner, mode or length does not match expected metadata.",
+                "Verify the existing key metadata without printing or regenerating it.",
+            ))
+        else:
+            checks.append(_diagnostic_check(
+                "signing_key_metadata", "PASS",
+                "Root-only key metadata matches. HMAC equivalence is not tested.",
+            ))
+
+    try:
+        timer = subprocess.run(
+            ["systemctl", "is-enabled", "katcha-production-deploy-poll.timer"],
+            capture_output=True, text=True, timeout=5,
+        )
+        timer_state = timer.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        timer_state = ""
+    if timer_state == "disabled":
+        checks.append(_diagnostic_check(
+            "automatic_deploy_timer", "PASS", "Automatic deployment polling is disabled.",
+        ))
+    elif timer_state == "enabled":
+        checks.append(_diagnostic_check(
+            "automatic_deploy_timer", "REVIEW_REQUIRED",
+            "Automatic deployment polling is enabled, unlike manual baseline.",
+            "Review and disable the poll timer using the manual deployment runbook.",
+        ))
+    else:
+        checks.append(_diagnostic_check(
+            "automatic_deploy_timer", "BLOCKED", "Deployment timer state could not be verified.",
+            "Check systemctl is-enabled for the production deployment poll timer.",
+        ))
+
+    if TOOL_SOURCE.is_symlink() or not TOOL_SOURCE.is_file():
+        checks.append(_diagnostic_check(
+            "installed_tool_version", "UNKNOWN", "Tool installation source is not recorded.",
+            "Refresh the root-owned deployment tools using the reviewed installer.",
+        ))
+    else:
+        pin_stat = TOOL_SOURCE.stat()
+        if pin_stat.st_uid != 0 or pin_stat.st_mode & 0o077 or pin_stat.st_size > 64:
+            checks.append(_diagnostic_check(
+                "installed_tool_version", "BLOCKED", "Installed-tool manifest is unsafe.",
+                "Reinstall root-owned deployment tooling using the reviewed installer.",
+            ))
+        else:
+            tool_sha = TOOL_SOURCE.read_text(encoding="ascii").strip()
+            if not SHA.fullmatch(tool_sha):
+                checks.append(_diagnostic_check(
+                    "installed_tool_version", "BLOCKED", "Installed-tool version is invalid.",
+                    "Reinstall deployment tooling from verified accepted main.",
+                ))
+            else:
+                checks.append(_diagnostic_check(
+                    "installed_tool_version", "PASS",
+                    "Installed tooling source SHA recorded; application version may differ.",
+                    source_sha=tool_sha,
+                ))
+    return checks
+
+
+def diagnose_release(target: str) -> dict[str, Any]:
+    """One read-only diagnostic report; never confuse a review with authorization."""
+    report: dict[str, Any] = {
+        "status": "BLOCKED",
+        "target_sha": target,
+        "checked_at": dt.datetime.now(dt.UTC).isoformat(),
+        "deployment_authorized": False,
+        "checks": [],
+        "next_actions": [],
+    }
+    checks = report["checks"]
+    if not SHA.fullmatch(target):
+        checks.append(_diagnostic_check(
+            "target_sha", "BLOCKED", "An exact lowercase 40-character SHA is required.",
+            "Copy the verified exact release SHA from GitHub main.",
+        ))
+        return report
+    checks.append(_diagnostic_check("target_sha", "PASS", "Exact release SHA supplied."))
+    try:
+        if os.geteuid() != 0 or run("hostname") != "katcha-prod-primary-001":
+            raise Blocked("This command requires root on the verified OCI production primary")
+    except Blocked:
+        checks.append(_diagnostic_check(
+            "host_identity", "BLOCKED", "Not the verified root-owned OCI production primary.",
+            "Connect to katcha-prod-primary-001 using the existing Bastion procedure.",
+        ))
+        return report
+    checks.append(_diagnostic_check("host_identity", "PASS", "Verified OCI primary and root."))
+
+    try:
+        checks.extend(deployment_control_diagnostics())
+    except (OSError, UnicodeError, ValueError, TypeError):
+        checks.append(_diagnostic_check(
+            "deployment_controls", "BLOCKED", "Could not inspect deployment control metadata.",
+            "Inspect root-owned deployment controls without printing secrets.",
+        ))
+
+    try:
+        ready = readiness()
+    except Blocked as exc:
+        checks.append(_diagnostic_check(
+            "production_readiness", "BLOCKED", str(exc),
+            "Resolve host/runtime/database/Temporal readiness before release planning.",
+        ))
+    except (OSError, ValueError, KeyError, TypeError):
+        checks.append(_diagnostic_check(
+            "production_readiness", "BLOCKED", "Host readiness inspection failed.",
+            "Inspect the production supervisor, database and Temporal diagnostics.",
+        ))
+    else:
+        checks.append(_diagnostic_check(
+            "production_readiness", "PASS",
+            "Runtime, migration base and Temporal pending-activity checks completed.",
+            database_revision=ready["database_start_revision"],
+            temporal_running_count=ready["temporal_running_count"],
+        ))
+        try:
+            planned = plan_release(target)
+        except Blocked as exc:
+            checks.append(_diagnostic_check(
+                "release_plan", "BLOCKED", str(exc),
+                "Inspect the independent release verifier and candidate comparison.",
+            ))
+        except (OSError, ValueError, KeyError, TypeError):
+            checks.append(_diagnostic_check(
+                "release_plan", "BLOCKED", "Release-specific planning failed.",
+                "Inspect the release verifier, migration inventory and host readiness.",
+            ))
+        else:
+            report["release_plan"] = planned
+            checks.append(_diagnostic_check(
+                "release_plan", "PASS",
+                "Exact release preflight completed; approval has not been granted.",
+            ))
+            if planned["status"] == "REVIEW_REQUIRED":
+                checks.append(_diagnostic_check(
+                    "backup_restore_review", "REVIEW_REQUIRED",
+                    "Recent R2 backup and isolated restore evidence are not attested by this doctor.",
+                    "Verify current protected backup/restore receipts before signed approval.",
+                ))
+                checks.append(_diagnostic_check(
+                    "github_request_approval", "REVIEW_REQUIRED",
+                    "No GitHub protected approval or signed request is created by diagnosis.",
+                    "After reviewing migration and workflows, authorize an exact-SHA request "
+                    "using the manual runbook.",
+                ))
+                if planned.get("schema_change"):
+                    checks.append(_diagnostic_check(
+                        "migration_review", "REVIEW_REQUIRED",
+                        "Forward-only schema migration needs an explicit operator decision.",
+                        "Review the proposed migration and restore evidence before approval.",
+                        candidate_policy=planned["candidate_migration_policy"],
+                    ))
+                if planned.get("temporal_running_count", 0):
+                    checks.append(_diagnostic_check(
+                        "temporal_workflow_review", "REVIEW_REQUIRED",
+                        "Running Temporal executions require an explicit restart decision.",
+                        "Review workflow identities, pending state and replay/idempotence.",
+                        running_count=planned["temporal_running_count"],
+                    ))
+    report["next_actions"] = [
+        {"check": item["name"], "instruction": item["next_action"]}
+        for item in checks if "next_action" in item
+    ]
+    if any(item["status"] == "BLOCKED" for item in checks):
+        report["status"] = "BLOCKED"
+    elif report.get("release_plan", {}).get("status") == "CURRENT":
+        report["status"] = "CURRENT"
+    else:
+        report["status"] = "REVIEW_REQUIRED"
+    return report
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--diagnose-release":
+        report = diagnose_release(sys.argv[2])
+        print(json.dumps(report, sort_keys=True))
+        return 2 if report["status"] == "BLOCKED" else 0
     if len(sys.argv) == 3 and sys.argv[1] == "--plan-release":
         try:
             print(json.dumps(plan_release(sys.argv[2]), sort_keys=True))
