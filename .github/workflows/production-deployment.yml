@@ -60,9 +60,9 @@ jobs:
           python -m pip install pytest
           python -m py_compile deploy/scripts/production-deploy.py deploy/scripts/production-deploy-poll.py
           bash -n deploy/scripts/install-production-deployer.sh
-          # This isolated contract test needs only pytest. Do not import the
-          # application-wide tests/conftest.py (requires SQLAlchemy and full runtime).
-          python -m pytest --noconftest -q tests/test_production_deploy.py
+          bash -n scripts/check-production-deployment-github.sh
+          # Isolated contract tests need only pytest, not app-wide SQLAlchemy fixtures.
+          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_github_auth_preflight.py
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
@@ -125,13 +125,36 @@ jobs:
             const policy = process.env.POLICY;
             const migrationPolicy = process.env.MIGRATION_POLICY;
             const key = process.env.DEPLOY_KEY || "";
-            if (process.env.ENABLED !== "true" ||
-                !/^[0-9a-f]{40}$/.test(sha || "") ||
-                !["refuse", "approved-resume"].includes(policy) ||
-                !["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066"].includes(migrationPolicy) ||
-                !/^[0-9a-f]{64}$/.test(key) ||
-                context.ref !== "refs/heads/main") {
-              throw new Error("Production deployment request authorization missing or invalid");
+            // Keep each failure distinct. Never print the signing key, its
+            // length, or HMAC input; only report the failed requirement.
+            if (process.env.ENABLED !== "true") {
+              throw new Error(
+                "GITHUB_DEPLOY_GATE_DISABLED: KATCHA_PRODUCTION_DEPLOY_ENABLED " +
+                "is not true in the protected katcha-production job. Keep " +
+                "the repository Actions variable true through authorization; " +
+                "check for a conflicting Environment-level variable of the same name."
+              );
+            }
+            if (!/^[0-9a-f]{64}$/.test(key)) {
+              throw new Error(
+                "GITHUB_DEPLOY_SIGNING_SECRET_INVALID: " +
+                "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY is missing or invalid " +
+                "in the protected katcha-production Environment. " +
+                "Provision the same 32-byte lowercase-hex key held by OCI. " +
+                "Never print the key."
+              );
+            }
+            if (!/^[0-9a-f]{40}$/.test(sha || "")) {
+              throw new Error("GITHUB_DEPLOY_SHA_INVALID: exact 40-character release SHA required");
+            }
+            if (!["refuse", "approved-resume"].includes(policy)) {
+              throw new Error("GITHUB_DEPLOY_WORKFLOW_POLICY_INVALID");
+            }
+            if (!["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066"].includes(migrationPolicy)) {
+              throw new Error("GITHUB_DEPLOY_MIGRATION_POLICY_INVALID");
+            }
+            if (context.ref !== "refs/heads/main") {
+              throw new Error("GITHUB_DEPLOY_BRANCH_INVALID: dispatch from main");
             }
             const main = await github.rest.repos.getBranch({
               owner: context.repo.owner, repo: context.repo.repo, branch: "main"

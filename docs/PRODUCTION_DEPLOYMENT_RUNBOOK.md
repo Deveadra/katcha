@@ -44,6 +44,14 @@ Settings → **Secrets and variables → Actions**:
   `KATCHA_PRODUCTION_DEPLOY_HMAC_KEY`.
 - Repository Actions **variable**: `KATCHA_PRODUCTION_DEPLOY_ENABLED=false`.
   Keep it **false during setup**. This is a variable, not a secret.
+  **Do not define the same variable inside the `katcha-production`
+  Environment.** Preflight sees the repository gate while protected approval
+  may see a conflicting environment-scoped value. Confirm no duplicate exists
+  using `gh variable list --repo Deveadra/katcha --env katcha-production`.
+  Run `bash scripts/check-production-deployment-github.sh` from WSL
+  after temporarily enabling the repository gate and **before dispatch**.
+  Do not disable the gate until the protected authorization publishes its
+  signed request. For a repeat deployment, use the linked manual runbook.
 
 ## 3. Signing key and OCI connection (start in WSL)
 
