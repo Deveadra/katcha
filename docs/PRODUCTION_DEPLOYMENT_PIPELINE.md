@@ -1,5 +1,7 @@
 # Katcha production deployment pipeline
 
+For a supervised one-off production release without enabling the deployment timer, follow the [manual deployment checklist](PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md).
+
 Status: **CI-gated image publication, read-only release observation, runtime attestation and protected host-pull production promotion implemented; production promotion remains disabled by default**. Fully unattended/continuous production promotion is not enabled.
 See [host observer](PRODUCTION_RELEASE_OBSERVER.md) for the opt-in,
 non-deploying hourly inspection path. The observer reports configured
