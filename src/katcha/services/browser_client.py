@@ -1,8 +1,9 @@
 """Browser RPC shared by goal workers and the authenticated operator handoff."""
 from __future__ import annotations
 
-import httpx
 from datetime import UTC, datetime
+
+import httpx
 
 from katcha.config import get_settings
 
@@ -22,7 +23,9 @@ def browser_configuration() -> dict:
         ],
         "live_browser_verified": False,
         "service_status": "not_checked",
-        "verification_scope": "A live Chromium health check does not verify external site access or video content",
+        "verification_scope": (
+            "A live Chromium health check does not verify external site access or video content"
+        ),
     }
 
 
