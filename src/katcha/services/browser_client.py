@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import httpx
+from datetime import UTC, datetime
 
 from katcha.config import get_settings
 
@@ -20,7 +21,39 @@ def browser_configuration() -> dict:
             "Public HTTPS only; media access does not establish usage rights or scene verification",
         ],
         "live_browser_verified": False,
+        "service_status": "not_checked",
+        "verification_scope": "A live Chromium health check does not verify external site access or video content",
     }
+
+
+async def probe_browser_service() -> dict:
+    """Bounded, non-mutating live Chromium health check; never exposes upstream errors."""
+    settings = get_settings()
+    result = browser_configuration()
+    result["checked_at"] = datetime.now(UTC).isoformat()
+    if not result["configured"]:
+        return {**result, "service_status": "not_configured",
+                "code": "browser_not_configured"}
+    try:
+        # /health starts Chromium if necessary but never opens a provider page.
+        # The URL is operator configuration, not a model- or browser-supplied URL.
+        async with httpx.AsyncClient(trust_env=False, timeout=5.0) as client:
+            response = await client.get(settings.browser_service_url.rstrip("/") + "/health")
+        if response.status_code != 200:
+            return {**result, "service_status": "unhealthy",
+                    "code": "browser_health_unhealthy"}
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("ready") is not True:
+            return {**result, "service_status": "unhealthy",
+                    "code": "browser_health_invalid"}
+    except httpx.TimeoutException:
+        return {**result, "service_status": "unreachable",
+                "code": "browser_health_timeout"}
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {**result, "service_status": "unreachable",
+                "code": "browser_health_unreachable"}
+    return {**result, "service_status": "ready", "live_browser_verified": True,
+            "code": "browser_service_ready"}
 
 
 async def run_browser(goal, arguments: dict) -> dict:
