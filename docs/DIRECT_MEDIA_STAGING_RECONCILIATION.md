@@ -41,10 +41,13 @@ Eligibility requires ALL of:
   modification/initiation time *older* than the configured cutoff
 - Existing matching SourceItem in `ready` or `failed` state
 - No Clip whose `storage_key` references the stage object
+- No pending `direct_promotion_proof` that could depend on this stage.
+  Failed sources with a claim retain **all** their attempt staging; a READY
+  source with a Clip still retains the exact claimed stage key until reviewed.
 - Fresh source-state and Clip-reference recheck under a database row lock before
   any actual deletion or abort
 
-Unknown, malformed, active/`ingesting`, registered, recently touched, or
+Unknown, malformed, active/`ingesting`, provenance-claimed, registered, recently touched, or
 already referenced objects are **retained**. Sources stuck in `ingesting`
 after a crash need a separate Temporal/SourceItem incident reconciliation
 before any cleanup. This command **does not** declare them failed or restart

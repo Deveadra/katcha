@@ -177,6 +177,28 @@ async def test_changed_or_unverifiable_evidence_blocks_transaction(saved, change
 
 
 @pytest.mark.asyncio
+async def test_failed_source_with_linked_verified_clip_can_reconcile(saved):
+    source_id, clip_id, _, store = fixture_source()
+    with db.session_scope() as session:
+        row = session.get(SourceItem, source_id)
+        row.status = SourceStatus.FAILED.value
+        row.error = "Prior ingest workflow failed after persisting Clip"
+    temporal = Temporal(status=WorkflowExecutionStatus.FAILED)
+    plan = await recovery.plan_linked_clip_recovery(
+        source_id, temporal_client=temporal, store=store,
+    )
+    assert plan["eligible"] is True
+    done = await recovery.finalize_linked_clip_recovery(
+        source_id, approved_fingerprint=plan["approval_fingerprint"],
+        temporal_client=temporal, store=store,
+    )
+    assert done["clip_id"] == str(clip_id)
+    assert done["status"] == SourceStatus.READY.value
+    assert state(source_id)["error"] is None
+    assert store.mutations == 0
+
+
+@pytest.mark.asyncio
 async def test_post_verification_db_race_is_fenced_under_row_lock(saved, monkeypatch):
     source_id, _, _, store = fixture_source()
     temporal = Temporal()
@@ -209,7 +231,7 @@ async def test_post_verification_db_race_is_fenced_under_row_lock(saved, monkeyp
         ("no_video", "clip_video_metadata_missing"),
         ("unknown_run", "temporal_terminal_run_unverified"),
         ("remote_job", "remote_acquisition_separate"),
-        ("registered", "source_not_ingesting"),
+        ("registered", "source_not_recoverable"),
         ("wrong_key", "clip_object_key_not_content_addressed"),
     ],
 )

@@ -168,6 +168,40 @@ def test_streamed_source_becomes_real_clip_and_preserves_provenance(
     assert len(attempts) == 1
 
 
+def test_pending_proof_blocks_retry_before_download_or_status_reset(
+    saved, monkeypatch
+):
+    source_id = add_source("https://press.example.org/previous.mp4")
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        source.status = SourceStatus.FAILED.value
+        source.error = "Previous R2 promotion interrupted"
+        source.source_metadata = {
+            **source.source_metadata,
+            "direct_promotion_proof": {
+                "sha256": "a" * 64,
+                "stage_key": f"staging/direct/{source_id}/{'f' * 32}.mp4",
+            },
+        }
+    calls = []
+    monkeypatch.setattr(
+        activities, "download",
+        lambda url: calls.append(url),
+    )
+    monkeypatch.setattr(
+        activities, "stream_direct_media",
+        lambda *args, **kw: calls.append("streamed"),
+    )
+    with pytest.raises(Exception, match="evidence reconciliation"):
+        activities._ingest_source(str(source_id))
+    with db.session_scope() as session:
+        row = session.get(SourceItem, source_id)
+        assert row.status == SourceStatus.FAILED.value
+        assert row.error == "Previous R2 promotion interrupted"
+        assert "direct_promotion_proof" in row.source_metadata
+    assert calls == []
+
+
 def test_duplicate_direct_source_reuses_clip_without_duplicate_storage(
     saved, transfer_stubs
 ):

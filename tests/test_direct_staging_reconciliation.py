@@ -141,6 +141,66 @@ def test_active_unknown_recent_or_malformed_staging_is_never_modified(saved):
     assert not store.deleted and not store.client.aborted
 
 
+@pytest.mark.parametrize("status", [
+    SourceStatus.FAILED.value, SourceStatus.READY.value,
+])
+def test_verified_promotion_stage_is_never_garbage_collected(saved, status):
+    source_id = source(status)
+    claimed = key(source_id, "f" * 32)
+    other_attempt = key(source_id, "e" * 32)
+    with db.session_scope() as session:
+        row = session.get(SourceItem, source_id)
+        row.source_metadata = {
+            "direct_promotion_proof": {
+                "stage_key": claimed,
+                "sha256": "a" * 64,
+            }
+        }
+        if status == SourceStatus.READY.value:
+            clip = Clip(
+                id=uuid.uuid4(), sha256="a" * 64,
+                storage_key=f"raw/aa/{'a' * 64}.mp4",
+            )
+            session.add(clip)
+            row.clip_id = clip.id
+    store = FakeStore(
+        [{"Contents": [obj(claimed), obj(other_attempt)], "IsTruncated": False}],
+        [{"Uploads": [upload(claimed)], "IsTruncated": False}],
+    )
+    outcome = recon.reconcile_direct_staging(store=store, now=NOW, apply=True)
+    assert outcome["counts"]["provenance_claim_pending"] >= 2
+    assert claimed not in store.deleted
+    assert not store.client.aborted
+    if status == SourceStatus.FAILED.value:
+        # The previous attempt's last intact copy may be in any of its stages.
+        assert outcome["counts"]["provenance_claim_pending"] == 3
+        assert store.deleted == []
+    else:
+        assert store.deleted == [other_attempt]
+
+
+def test_apply_rechecks_promotion_claim_under_source_lock(saved, monkeypatch):
+    source_id = source(SourceStatus.FAILED.value)
+    stage = key(source_id)
+    store = FakeStore([{"Contents": [obj(stage)], "IsTruncated": False}])
+    original = recon._eligible_source
+
+    def claim_appears_before_removal(path, *, lock):
+        allowed, reason = original(path, lock=lock)
+        with db.session_scope() as session:
+            row = session.get(SourceItem, source_id)
+            row.source_metadata = {
+                "direct_promotion_proof": {"stage_key": stage}
+            }
+        return allowed, reason
+
+    monkeypatch.setattr(recon, "_eligible_source", claim_appears_before_removal)
+    outcome = recon.reconcile_direct_staging(store=store, now=NOW, apply=True)
+    assert outcome["counts"]["eligible"] == 1
+    assert outcome["counts"]["provenance_claim_pending"] == 1
+    assert not store.deleted
+
+
 def test_existing_clip_storage_reference_blocks_removal(saved):
     ready = source(SourceStatus.READY.value)
     staged = key(ready)
