@@ -12,6 +12,7 @@ on:
       - src/katcha/ops/release_eligibility.py
       - tests/test_production_deploy.py
       - docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md
+      - docs/PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md
   workflow_dispatch:
     inputs:
       release_sha:
@@ -39,7 +40,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: katcha-production-deployment
+  # Keep live manual releases serialized; PR-only contract checks must not
+  # queue behind a manual request waiting for Environment approval.
+  group: ${{ github.event_name == 'workflow_dispatch' && 'katcha-production-deployment' || format('katcha-production-validation-pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:
