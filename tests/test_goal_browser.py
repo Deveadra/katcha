@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
-
 import pytest
 from fastapi.testclient import TestClient
 from test_command_goals import receipt
