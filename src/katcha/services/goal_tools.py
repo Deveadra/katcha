@@ -1127,9 +1127,9 @@ async def run_read_tool(goal: CommandGoal, name: str, args: dict) -> dict:
             raise ValueError("browser_snapshot takes no arguments")
         return await run_browser(goal, {"action": "snapshot"})
     if name == "retrieval_capabilities":
-        from katcha.services.retrieval_diagnostics import retrieval_capabilities
+        from katcha.services.retrieval_diagnostics import retrieval_capabilities_checked
 
-        return retrieval_capabilities()
+        return await retrieval_capabilities_checked()
     if name == "read_web_page":
         from starlette.concurrency import run_in_threadpool
 
