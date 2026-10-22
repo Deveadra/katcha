@@ -60,9 +60,9 @@ jobs:
           python -m pip install pytest
           python -m py_compile deploy/scripts/production-deploy.py deploy/scripts/production-deploy-poll.py
           bash -n deploy/scripts/install-production-deployer.sh
-          # This isolated contract test needs only pytest. Do not import the
-          # application-wide tests/conftest.py (requires SQLAlchemy and full runtime).
-          python -m pytest --noconftest -q tests/test_production_deploy.py
+          bash -n scripts/check-production-deployment-github.sh
+          # Isolated contract tests need only pytest, not app-wide SQLAlchemy fixtures.
+          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_github_auth_preflight.py
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
