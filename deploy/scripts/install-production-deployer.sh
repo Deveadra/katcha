@@ -46,10 +46,6 @@ python3 -m py_compile \
   "$staging/src/katcha/ops/release_eligibility.py"
 
 install -d -o root -g root -m 0700 /usr/local/lib/katcha-production-deploy
-printf '%s\n' "$target" > "$staging/installed-source-sha"
-install -o root -g root -m 0600 \
-  "$staging/installed-source-sha" \
-  /usr/local/lib/katcha-production-deploy/installed-source-sha
 install -o root -g root -m 0600 \
   "$staging/src/katcha/ops/release_eligibility.py" \
   /usr/local/lib/katcha-production-deploy/release_eligibility.py
@@ -70,6 +66,12 @@ for unit in \
     "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
+
+# Attest the newly installed tool source only after all installs and daemon reload.
+printf '%s\n' "$target" > "$staging/installed-source-sha"
+install -o root -g root -m 0600 \
+  "$staging/installed-source-sha" \
+  /usr/local/lib/katcha-production-deploy/installed-source-sha
 
 # No gate, signing secret, timer enablement, production service restart,
 # Git checkout advancement, OCI authority change or new networking.
