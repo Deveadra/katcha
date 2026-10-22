@@ -1256,4 +1256,5 @@ def test_manual_production_runbook_is_one_shot_and_shell_syntax_valid():
     assert "RECOVERY_REQUIRED" in manual
     assert "gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED" in manual
     assert manual.index("--plan-release") < manual.index("--body true")
-    assert manual.index("--body false") < manual.index("sudo /usr/local/sbin/katcha-production-deploy-poll\n)")
+    manual_poll = "sudo /usr/local/sbin/katcha-production-deploy-poll\n)"
+    assert manual.index("--body false") < manual.index(manual_poll)
