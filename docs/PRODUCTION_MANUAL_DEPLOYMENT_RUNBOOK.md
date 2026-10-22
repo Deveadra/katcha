@@ -189,10 +189,30 @@ gh auth status
 gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED \
   --repo Deveadra/katcha --body true
 gh variable list --repo Deveadra/katcha
+bash scripts/check-production-deployment-github.sh
 ```
 
-Check the variable reads `true`. **This opens the GitHub request gate**, not
-the OCI deployment gate.
+The read-only preflight must print `GITHUB_DEPLOY_AUTH_SCOPE_OK`. It verifies:
+
+- The **repository Actions variable**
+  `KATCHA_PRODUCTION_DEPLOY_ENABLED` is `true`.
+- No duplicate **`katcha-production` Environment variable** with that
+  same name exists. An Environment-scoped duplicate can contradict the
+  repository gate once the protected job starts. Inspect both scopes with
+  `gh variable list --repo Deveadra/katcha` and
+  `gh variable list --repo Deveadra/katcha --env katcha-production`.
+  After independently confirming the duplicate, remove **only that
+  Environment-level variable**, never the authoritative repository variable.
+- The protected `katcha-production` Environment lists the
+  `KATCHA_PRODUCTION_DEPLOY_HMAC_KEY` secret **by name**. Secret content
+  cannot be retrieved by GitHub; name presence does not verify its format or
+  equivalence to the root-only OCI key. Do not regenerate or print either key.
+
+**This opens the GitHub request gate**, not the OCI deployment gate.
+Keep the repository gate `true` until `authorize-request` succeeds and
+logs `Production deployment request published`. Turning it off before
+approval completes is a deliberate authorization denial. Do not interpret
+`DEPLOY_KEY: ***` in the logs as proof that the HMAC matches the OCI key.
 
 In **GitHub browser** open
 [Actions → Production deployment](https://github.com/Deveadra/katcha/actions/workflows/production-deployment.yml),
@@ -210,7 +230,11 @@ Approve the protected `katcha-production` Environment when GitHub prompts.
 Verify `preflight` and `authorize-request` jobs **succeeded** and the
 `Production deployment request published: id=... sha=...` message matches
 the selected SHA. Approval creates a **20-minute signed request**, not a
-deployed release.
+deployed release. If authorization fails, read its distinct error:
+`GITHUB_DEPLOY_GATE_DISABLED` points to variable scope/early disable;
+`GITHUB_DEPLOY_SIGNING_SECRET_INVALID` points to absent/malformed secret
+in the protected Environment. Neither is a Bastion/OCI SSH failure.
+Do not loosen signing checks or expose credentials to debug either.
 
 **Immediately close the GitHub request gate after that request is signed**
 (WSL). The existing signed request remains valid until its original expiry:
