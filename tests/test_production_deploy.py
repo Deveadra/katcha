@@ -1223,3 +1223,37 @@ def test_release_plan_rejects_invalid_merge_base(monkeypatch):
     comparison["merge_base_commit"] = None
     with pytest.raises(app.Blocked, match="candidate ancestry"):
         app.plan_release(NEW)
+
+
+def test_manual_production_runbook_is_one_shot_and_shell_syntax_valid():
+    """No CI credential use, service mutation, or timer enablement: syntax only."""
+    import re
+    import subprocess
+
+    manual = (
+        ROOT / "docs/PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md"
+    ).read_text(encoding="utf-8")
+    scripts = re.findall(r"```bash\n(.*?)\n```", manual, flags=re.DOTALL)
+    assert len(scripts) >= 9
+    for index, source in enumerate(scripts):
+        check = subprocess.run(
+            ["bash", "-n"], input=source, text=True,
+            capture_output=True, check=False,
+        )
+        assert check.returncode == 0, (
+            f"Manual runbook bash section {index + 1}: {check.stderr}"
+        )
+
+    assert "sudo /usr/local/sbin/katcha-production-deploy --readiness" in manual
+    assert 'sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET_SHA"' in manual
+    assert "sudo /usr/local/sbin/katcha-production-deploy-poll" in manual
+    assert "sudo systemctl disable --now katcha-production-deploy-poll.timer" in manual
+    assert "sudo rm -f /etc/katcha/production-deploy.enabled" in manual
+    assert "systemctl enable --now katcha-production-deploy-poll.timer" not in manual
+    assert "status\":\"SUCCEEDED" in manual
+    assert "status\":\"DEPLOYED" in manual
+    assert "approve-additive-through-0066" in manual
+    assert "RECOVERY_REQUIRED" in manual
+    assert "gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED" in manual
+    assert manual.index("--plan-release") < manual.index("--body true")
+    assert manual.index("--body false") < manual.index("sudo /usr/local/sbin/katcha-production-deploy-poll\n)")
