@@ -1270,9 +1270,11 @@ def test_deployment_diagnostics_one_command_keeps_all_review_gates(monkeypatch):
     assert by_name["production_readiness"]["status"] == "PASS"
     assert by_name["release_plan"]["status"] == "PASS"
     assert by_name["migration_review"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["backup_restore_review"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["github_request_approval"]["status"] == "REVIEW_REQUIRED"
     assert by_name["temporal_workflow_review"]["status"] == "REVIEW_REQUIRED"
     assert by_name["temporal_workflow_review"]["evidence"]["running_count"] == 6
-    assert len(result["next_actions"]) == 2
+    assert len(result["next_actions"]) == 4
 
 
 def test_deployment_diagnostics_handles_blocked_planner_with_readiness_evidence(monkeypatch):
