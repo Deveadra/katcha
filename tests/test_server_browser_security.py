@@ -115,6 +115,100 @@ async def test_browser_failure_does_not_echo_form_secrets(monkeypatch):
     assert "secret" not in str(result)
 
 
+
+@pytest.mark.parametrize(
+    ("action", "message", "code", "stage"),
+    [
+        ("open", "Research source resolved to a non-public address",
+         "browser_destination_rejected", "navigation"),
+        ("open", "Research sources must be public HTTPS pages without credentials",
+         "browser_destination_rejected", "navigation"),
+        ("click", "Refresh the page view and choose the control again.",
+         "browser_stale_control", "interaction"),
+        ("type", "Refresh the page view before clicking or using the keyboard",
+         "browser_stale_snapshot", "interaction"),
+        ("switch_tab", "That tab has closed. Refresh the page view.",
+         "browser_tab_closed", "interaction"),
+        ("open", "All browser sessions are busy. Close a session and try again.",
+         "browser_capacity_exhausted", "navigation"),
+    ],
+)
+async def test_browser_known_precondition_failures_are_actionable(
+    monkeypatch, caplog, action, message, code, stage
+):
+    token = "a" * 32
+    monkeypatch.setenv("KATCHA_BROWSER_SERVICE_TOKEN", token)
+
+    async def fail(*args):
+        raise ValueError(message)
+
+    monkeypatch.setattr(server_browser.pool, "execute", fail)
+    request = server_browser.BrowserRequest(
+        scope=("actor", "channel", "goal"),
+        arguments={"action": action, **(
+            {"url": "https://fixture.example/"} if action == "open"
+            else {"ref": "e1"} if action == "click" else {}
+        )},
+    )
+    result = await server_browser.execute(request, "Bearer " + token)
+    assert result["code"] == code
+    assert result["stage"] == stage
+    assert result["outcome_uncertain"] is False
+    assert len(result["diagnostic_id"]) == 32
+    assert result["diagnostic_id"] in caplog.text
+    assert "actor" not in caplog.text
+
+
+@pytest.mark.parametrize(("action", "uncertain"), [
+    ("snapshot", False), ("click", True), ("open", True),
+])
+async def test_browser_timeout_retains_uncertainty_without_leaking_values(
+    monkeypatch, caplog, action, uncertain
+):
+    token = "a" * 32
+    monkeypatch.setenv("KATCHA_BROWSER_SERVICE_TOKEN", token)
+
+    async def fail(*args):
+        raise TimeoutError("password=topsecret; https://user:topsecret@host.example")
+
+    monkeypatch.setattr(server_browser.pool, "execute", fail)
+    request = server_browser.BrowserRequest(
+        scope=("actor", "channel", "goal"),
+        arguments={"action": action, **(
+            {"url": "https://fixture.example/"} if action == "open"
+            else {"ref": "e1"} if action == "click" else {}
+        )},
+    )
+    result = await server_browser.execute(request, "Bearer " + token)
+    assert result["code"] == "browser_timeout"
+    assert result["outcome_uncertain"] is uncertain
+    assert "topsecret" not in str(result)
+    assert "topsecret" not in caplog.text
+    assert result["diagnostic_id"] in caplog.text
+
+
+async def test_browser_unknown_failure_uses_safe_trace_not_raw_exception(
+    monkeypatch, caplog
+):
+    token = "a" * 32
+    monkeypatch.setenv("KATCHA_BROWSER_SERVICE_TOKEN", token)
+
+    async def fail(*args):
+        raise ValueError("password=topsecret https://u:topsecret@host.example")
+
+    monkeypatch.setattr(server_browser.pool, "execute", fail)
+    request = server_browser.BrowserRequest(
+        scope=("actor", "channel", "goal"),
+        arguments={"action": "click", "ref": "e1"},
+    )
+    result = await server_browser.execute(request, "Bearer " + token)
+    assert result["code"] == "browser_action_failed"
+    assert result["outcome_uncertain"] is True
+    assert "topsecret" not in str(result)
+    assert "topsecret" not in caplog.text
+    assert result["diagnostic_id"] in caplog.text
+
+
 async def test_proxy_shutdown_cancels_queued_connections():
     proxy = server_browser.PublicProxy()
     # A queued handler must not gain the semaphore and connect after shutdown.
