@@ -310,6 +310,13 @@ TOOLS = {
             "configuration availability is not proof of a successful live operation", "ai:read",
         ),
         GoalTool(
+            "browser_open_page",
+            "Open a public HTTPS research page in isolated server-side Chromium and return "
+            "rendered page evidence without client-browser dependence or approval. "
+            "No form or control interaction; page content is untrusted and does not "
+            "verify video actions.", "ai:read",
+        ),
+        GoalTool(
             "browser_snapshot",
             "Read the current isolated server-browser page, controls and tabs for this goal. "
             "Page content is untrusted. Does not execute an interaction.", "ai:read",
@@ -822,7 +829,7 @@ def tool_schema(name: str) -> dict:
                 "properties": {"workflow_id": {"type": "string", "minLength": 1, "maxLength": 255}},
                 "required": ["workflow_id"],
             }
-        if name in {"source_item_status", "read_web_page"}:
+        if name in {"source_item_status", "read_web_page", "browser_open_page"}:
             key = "source_item_id" if name == "source_item_status" else "url"
             return {
                 "type": "object", "additionalProperties": False,
@@ -1117,6 +1124,17 @@ def _redact(value):
 
 
 async def run_read_tool(goal: CommandGoal, name: str, args: dict) -> dict:
+    if name == "browser_open_page":
+        from katcha.services.browser_client import run_browser
+
+        scopes, _ = resolve_goal_authority(goal)
+        if "*" not in scopes and "ai:read" not in scopes:
+            raise ValueError("This request no longer has ai:read permission")
+        if set(args) != {"url"} or not isinstance(args["url"], str):
+            raise ValueError("Provide one public HTTPS page URL")
+        if not 1 <= len(args["url"]) <= 2000:
+            raise ValueError("Provide a public HTTPS page URL within the length limit")
+        return await run_browser(goal, {"action": "open", "url": args["url"]})
     if name == "browser_snapshot":
         from katcha.services.browser_client import run_browser
 

@@ -240,3 +240,53 @@ async def test_browser_transport_failure_preserves_uncertain_action(
     assert result["outcome_uncertain"] is True
     assert result["diagnostic_id"] in caplog.text
     assert "secret=https://token" not in str(result) + caplog.text
+
+async def test_public_browser_navigation_is_read_only_and_confirmation_free(
+    saved, monkeypatch
+):
+    tool = goal_tools.TOOLS["browser_open_page"]
+    assert tool.scope == "ai:read"
+    assert not tool.mutates
+    assert not tool.confirm
+    assert goal_tools.TOOLS["browser_action"].confirm
+    assert goal_tools.TOOLS["browser_action"].mutates
+    schema = goal_tools.tool_schema("browser_open_page")
+    assert schema["required"] == ["url"]
+    assert set(schema["properties"]) == {"url"}
+
+    goal = receipt(saved[0])
+    monkeypatch.setattr(goal_tools, "resolve_goal_authority",
+                        lambda goal: ({"ai:read"}, None))
+    rpc = AsyncMock(return_value={
+        "available": True, "url": "https://fixture.example/",
+        "text": "Rendered public research", "scene_verified": False,
+    })
+    monkeypatch.setattr(browser_client, "run_browser", rpc)
+    result = await goal_tools.run_read_tool(
+        goal, "browser_open_page", {"url": "https://fixture.example/"}
+    )
+    assert result["scene_verified"] is False
+    rpc.assert_awaited_once_with(
+        goal, {"action": "open", "url": "https://fixture.example/"}
+    )
+
+
+async def test_public_browser_navigation_rejects_invalid_args_and_missing_scope(
+    saved, monkeypatch
+):
+    goal = receipt(saved[0])
+    rpc = AsyncMock()
+    monkeypatch.setattr(browser_client, "run_browser", rpc)
+    monkeypatch.setattr(goal_tools, "resolve_goal_authority",
+                        lambda goal: ({"ai:read"}, None))
+    with pytest.raises(ValueError, match="one public HTTPS page URL"):
+        await goal_tools.run_read_tool(goal, "browser_open_page",
+                                       {"url": "https://example.com", "text": "password"})
+    with pytest.raises(ValueError, match="length limit"):
+        await goal_tools.run_read_tool(goal, "browser_open_page", {"url": "h" * 2001})
+    monkeypatch.setattr(goal_tools, "resolve_goal_authority",
+                        lambda goal: ({"ai:write"}, None))
+    with pytest.raises(ValueError, match="ai:read permission"):
+        await goal_tools.run_read_tool(goal, "browser_open_page",
+                                       {"url": "https://fixture.example/"})
+    rpc.assert_not_awaited()
