@@ -1343,6 +1343,17 @@ def diagnose_release(target: str) -> dict[str, Any]:
                 "Exact release preflight completed; approval has not been granted.",
             ))
             if planned["status"] == "REVIEW_REQUIRED":
+                checks.append(_diagnostic_check(
+                    "backup_restore_review", "REVIEW_REQUIRED",
+                    "Recent R2 backup and isolated restore evidence are not attested by this doctor.",
+                    "Verify current protected backup/restore receipts before signed approval.",
+                ))
+                checks.append(_diagnostic_check(
+                    "github_request_approval", "REVIEW_REQUIRED",
+                    "No GitHub protected approval or signed request is created by diagnosis.",
+                    "After reviewing migration and workflows, authorize an exact-SHA request "
+                    "using the manual runbook.",
+                ))
                 if planned.get("schema_change"):
                     checks.append(_diagnostic_check(
                         "migration_review", "REVIEW_REQUIRED",
