@@ -22,7 +22,7 @@ PYTHONPATH=src python scripts/reconcile-linked-ingest.py <SOURCE_UUID>
 
 The tool verifies all of the following before returning `eligible: true`:
 
-- SourceItem remains `ingesting`, has an existing linked Clip, and does not
+- SourceItem is `ingesting` **or `failed`**, has an existing linked Clip, and does not
   belong to the separately leased remote-acquisition pathway
 - The exact persisted Temporal workflow has a known, **terminal execution
   run ID** (COMPLETED, FAILED, TIMED_OUT, CANCELED or TERMINATED)

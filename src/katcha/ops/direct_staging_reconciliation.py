@@ -19,6 +19,7 @@ from katcha.db import session_scope
 from katcha.domain import SourceStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, SourceItem
+from katcha.ops.direct_promotion_provenance import PROOF_KEY
 from katcha.runtime_fence import assert_mutation_authority
 
 DIRECT_STAGE_PREFIX = "staging/direct/"
@@ -118,6 +119,21 @@ def _iter_uploads(store: ObjectStore, limit: int):
         key_marker, upload_marker = cursor
 
 
+def _has_unresolved_promotion_proof(source: SourceItem, key: str) -> bool:
+    """A stage may be the last valid copy after a failed raw/ promotion.
+
+    A prior failed source can also have an earlier incomplete upload with a
+    different attempt ID. Hold *all* that source's stages until the incident
+    is reconciled rather than trusting the terminal status alone.
+    """
+    proof = (source.source_metadata or {}).get(PROOF_KEY)
+    if proof is None:
+        return False
+    if source.status != SourceStatus.READY.value or source.clip_id is None:
+        return True
+    return isinstance(proof, dict) and proof.get("stage_key") == key
+
+
 def _eligible_source(key: str, *, lock: bool) -> tuple[bool, str]:
     source_id = stage_source_id(key)
     if source_id is None:
@@ -131,6 +147,8 @@ def _eligible_source(key: str, *, lock: bool) -> tuple[bool, str]:
             return False, "unknown_source"
         if source.status not in _TERMINAL_SOURCE_STATUSES:
             return False, "source_not_terminal"
+        if _has_unresolved_promotion_proof(source, key):
+            return False, "provenance_claim_pending"
         if session.scalar(select(Clip.id).where(Clip.storage_key == key).limit(1)):
             return False, "referenced_by_clip"
     return True, "eligible"
@@ -149,6 +167,8 @@ def _remove_if_eligible(store: ObjectStore, key: str, *, kind: str, upload_id: s
             return "unknown_source"
         if source.status not in _TERMINAL_SOURCE_STATUSES:
             return "source_not_terminal"
+        if _has_unresolved_promotion_proof(source, key):
+            return "provenance_claim_pending"
         if session.scalar(select(Clip.id).where(Clip.storage_key == key).limit(1)):
             return "referenced_by_clip"
         if kind == "object":

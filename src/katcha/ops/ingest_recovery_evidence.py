@@ -306,7 +306,9 @@ async def inspect_held_ingest(
     )
     if stale:
         assessment = "source_changed_during_inspection"
-    elif before["status"] != SourceStatus.INGESTING.value:
+    elif before["status"] not in {
+        SourceStatus.INGESTING.value, SourceStatus.FAILED.value,
+    }:
         assessment = "not_an_ingesting_source"
     elif before["remote_acquisition_job_recorded"]:
         assessment = "remote_acquisition_requires_separate_reconciliation"
