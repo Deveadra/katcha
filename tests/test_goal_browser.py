@@ -172,6 +172,75 @@ async def test_retrieval_capabilities_runs_live_probe_not_configuration_only(mon
     probe.assert_awaited_once()
 
 
+@pytest.mark.parametrize(("status", "code", "uncertain"), [
+    (401, "browser_service_auth_rejected", False),
+    (403, "browser_service_auth_rejected", False),
+    (503, "browser_service_unavailable", True),
+    (500, "browser_service_http_failure", True),
+])
+async def test_browser_transport_classifies_http_errors_without_leaking_credentials(
+    monkeypatch, caplog, status, code, uncertain
+):
+    config = SimpleNamespace(
+        browser_service_url="http://browser:8010",
+        browser_service_token=SimpleNamespace(get_secret_value=lambda: "internal-secret"),
+    )
+    monkeypatch.setattr(browser_client, "get_settings", lambda: config)
+    original = httpx.AsyncClient
+
+    def client(*args, **kwargs):
+        def reply(request):
+            return httpx.Response(status, request=request,
+                                  text="password=private-password")
+        return original(*args, transport=httpx.MockTransport(reply), **kwargs)
+
+    monkeypatch.setattr(browser_client.httpx, "AsyncClient", client)
+    goal = SimpleNamespace(actor="operator", channel_profile_id=uuid.uuid4(),
+                           id=uuid.uuid4())
+    result = await browser_client.run_browser(goal, {"action": "click", "ref": "e1"})
+    assert result["code"] == code
+    assert result["stage"] == "service_rpc"
+    assert result["outcome_uncertain"] is uncertain
+    assert result["diagnostic_id"] in caplog.text
+    assert "private-password" not in str(result) + caplog.text
+    assert "internal-secret" not in str(result) + caplog.text
+    assert "http://browser:8010" not in str(result) + caplog.text
+
+
+@pytest.mark.parametrize(("error", "code"), [
+    ("timeout", "browser_rpc_timeout"),
+    ("connection", "browser_connection_lost"),
+    ("bad_json", "browser_invalid_response"),
+])
+async def test_browser_transport_failure_preserves_uncertain_action(
+    monkeypatch, caplog, error, code
+):
+    config = SimpleNamespace(
+        browser_service_url="http://browser:8010",
+        browser_service_token=SimpleNamespace(get_secret_value=lambda: "internal-secret"),
+    )
+    monkeypatch.setattr(browser_client, "get_settings", lambda: config)
+    original = httpx.AsyncClient
+
+    def client(*args, **kwargs):
+        def reply(request):
+            if error == "timeout":
+                raise httpx.ReadTimeout("secret=https://token", request=request)
+            if error == "connection":
+                raise httpx.ConnectError("secret=https://token", request=request)
+            return httpx.Response(200, request=request, text="not-json")
+        return original(*args, transport=httpx.MockTransport(reply), **kwargs)
+
+    monkeypatch.setattr(browser_client.httpx, "AsyncClient", client)
+    goal = SimpleNamespace(actor="operator", channel_profile_id=uuid.uuid4(),
+                           id=uuid.uuid4())
+    result = await browser_client.run_browser(goal, {"action": "open",
+                                                     "url": "https://fixture.example/"})
+    assert result["code"] == code
+    assert result["outcome_uncertain"] is True
+    assert result["diagnostic_id"] in caplog.text
+    assert "secret=https://token" not in str(result) + caplog.text
+
 async def test_public_browser_navigation_is_read_only_and_confirmation_free(
     saved, monkeypatch
 ):
