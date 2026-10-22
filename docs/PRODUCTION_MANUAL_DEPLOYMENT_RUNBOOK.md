@@ -210,8 +210,20 @@ Approve the protected `katcha-production` Environment when GitHub prompts.
 Verify `preflight` and `authorize-request` jobs **succeeded** and the
 `Production deployment request published: id=... sha=...` message matches
 the selected SHA. Approval creates a **20-minute signed request**, not a
-deployed release. Proceed to OCI promptly *after the approval succeeds*;
-an expired request requires a new approved dispatch, never relaxed validation.
+deployed release.
+
+**Immediately close the GitHub request gate after that request is signed**
+(WSL). The existing signed request remains valid until its original expiry:
+
+```bash
+gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED \
+  --repo Deveadra/katcha --body false
+gh variable list --repo Deveadra/katcha
+```
+
+Confirm `false` and proceed to OCI promptly. An expired request requires a
+new approved dispatch, never relaxed validation. A future request requires a
+fresh, explicit temporary opt-in.
 
 ## 5. Consume the request **once**, with no deployment timer (OCI)
 
@@ -239,7 +251,10 @@ It independently verifies authorization, expiry, exact SHA and policies;
 the deployer then checks immutable images, schema, running workflows,
 R2/restore, fencing and service ownership before any cutover.
 
-Expected eventual result is a **`DEPLOYED` receipt** for the selected SHA.
+The **manual poller console** reports `{"status":"SUCCEEDED", ...}` when
+the fixed executor returns successfully. The separate root-private
+`/srv/katcha/deployments/<timestamp>-<sha>/result.json` audit then records
+`{"status":"DEPLOYED", ...}` for the exact SHA. Both must agree.
 `NO_VALID_PENDING_REQUEST`, `BLOCKED`, `FAILED_REVIEW_REQUIRED`, or
 `RECOVERY_REQUIRED` **are not successes**. The subshell removes the host
 permission on normal exit and command failure; check it separately in Step 6.
@@ -268,7 +283,15 @@ sudo find /srv/katcha/deployments -type f -name result.json -print
 The checkout SHA and local `/v1/health/release` response must match
 **the exact approved target**. Check the latest protected result receipt for
 `status: DEPLOYED`, postdeploy Temporal recovery counts, and the migration
-revision; avoid printing protected environment copies or signing keys.
+revision. To inspect only the reviewed deployment outcome, substitute the
+exact `result.json` path identified above:
+
+```bash
+sudo cat /srv/katcha/deployments/PASTE_EXACT_DEPLOYMENT_DIRECTORY/result.json
+```
+
+Do **not** use `cat` on signing keys, `production-env.before`, credentials,
+or request payloads.
 
 In the normal **authenticated** browser, verify
 [app.katcha.stream](https://app.katcha.stream): Cloudflare Access login,
