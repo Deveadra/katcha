@@ -365,3 +365,73 @@ It raises a review flag at **75 commits or 100 changed files** before the
 strict 250-commit / 299-file comparison ceiling. Its journald output does
 **not** deploy or send notifications by itself. The production **deployment**
 timer stays disabled.
+
+
+## Telegram notifications for review, completion, failure and expiry
+
+This is a **separate notification path**, not a deployment trigger. It does not
+alter GitHub Environment review, the signed request, the OCI deployment
+authorization, or the deliberately manual release steps above.
+
+### GitHub: prompt for protected review
+
+The existing `scripts/notify-telegram.sh` sends the review link from an
+unprotected `notify-review` job **only after** `preflight` passes and the
+GitHub API reports the `katcha-production` Environment waiting for review.
+
+In GitHub **repository Actions secrets**, configure the existing notification
+settings `KATCHA_TELEGRAM_BOT_TOKEN` and `KATCHA_TELEGRAM_CHAT_ID`. The
+optional repository variable `KATCHA_TELEGRAM_THREAD_ID` targets a Telegram
+topic. The protected Environment's deployment **signing** secret remains
+separate. Never move that signing secret to repository scope to send alerts.
+
+Run the existing `telegram-notification-test.yml` manually to verify
+the bot can deliver into your chat. The approval notification links to the
+specific `https://github.com/Deveadra/katcha/actions/runs/<run-id>` page.
+Open the link while authenticated to GitHub and use **Review deployments**.
+The Telegram message itself cannot approve deployments. Very fast approvals
+may occur before the notification job observes a pending review; it will not
+mislabel such a run as waiting.
+
+### OCI: independently notify from durable receipts
+
+The installer in Step 2 also installs a **separate** root-owned
+`katcha-production-deploy-notify.service` and
+`katcha-production-deploy-notify.timer`. It does not enable them.
+The notifier reuses `KATCHA_TELEGRAM_BOT_TOKEN` and
+`KATCHA_TELEGRAM_CHAT_ID` from the existing **root-private**
+`/etc/katcha/katcha.env`; optionally set
+`KATCHA_TELEGRAM_THREAD_ID` there. It never prints secret values.
+
+After merging this change, passing CI, and refreshing the host's
+root-owned tools using Step 2, on the **OCI host**:
+
+```bash
+sudo systemctl start katcha-production-deploy-notify.service
+sudo journalctl -u katcha-production-deploy-notify.service -n 20 --no-pager
+sudo systemctl enable --now katcha-production-deploy-notify.timer
+sudo systemctl is-enabled katcha-production-deploy-notify.timer
+sudo systemctl is-enabled katcha-production-deploy-poll.timer
+```
+
+Expect the notification timer `enabled`, but the **deployment** timer
+`disabled`. `NOTIFIER_NOT_CONFIGURED` means the OCI environment does not
+yet contain a valid Telegram token/chat ID. Resolve that in the root-private
+environment rather than publishing credentials or enabling deployment gates.
+
+Every three minutes, the notifier looks for root-private OCI request receipts
+and verifies the terminal executor result. It declares a **new rollout
+successful** only when the terminal receipt says `SUCCEEDED`, the executor
+attests `DEPLOYED`, the protected `result.json` audit corroborates it,
+and live Git/API SHAs both match the exact requested release. It separately
+reports `ALREADY_CURRENT`, failures, stalled `STARTED` receipts, and
+signed requests that expired with no host receipt. Unverifiable success
+conditions produce a **verification required** alert, never a false success.
+
+Delivery failures are retried on the next notifier timer run. Sent-event
+markers on the durable data mount prevent normal duplicate alerts; a power
+loss between Telegram delivery and writing the marker can result in one repeat.
+Notification errors do not block deployment, and the independent timer runs
+even while the deploy authorization is OFF. Completion messages are evidence
+and a prompt to inspect the host receipt; they do not authorize any new
+deployment or automatically open/close a maintenance window.
