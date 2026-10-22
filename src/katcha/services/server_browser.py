@@ -40,7 +40,8 @@ _BROWSER_PRECONDITIONS = {
         "browser_tab_closed", "The selected tab has closed. Refresh the browser view."
     ),
     "Research sources must be public HTTPS pages without credentials": (
-        "browser_destination_rejected", "Only public HTTPS destinations without credentials are supported."
+        "browser_destination_rejected",
+        "Only public HTTPS destinations without credentials are supported."
     ),
     "Research source resolved to a non-public address": (
         "browser_destination_rejected", "The destination resolved to a non-public address."
@@ -60,7 +61,8 @@ def browser_failure(exc: Exception, action: str) -> dict:
         uncertain = False
     elif isinstance(exc, TimeoutError):
         code = "browser_timeout"
-        message = "The browser timed out. Refresh the view to establish the outcome before retrying."
+        message = ("The browser timed out. Refresh the view to establish the outcome "
+                   "before retrying.")
         uncertain = stage != "observation"
     else:
         code = "browser_action_failed"
