@@ -225,6 +225,72 @@ def test_deployer_fails_closed_if_strong_image_provenance_missing(
         app.eligible(OLD, NEW)
 
 
+@pytest.mark.parametrize("reason", [
+    "latest push CI did not pass",
+    "publication job incomplete or duplicated",
+    "not all seven runtime images were verified",
+    "GitHub release evidence unavailable",
+])
+def test_release_verifier_failure_reports_only_known_reason(monkeypatch, reason):
+    app = module()
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append((args, kwargs))
+        return app.subprocess.CompletedProcess(
+            args, 2, json.dumps({"status": "BLOCKED", "reason": reason}), "password=secret"
+        )
+
+    monkeypatch.setattr(app.subprocess, "run", command)
+    with pytest.raises(app.Blocked, match="independent release verifier blocked") as caught:
+        app.run("python3", "/root/verified.py", NEW, timeout=90, release_verifier=True)
+    assert reason in str(caught.value)
+    assert "secret" not in str(caught.value)
+    assert calls[0][1]["timeout"] == 90
+
+
+@pytest.mark.parametrize("output", [
+    "password=secret",
+    '{"status":"BLOCKED","reason":"password=secret"}',
+    '{"status":"BLOCKED","reason":"latest push CI did not pass","password":"secret"}',
+    "{",
+    "x" * 5000,
+])
+def test_release_verifier_rejects_unrecognized_output_without_leak(monkeypatch, output):
+    app = module()
+    monkeypatch.setattr(
+        app.subprocess, "run",
+        lambda args, **kw: app.subprocess.CompletedProcess(args, 2, output, "secret"),
+    )
+    with pytest.raises(app.Blocked, match="without a safe reason") as caught:
+        app.run("python3", "/root/verified.py", NEW, release_verifier=True)
+    assert "password" not in str(caught.value)
+    assert "secret" not in str(caught.value)
+
+
+def test_release_verifier_success_and_other_host_commands_keep_contract(monkeypatch):
+    app = module()
+    responses = iter([
+        app.subprocess.CompletedProcess(["python3"], 0, '{"status":"ELIGIBLE"}', ""),
+        app.subprocess.CompletedProcess(["git"], 2, "token=secret", ""),
+    ])
+    monkeypatch.setattr(app.subprocess, "run", lambda *a, **kw: next(responses))
+    assert app.run("python3", "verified.py", NEW, release_verifier=True) == (
+        '{"status":"ELIGIBLE"}'
+    )
+    with pytest.raises(app.Blocked, match="host operation did not succeed: git"):
+        app.run("git", "status")
+
+
+def test_release_verifier_known_reasons_match_independent_script():
+    import re
+
+    app = module()
+    source = (ROOT / "src/katcha/ops/release_eligibility.py").read_text()
+    expected = set(re.findall(r'raise ReleaseNotEligible\("([^"]+)"\)', source))
+    assert expected == app.SAFE_RELEASE_VERIFIER_REASONS
+
+
 def test_deployer_reuses_installed_accepted_provenance_checker() -> None:
     source = SOURCE.read_text()
     installer = (ROOT / "deploy/scripts/install-production-deployer.sh").read_text()
