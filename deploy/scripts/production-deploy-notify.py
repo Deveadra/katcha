@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
 import os
 import re
@@ -185,8 +186,12 @@ def expired_request_events(now: int) -> list[tuple[str, str]]:
     # An authorization can expire unconsumed when the deployment poller is off.
     # Reuse the installed poller's HMAC validation; never trust GitHub fields alone.
     try:
-        spec = importlib.util.spec_from_file_location("production_poller", POLLER)
-        if spec is None or spec.loader is None or not root_owned_read_only(POLLER):
+        if not root_owned_read_only(POLLER):
+            return []
+        # Installed executable deliberately has no .py suffix.
+        loader = SourceFileLoader("production_poller", str(POLLER))
+        spec = importlib.util.spec_from_loader("production_poller", loader)
+        if spec is None or spec.loader is None:
             return []
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
