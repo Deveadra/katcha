@@ -677,6 +677,8 @@ jobs:
           cache: pip
       - name: Install Python browser runtime
         run: python -m pip install -e '.[dev,browser]'
+      - name: Configure Ubuntu package mirrors for browser dependencies
+        run: bash scripts/ci-prefer-ubuntu-mirror.sh
       - name: Install matching Chromium and operating system dependencies
         run: python -m playwright install --with-deps chromium
       - name: Exercise real server browser sessions and isolation
@@ -706,6 +708,8 @@ jobs:
           key: playwright-all-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - name: Install browser test dependencies
         run: timeout --signal=TERM --kill-after=10s 300s npm ci --ignore-scripts
+      - name: Configure Ubuntu package mirrors for Playwright
+        run: bash ../scripts/ci-prefer-ubuntu-mirror.sh
       - name: Install Playwright operating system dependencies
         run: timeout --signal=TERM --kill-after=10s 300s npx playwright install-deps chromium firefox webkit
       - name: Ensure Chromium, Firefox, and WebKit binaries
