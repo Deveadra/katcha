@@ -83,12 +83,69 @@ class Blocked(RuntimeError):
     """Reject an unsafe deployment without exposing host credentials."""
 
 
-def run(*args: str, timeout: int = 30) -> str:
+# The root-installed independent verifier produces these exact, controlled
+# rejection reasons. Never surface its raw stdout/stderr: unexpected output,
+# even from an installed executable, may contain sensitive infrastructure data.
+SAFE_RELEASE_VERIFIER_REASONS = frozenset({
+    "invalid GitHub API path",
+    "GitHub release evidence unavailable",
+    "missing workflow run list",
+    "workflow run response malformed",
+    "workflow repository response malformed",
+    "workflow run identity malformed",
+    "publication evidence absent",
+    "too many image publication attempts for one CI",
+    "publication job evidence malformed",
+    "publication job evidence missing or truncated",
+    "publication job identity malformed",
+    "publication job incomplete or duplicated",
+    "publication verification jobs missing",
+    "skipped publication contains unexpected work",
+    "latest image publication failed verification",
+    "production image build evidence incomplete",
+    "not all seven runtime images were verified",
+    "no completed image publication for the current revision",
+    "workflow timestamp malformed",
+    "workflow timestamp must include timezone",
+    "invalid commit identity",
+    "release candidate is not an accepted main ancestor",
+    "matching CI and image publication runs not found",
+    "latest matching run not successful",
+    "image publication does not follow successful CI",
+    "sha must be an exact lowercase 40-character git commit",
+    "invalid main branch response",
+    "invalid main commit response",
+    "invalid main commit identity",
+    "workflow evidence response malformed",
+    "workflow evidence count malformed",
+    "workflow evidence truncated; refuse to infer approval",
+    "latest push CI did not pass",
+})
+
+
+def run(*args: str, timeout: int = 30, release_verifier: bool = False) -> str:
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if release_verifier:
+            raise Blocked("independent release verifier failed to start or timed out") from exc
         raise Blocked("host operation failed or timed out") from exc
     if proc.returncode != 0:
+        if release_verifier and len(proc.stdout) <= 4096:
+            try:
+                detail = json.loads(proc.stdout)
+            except (ValueError, TypeError):
+                detail = None
+            if (
+                isinstance(detail, dict)
+                and set(detail) == {"status", "reason"}
+                and detail["status"] == "BLOCKED"
+                and isinstance(detail["reason"], str)
+                and detail["reason"] in SAFE_RELEASE_VERIFIER_REASONS
+            ):
+                raise Blocked("independent release verifier blocked: " + detail["reason"])
+        if release_verifier:
+            raise Blocked("independent release verifier rejected evidence without a safe reason")
         raise Blocked("host operation did not succeed: " + args[0])
     if len(proc.stdout) > 1_000_000:
         raise Blocked("host operation output unexpectedly large")
@@ -172,7 +229,8 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     # verifier as the CI release gate. Installed from accepted main by
     # the root-only deployer installer, not from the mutable app checkout.
     evidence_path = "/usr/local/lib/katcha-production-deploy/release_eligibility.py"
-    evidence = json.loads(run("python3", evidence_path, target, timeout=90))
+    evidence = json.loads(run("python3", evidence_path, target, timeout=90,
+                              release_verifier=True))
     if (not isinstance(evidence, dict)
         or evidence.get("status") != "ELIGIBLE_FOR_PREDEPLOY_REVIEW"
         or evidence.get("sha") != target
