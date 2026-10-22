@@ -175,7 +175,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(8)
+    ) as activity_executor:
         ingest_worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,

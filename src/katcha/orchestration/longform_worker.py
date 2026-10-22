@@ -131,7 +131,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(4)
+    ) as activity_executor:
         worker = create_longform_worker(client, settings, activity_executor)
         reconciler = asyncio.create_task(editorial_reconciler(client))
         try:

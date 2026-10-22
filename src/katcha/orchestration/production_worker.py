@@ -241,7 +241,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(6)
+    ) as activity_executor:
         production_worker = Worker(
             client,
             task_queue=settings.temporal_production_task_queue,

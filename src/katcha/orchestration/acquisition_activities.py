@@ -23,6 +23,27 @@ from katcha.models import SourceItem
 from katcha.services import acquisition_jobs as jobs
 
 
+def _authorized_receipt_for_source(session, source: SourceItem):
+    metadata = source.source_metadata or {}
+    channel = metadata.get("channel_profile_id")
+    if not channel:
+        return None
+    candidate = session.scalar(
+        select(DiscoveryCandidate).where(DiscoveryCandidate.source_item_id == source.id)
+    )
+    if candidate is None:
+        return None
+    return session.scalar(
+        select(AcquisitionReceipt)
+        .where(
+            AcquisitionReceipt.candidate_id == candidate.id,
+            AcquisitionReceipt.channel_profile_id == uuid.UUID(channel),
+            AcquisitionReceipt.status == "authorized",
+        )
+        .order_by(AcquisitionReceipt.created_at.desc())
+    )
+
+
 @activity.defn
 def remote_source_acquisition(source_id: str) -> dict:
     from temporalio.exceptions import ApplicationError
@@ -47,22 +68,7 @@ def remote_source_acquisition(source_id: str) -> dict:
             and settings.remote_acquisition_auto_dispatch_enabled
         ):
             return {}
-        candidate = session.scalar(
-            select(DiscoveryCandidate).where(DiscoveryCandidate.source_item_id == source.id)
-        )
-        receipt = (
-            session.scalar(
-                select(AcquisitionReceipt)
-                .where(
-                    AcquisitionReceipt.candidate_id == candidate.id,
-                    AcquisitionReceipt.channel_profile_id == uuid.UUID(channel),
-                    AcquisitionReceipt.status == "authorized",
-                )
-                .order_by(AcquisitionReceipt.created_at.desc())
-            )
-            if candidate and channel
-            else None
-        )
+        receipt = _authorized_receipt_for_source(session, source)
         if receipt is None:
             raise ApplicationError(
                 "Approve a channel-owned source download permission "
@@ -70,6 +76,10 @@ def remote_source_acquisition(source_id: str) -> dict:
                 type="RemoteAcquisitionAuthorizationRequired",
                 non_retryable=True,
             )
+        if settings.local_degraded_mode:
+            # Keep the same channel-owned authorization gate, but acquire new
+            # work locally. Linked remote work above still waits for handoff.
+            return {}
         receipt_id, channel_id = receipt.id, receipt.channel_profile_id
     row = jobs.enqueue_job(
         channel_id,

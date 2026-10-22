@@ -210,7 +210,9 @@ async def main() -> None:
         schedule_present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(8)
+    ) as activity_executor:
         discovery_worker = Worker(
             client,
             task_queue=DISCOVERY_TASK_QUEUE,

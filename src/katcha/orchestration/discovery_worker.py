@@ -69,7 +69,9 @@ async def main() -> None:
         resumed,
         already_present,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(6)
+    ) as activity_executor:
         worker = Worker(
             client,
             task_queue=DISCOVERY_TASK_QUEUE,

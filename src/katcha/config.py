@@ -218,6 +218,10 @@ class Settings(BaseSettings):
     remote_acquisition_enabled: bool = False
     remote_acquisition_auto_dispatch_enabled: bool = True
     remote_acquisition_max_bytes: int = Field(default=4 * 1024**3, ge=1, le=64 * 1024**3)
+    # Operator-controlled degraded mode: acquire new sources locally and cap
+    # each Temporal worker process to one activity thread. This does not replay
+    # remote jobs with uncertain outcomes or provide installation-wide locking.
+    local_degraded_mode: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
@@ -225,6 +229,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def activity_executor_workers(self, normal_workers: int) -> int:
+        """Bound each worker process in local degraded mode."""
+        return 1 if self.local_degraded_mode else normal_workers
 
     env: str = "development"
     api_host: str = "0.0.0.0"

@@ -96,15 +96,35 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
             return {"source_id": str(source.id), "clip_id": str(source.clip_id), "deduped": True}
         from katcha.config import get_settings
 
+        settings = get_settings()
         if (
             (source.source_metadata or {}).get("remote_acquisition_job_id")
-            or (get_settings().remote_acquisition_enabled
-                and get_settings().remote_acquisition_auto_dispatch_enabled)
+            or (
+                not settings.local_degraded_mode
+                and settings.remote_acquisition_enabled
+                and settings.remote_acquisition_auto_dispatch_enabled
+            )
         ):
             raise ApplicationError(
                 "Remote acquisition is still pending; wait for its verified handoff",
                 type="RemoteAcquisitionPending", non_retryable=True,
             )
+        if (
+            settings.local_degraded_mode
+            and settings.remote_acquisition_enabled
+            and settings.remote_acquisition_auto_dispatch_enabled
+        ):
+            from katcha.orchestration.acquisition_activities import (
+                _authorized_receipt_for_source,
+            )
+
+            if _authorized_receipt_for_source(session, source) is None:
+                raise ApplicationError(
+                    "Approve a channel-owned source download permission "
+                    "before local fallback acquisition can start",
+                    type="RemoteAcquisitionAuthorizationRequired",
+                    non_retryable=True,
+                )
         if (source.source_metadata or {}).get(PROOF_KEY) is not None:
             # A previous attempt may have reached raw/ before losing its
             # SourceItem->Clip transaction. Never redownload or overwrite its

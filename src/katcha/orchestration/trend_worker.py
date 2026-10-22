@@ -30,7 +30,9 @@ async def main() -> None:
         settings.temporal_host,
         namespace=settings.temporal_namespace,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(4)
+    ) as activity_executor:
         worker = Worker(
             client,
             task_queue=TREND_TASK_QUEUE,
