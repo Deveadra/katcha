@@ -1258,3 +1258,17 @@ def test_manual_production_runbook_is_one_shot_and_shell_syntax_valid():
     assert manual.index("--plan-release") < manual.index("--body true")
     manual_poll = "sudo /usr/local/sbin/katcha-production-deploy-poll\n)"
     assert manual.index("--body false") < manual.index(manual_poll)
+
+
+def test_manual_release_approvals_do_not_block_pr_contract_validation():
+    workflow = (
+        ROOT / ".github/workflows/production-deployment.yml"
+    ).read_text(encoding="utf-8")
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+    assert "'katcha-production-deployment'" in workflow
+    assert "katcha-production-validation-pr-{0}" in workflow
+    assert "github.event.pull_request.number" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "docs/PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md" in workflow
+    assert "if: github.event_name == 'pull_request'" in workflow
+    assert "if: github.event_name == 'workflow_dispatch'" in workflow
