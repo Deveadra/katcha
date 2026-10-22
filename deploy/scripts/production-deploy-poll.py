@@ -144,6 +144,20 @@ def secure_receipts() -> None:
             raise RequestBlocked("deployment receipt directory not root-private")
 
 
+def executor_attestation(returncode: int, stdout: str, sha: str) -> str | None:
+    """A zero exit code is not evidence of a successfully deployed release."""
+    if returncode != 0:
+        return None
+    try:
+        outcome = json.loads(stdout)
+    except ValueError:
+        return None
+    if (not isinstance(outcome, dict) or outcome.get("sha") != sha
+        or outcome.get("status") not in {"DEPLOYED", "ALREADY_CURRENT"}):
+        return None
+    return outcome["status"]
+
+
 def attempt(request: dict[str, Any]) -> str:
     secure_receipts()
     path = RECEIPTS / ("nonce-" + request["nonce"] + ".json")
@@ -168,6 +182,7 @@ def attempt(request: dict[str, Any]) -> str:
         os.close(directory_fd)
 
     status = "BLOCKED"
+    executor_status = None
     try:
         if EXECUTOR.is_symlink() or not EXECUTOR.is_file():
             raise RequestBlocked("fixed root-owned production executor missing")
@@ -179,14 +194,19 @@ def attempt(request: dict[str, Any]) -> str:
              request["migration_policy"]],
             capture_output=True, text=True, timeout=7200, check=False,
         )
-        status = "SUCCEEDED" if done.returncode == 0 else "FAILED_REVIEW_REQUIRED"
+        # An executor's exit code cannot independently certify deployment.
+        executor_status = executor_attestation(
+            done.returncode, done.stdout, request["sha"],
+        )
+        status = "SUCCEEDED" if executor_status else "FAILED_REVIEW_REQUIRED"
     except (OSError, subprocess.TimeoutExpired, RequestBlocked):
         status = "FAILED_REVIEW_REQUIRED"
     # Keep a sanitized and protected audit record; never print env or secrets.
     temp = RECEIPTS / ("nonce-" + request["nonce"] + ".tmp")
     with temp.open("x", encoding="utf-8") as out:
         temp.chmod(0o600)
-        json.dump({"status": status, "id": request["id"], "sha": request["sha"]}, out)
+        json.dump({"status": status, "id": request["id"], "sha": request["sha"],
+                   "executor_status": executor_status}, out)
         out.write("\n")
         out.flush()
         os.fsync(out.fileno())

@@ -29,9 +29,12 @@ trap 'rm -rf "$staging"' EXIT
 for path in \
   deploy/scripts/production-deploy.py \
   deploy/scripts/production-deploy-poll.py \
+  deploy/scripts/production-deploy-notify.py \
   src/katcha/ops/release_eligibility.py \
   deploy/systemd/katcha-production-deploy-poll.service \
-  deploy/systemd/katcha-production-deploy-poll.timer; do
+  deploy/systemd/katcha-production-deploy-poll.timer \
+  deploy/systemd/katcha-production-deploy-notify.service \
+  deploy/systemd/katcha-production-deploy-notify.timer; do
   mkdir -p "$staging/$(dirname "$path")"
   git show "$target:$path" > "$staging/$path"
   test -s "$staging/$path"
@@ -39,6 +42,7 @@ done
 python3 -m py_compile \
   "$staging/deploy/scripts/production-deploy.py" \
   "$staging/deploy/scripts/production-deploy-poll.py" \
+  "$staging/deploy/scripts/production-deploy-notify.py" \
   "$staging/src/katcha/ops/release_eligibility.py"
 
 install -d -o root -g root -m 0700 /usr/local/lib/katcha-production-deploy
@@ -52,7 +56,12 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0755 \
   "$staging/deploy/scripts/production-deploy-poll.py" \
   /usr/local/sbin/katcha-production-deploy-poll
-for unit in katcha-production-deploy-poll.service katcha-production-deploy-poll.timer; do
+install -o root -g root -m 0755 \
+  "$staging/deploy/scripts/production-deploy-notify.py" \
+  /usr/local/sbin/katcha-production-deploy-notify
+for unit in \
+  katcha-production-deploy-poll.service katcha-production-deploy-poll.timer \
+  katcha-production-deploy-notify.service katcha-production-deploy-notify.timer; do
   install -o root -g root -m 0644 "$staging/deploy/systemd/$unit" \
     "/etc/systemd/system/$unit"
 done
