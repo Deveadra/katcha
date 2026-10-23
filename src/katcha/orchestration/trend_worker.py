@@ -5,9 +5,9 @@ import concurrent.futures
 import logging
 
 from temporalio.client import Client
-from temporalio.worker import Worker
 
 from katcha.config import get_settings
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.orchestration.trend_activities import (
     refresh_channel_trends_activity,
     refresh_scheduled_channel_trends_activity,

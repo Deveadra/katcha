@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class StagedBrandPreviewWorkflow:
@@ -18,7 +20,7 @@ class StagedBrandPreviewWorkflow:
             maximum_attempts=3,
         )
         try:
-            return await workflow.execute_activity(
+            return await execute_resource_activity(
                 "render_brand_preview_activity",
                 preview_id,
                 start_to_close_timeout=timedelta(minutes=30),
@@ -26,7 +28,7 @@ class StagedBrandPreviewWorkflow:
 
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_brand_preview_failed_activity",
                 args=[preview_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),

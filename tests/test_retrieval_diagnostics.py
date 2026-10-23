@@ -46,7 +46,7 @@ async def test_ingest_saves_cause_instead_of_temporal_wrapper(monkeypatch):
         calls.append((name, kwargs))
         if name == "remote_source_acquisition":
             return {}
-        if name == "ingest_source":
+        if name == "resource_queued_ingest_source":
             raise nested_failure()
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)

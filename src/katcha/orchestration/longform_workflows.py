@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class LongformCompilationWorkflow:
@@ -20,7 +22,7 @@ class LongformCompilationWorkflow:
         )
         try:
             if start_stage == "select":
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "select_compilation_candidates_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=2),
@@ -30,21 +32,21 @@ class LongformCompilationWorkflow:
                 start_stage = "plan"
 
             if start_stage == "plan":
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "generate_longform_editor_plan_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
                     retry_policy=paid_once,
 
                 )
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "critique_longform_plan_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
                     retry_policy=paid_once,
 
                 )
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "finalize_longform_plan_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
@@ -54,7 +56,7 @@ class LongformCompilationWorkflow:
                 start_stage = "voice"
 
             if start_stage == "voice":
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "generate_longform_narration_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=20),
@@ -66,14 +68,14 @@ class LongformCompilationWorkflow:
             if start_stage != "render":
                 raise ValueError(f"unsupported long-form start stage: {start_stage}")
 
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "build_longform_manifest_activity",
                 compilation_id,
                 start_to_close_timeout=timedelta(minutes=3),
                 retry_policy=local_retry,
 
             )
-            rendered = await workflow.execute_activity(
+            rendered = await execute_resource_activity(
                 "render_longform_activity",
                 compilation_id,
                 start_to_close_timeout=timedelta(minutes=60),
@@ -87,7 +89,7 @@ class LongformCompilationWorkflow:
                 "duration_seconds": rendered.get("duration_seconds"),
             }
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_compilation_failed",
                 args=[compilation_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),

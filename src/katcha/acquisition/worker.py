@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from katcha.acquisition.fetch import FetchFailure, fetch_extracted, fetch_file
+from katcha.local_resources import ResourceBusy, resource_slot
 
 log = logging.getLogger("katcha.acquisition.worker")
 
@@ -90,6 +91,7 @@ class Worker:
         cookie_file=None,
         access_headers=None,
         control_ca_file=None,
+        resource_lock_path: Path | None = None,
     ):
         parsed = urlsplit(api_url)
         if (
@@ -103,6 +105,7 @@ class Worker:
             raise ValueError("Worker control URL must be a trusted HTTPS origin")
         if not token.strip():
             raise ValueError("A dedicated worker token is required")
+        self.resource_lock_path = resource_lock_path
         self.api_url = api_url.rstrip("/")
         self.channels = [str(uuid.UUID(channel)) for channel in channels]
         if not self.channels:
@@ -153,6 +156,18 @@ class Worker:
         return f"/v1/channels/{channel}/acquisition-jobs"
 
     def run_job(self, journal: Journal):
+        try:
+            with resource_slot(
+                self.resource_lock_path,
+                ticket=f"acquisition:{journal.state['channel']}:{journal.state['job_id']}",
+            ):
+                return self._run_job(journal)
+        except ResourceBusy:
+            # Admission precedes claim/heartbeat: the job stays durably queued.
+            log.info("Media resource busy; acquisition remains queued")
+            return None
+
+    def _run_job(self, journal: Journal):
         state = journal.state
         path = f"{self.root(state['channel'])}/{state['job_id']}"
         current = self.request("GET", path)
@@ -389,6 +404,9 @@ class Worker:
                     self.run_job(journal)
                 except LeaseLost as exc:
                     log.warning("Acquisition requires reconciliation job=%s reason=%s", job_id, exc)
+                    continue
+                if self.resource_lock_path is not None:
+                    return
         for channel in self.channels:
             queued = self.request("GET", self.root(channel) + "?status=queued&limit=100")
             for job in queued:
@@ -398,6 +416,9 @@ class Worker:
                     self.run_job(Journal(self.state_dir, channel, job["id"]))
                 except LeaseLost as exc:
                     log.warning("Acquisition claim unavailable job=%s reason=%s", job["id"], exc)
+                    continue
+                if self.resource_lock_path is not None:
+                    return
 
 
 def sha256_file(path):
@@ -436,6 +457,10 @@ def main():
         cookie_file=os.environ.get("KATCHA_ACQUISITION_COOKIE_FILE"),
         access_headers=access_headers,
         control_ca_file=os.environ.get("KATCHA_ACQUISITION_CONTROL_CA_FILE"),
+        resource_lock_path=(
+            Path(os.environ["KATCHA_LOCAL_RESOURCE_LOCK_PATH"])
+            if os.environ.get("KATCHA_LOCAL_RESOURCE_LOCK_PATH") else None
+        ),
     )
     lock = (worker.state_dir / "worker.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

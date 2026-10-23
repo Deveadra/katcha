@@ -101,8 +101,8 @@ bytes are removed only after the accepted transaction commits.
 
 When remote acquisition is enabled, new Clip ingest and Editorial requests dispatch
 an already-authorized channel/candidate receipt into the remote queue automatically.
-Missing permission blocks with an actionable error; the primary does not silently
-fall back to a local download. `KATCHA_REMOTE_ACQUISITION_MAX_BYTES` bounds automatic
+Missing permission blocks with an actionable error; the primary never silently
+falls back to a local download. `KATCHA_REMOTE_ACQUISITION_MAX_BYTES` bounds automatic
 jobs to the host's configured capacity (default 4 GiB).
 
 Existing Clip ingest and Editorial workflows wait durably for linked remote jobs
@@ -154,33 +154,12 @@ Do not resize production or provision a new route as part of installing software
 A separate VM behind the same NAT is still the same outward identity; admission
 requires a measured independent route and a released-worker storage/channel test.
 
-## Operator-directed local degraded mode
+## Running acquisition on the core VM
 
-If the remote acquisition host is unavailable, Katcha can acquire **new eligible
-sources** on the core VM through its existing local ingest path. Set
-`KATCHA_LOCAL_DEGRADED_MODE=true` on each Katcha Temporal worker service on that VM
-and restart those services. Leave remote acquisition enabled if you still need the
-API and returning remote worker to inspect and finish already-linked jobs. The
-fallback path requires the same authorized, channel-owned `AcquisitionReceipt` that
-automatic remote dispatch requires when remote acquisition and automatic dispatch
-are enabled. If remote acquisition remains disabled, the existing local path is
-unchanged. Enabling degraded mode grants no source access, download rights, or
-production clearance.
-
-An existing source linked to a remote job continues to wait for that job's verified
-handoff. If the remote execution has an unknown or non-resumable result, Katcha keeps
-it blocked for operator reconciliation; degraded mode never redownloads it locally.
-New sources without an authorized receipt remain blocked. Local download still
-depends on the primary VM's own network route and provider response, so a worker
-setting cannot recover from a source that refuses that route.
-
-Degraded mode limits each Temporal worker **process** to one activity thread. It
-does not enforce one activity across the whole installation: distinct worker
-processes can still run at the same time. It also does not elect a leader, detect a
-failed VM, switch roles automatically, restore a database, or verify end-to-end
-scheduled publishing. Those require separate fencing, recovery, and live acceptance
-work. Turn the setting off and restart the worker services to restore normal
-per-process concurrency.
+The existing worker can run on VM1 using the same scoped HTTPS API and durable
+journal. See [Single-host operation](SINGLE_HOST_OPERATION.md) for the shared
+resource queue, Compose profile, rollout gates, and Forescene acceptance checklist.
+The worker protocol and provider permission checks stay the same on either host.
 
 ## Acceptance evidence
 

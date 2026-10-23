@@ -691,8 +691,9 @@ async def test_remote_workflow_waits_then_accepts_verified_handoff(monkeypatch):
 
     monkeypatch.setattr(module.workflow, "execute_activity", execute)
     monkeypatch.setattr(module.workflow, "sleep", sleep)
+    monkeypatch.setattr(module.workflow, "patched", lambda _: True)
     assert (await module.RemoteAcquisitionWorkflow().run("channel", "job"))["status"] == "completed"
-    assert seen == [("reconcile_remote_acquisition", ["channel", "job"])] * 3
+    assert seen == [("resource_queued_reconcile_remote_acquisition", ["channel", "job"])] * 3
 
 
 def test_ingest_automatically_dispatches_authorized_receipt_once(job_db, monkeypatch):
@@ -714,9 +715,7 @@ def test_ingest_automatically_dispatches_authorized_receipt_once(job_db, monkeyp
         candidate.source_item_id = source.id
         source_id = str(source.id)
     monkeypatch.setattr(
-        module,
-        "get_settings",
-        lambda: Settings(_env_file=None, remote_acquisition_enabled=True),
+        module, "get_settings", lambda: Settings(_env_file=None, remote_acquisition_enabled=True)
     )
     first = module.remote_source_acquisition(source_id)
     assert module.remote_source_acquisition(source_id) == first
@@ -744,13 +743,7 @@ def test_missing_download_permission_never_falls_back_to_local_acquisition(job_d
         session.add(source)
         source_id = str(source.id)
     monkeypatch.setattr(
-        module,
-        "get_settings",
-        lambda: Settings(
-            _env_file=None,
-            remote_acquisition_enabled=True,
-            local_degraded_mode=True,
-        ),
+        module, "get_settings", lambda: Settings(_env_file=None, remote_acquisition_enabled=True)
     )
     with pytest.raises(ApplicationError, match="Approve a channel-owned"):
         module.remote_source_acquisition(source_id)
@@ -910,75 +903,6 @@ def test_supervised_queue_only_mode_preserves_unlinked_ingest(job_db, monkeypatc
         "job_id": str(row.id),
         "channel_id": str(job_db[0]),
     }
-
-
-def test_local_degraded_mode_routes_new_sources_locally_but_keeps_linked_jobs_remote(
-    job_db, monkeypatch
-):
-    from temporalio.exceptions import ApplicationError
-
-    from katcha.acquisition_models import DiscoveryCandidate
-    from katcha.config import Settings
-    from katcha.orchestration import acquisition_activities as module
-    from katcha.orchestration import activities as ingest_module
-
-    settings = Settings(
-        _env_file=None,
-        remote_acquisition_enabled=True,
-        remote_acquisition_auto_dispatch_enabled=True,
-        local_degraded_mode=True,
-    )
-    monkeypatch.setattr(module, "get_settings", lambda: settings)
-    with db.session_scope() as session:
-        receipt = session.get(AcquisitionReceipt, job_db[2])
-        candidate = session.get(DiscoveryCandidate, receipt.candidate_id)
-        source = SourceItem(
-            id=uuid.uuid4(),
-            source_url=candidate.canonical_url,
-            canonical_url=candidate.canonical_url,
-            platform="web",
-            source_metadata={"channel_profile_id": str(job_db[0])},
-        )
-        session.add(source)
-        candidate.source_item_id = source.id
-        source_id = str(source.id)
-
-    assert module.remote_source_acquisition(source_id) == {}
-    assert jobs.list_jobs(job_db[0]) == []
-
-    class LocalDownloaderReached(Exception):
-        pass
-
-    monkeypatch.setattr("katcha.config.get_settings", lambda: settings)
-    monkeypatch.setattr(ingest_module, "detect_platform", lambda _: "youtube")
-    monkeypatch.setattr(ingest_module, "is_direct_media_url", lambda _: False)
-    monkeypatch.setattr(
-        ingest_module,
-        "download",
-        lambda _: (_ for _ in ()).throw(LocalDownloaderReached),
-    )
-    with pytest.raises(LocalDownloaderReached):
-        ingest_module._ingest_source(source_id)
-
-    # The direct activity call above stands in for a local failure; the normal
-    # workflow's failure activity changes INGESTING before another route can bind it.
-    with db.session_scope() as session:
-        session.get(SourceItem, uuid.UUID(source_id)).status = "failed"
-    row = foundation.queued(job_db)
-    assert module.remote_source_acquisition(str(row.source_item_id)) == {
-        "job_id": str(row.id),
-        "channel_id": str(job_db[0]),
-    }
-    with pytest.raises(ApplicationError) as error:
-        ingest_module._ingest_source(str(row.source_item_id))
-    assert error.value.type == "RemoteAcquisitionPending"
-
-
-def test_local_degraded_mode_caps_each_temporal_worker_process():
-    from katcha.config import Settings
-
-    assert Settings(_env_file=None).activity_executor_workers(8) == 8
-    assert Settings(_env_file=None, local_degraded_mode=True).activity_executor_workers(8) == 1
 
 
 def test_operator_retries_post_acceptance_staging_cleanup_without_deleting_asset(job_db, store):

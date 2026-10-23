@@ -8,7 +8,6 @@ from sqlalchemy import select
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -42,6 +41,7 @@ from katcha.orchestration.reach_activities import (
     sync_reach_reports_activity,
 )
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.publishing_models import Publication
 
 

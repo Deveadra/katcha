@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class ClipAnalysisWorkflow:
@@ -18,14 +20,14 @@ class ClipAnalysisWorkflow:
             maximum_attempts=3,
         )
         try:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "build_local_intelligence",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=media_retry,
 
             )
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "detect_near_duplicates",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=2),
@@ -33,7 +35,7 @@ class ClipAnalysisWorkflow:
 
             )
             if ai_enabled:
-                bulk = await workflow.execute_activity(
+                bulk = await execute_resource_activity(
                     "bulk_vision_analysis",
                     run_id,
                     start_to_close_timeout=timedelta(minutes=5),
@@ -41,14 +43,14 @@ class ClipAnalysisWorkflow:
 
                 )
                 if bool(bulk.get("requires_deep_video")) and bool(bulk.get("deep_available")):
-                    await workflow.execute_activity(
+                    await execute_resource_activity(
                         "deep_video_analysis",
                         run_id,
                         start_to_close_timeout=timedelta(minutes=12),
                         retry_policy=RetryPolicy(maximum_attempts=2),
 
                     )
-            return await workflow.execute_activity(
+            return await execute_resource_activity(
                 "score_local_candidate",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=2),
@@ -56,7 +58,7 @@ class ClipAnalysisWorkflow:
 
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_analysis_failed",
                 args=[run_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),

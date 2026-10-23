@@ -494,6 +494,7 @@ def test_generation_activity_skips_intake_and_is_registered(monkeypatch):
         return {"target": "narration"} if name == "editorial_begin" else {"status": "completed"}
 
     monkeypatch.setattr(editorial_workflows.workflow, "execute_activity", execute)
+    monkeypatch.setattr(editorial_workflows.workflow, "patched", lambda _: False)
     result = asyncio.run(editorial_workflows.EditorialProjectWorkflow().run("fixture", 1))
     assert result["status"] == "completed"
     assert [name for name, _ in calls] == ["editorial_begin", "editorial_generate_narration"]
