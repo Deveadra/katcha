@@ -7,7 +7,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -1249,6 +1249,142 @@ def test_release_plan_keeps_unchanged_revision_on_migration_free_target(monkeypa
     assert result["temporal_running_count"] == 0
     assert result["deployment_authorized"] is False
     assert ("eligible", OLD, NEW, "refuse") in calls
+
+
+def test_deployment_diagnostics_one_command_keeps_all_review_gates(monkeypatch):
+    app, _, _ = _plan_fixture(monkeypatch, active=6)
+    monkeypatch.setattr(app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(app, "run", lambda *a, **kw: "katcha-prod-primary-001")
+    monkeypatch.setattr(app, "deployment_control_diagnostics", lambda: [
+        app._diagnostic_check("host_deployment_gate", "PASS", "Gate OFF"),
+        app._diagnostic_check("signing_key_metadata", "PASS", "Metadata only"),
+        app._diagnostic_check("automatic_deploy_timer", "PASS", "Disabled"),
+    ])
+    result = app.diagnose_release(NEW)
+    assert result["status"] == "REVIEW_REQUIRED"
+    assert result["deployment_authorized"] is False
+    assert result["target_sha"] == NEW
+    assert result["release_plan"]["candidate_migration_policy"] == (
+        "approve-additive-through-0066"
+    )
+    by_name = {item["name"]: item for item in result["checks"]}
+    assert by_name["production_readiness"]["status"] == "PASS"
+    assert by_name["release_plan"]["status"] == "PASS"
+    assert by_name["migration_review"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["backup_restore_review"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["github_request_approval"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["temporal_workflow_review"]["status"] == "REVIEW_REQUIRED"
+    assert by_name["temporal_workflow_review"]["evidence"]["running_count"] == 6
+    assert len(result["next_actions"]) == 4
+
+
+def test_deployment_diagnostics_handles_blocked_planner_with_readiness_evidence(monkeypatch):
+    app, _, _ = _plan_fixture(monkeypatch)
+    monkeypatch.setattr(app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(app, "run", lambda *a, **kw: "katcha-prod-primary-001")
+    monkeypatch.setattr(app, "deployment_control_diagnostics", lambda: [])
+    def reject(_target):
+        raise app.Blocked("independent release verifier blocked: latest push CI did not pass")
+    monkeypatch.setattr(app, "plan_release", reject)
+    result = app.diagnose_release(NEW)
+    assert result["status"] == "BLOCKED"
+    assert "release_plan" not in result
+    checks = {item["name"]: item for item in result["checks"]}
+    assert checks["production_readiness"]["status"] == "PASS"
+    assert checks["release_plan"]["status"] == "BLOCKED"
+    assert "latest push CI" in checks["release_plan"]["detail"]
+    assert result["next_actions"][0]["check"] == "release_plan"
+
+
+def test_deployment_diagnostics_does_not_plan_after_readiness_failure(monkeypatch):
+    app = module()
+    monkeypatch.setattr(app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(app, "run", lambda *a, **kw: "katcha-prod-primary-001")
+    monkeypatch.setattr(app, "deployment_control_diagnostics", lambda: [])
+    def blocked_readiness():
+        raise app.Blocked("Temporal pending activities require a drain")
+    monkeypatch.setattr(app, "readiness", blocked_readiness)
+    monkeypatch.setattr(app, "plan_release",
+                        lambda *_: pytest.fail("blocked readiness reached planning"))
+    report = app.diagnose_release(NEW)
+    assert report["status"] == "BLOCKED"
+    assert report["checks"][-1]["name"] == "production_readiness"
+    assert "Temporal" in report["checks"][-1]["detail"]
+
+
+def test_deployment_diagnostics_rejects_bad_sha_or_host_without_mutating(monkeypatch):
+    app = module()
+    monkeypatch.setattr(app, "readiness", lambda: pytest.fail("Unexpected read"))
+    monkeypatch.setattr(app, "deployment_control_diagnostics",
+                        lambda: pytest.fail("Unexpected gate inspection"))
+    assert app.diagnose_release("main")["checks"][0]["name"] == "target_sha"
+    monkeypatch.setattr(app.os, "geteuid", lambda: 1000)
+    assert app.diagnose_release(NEW)["checks"][-1]["name"] == "host_identity"
+
+
+def test_deployment_control_inspection_never_reads_signing_key(monkeypatch):
+    app = module()
+    read = []
+
+    class FakePath:
+        def __init__(self, name, exists, size):
+            self.name, self.present, self.size = name, exists, size
+
+        def is_symlink(self):
+            return False
+
+        def is_file(self):
+            return self.present
+
+        def exists(self):
+            return self.present
+
+        def stat(self):
+            return SimpleNamespace(st_uid=0, st_mode=0o100600, st_size=self.size)
+
+        def read_text(self, encoding="utf-8"):
+            read.append(self.name)
+            if self.name == "signing_key":
+                pytest.fail("Signing key material must never be read")
+            return NEW + "\n"
+
+    # Normal default host state: absent gate, root-only key, disabled timer.
+    gate = FakePath("gate", False, 0)
+    monkeypatch.setattr(app, "GATE", gate)
+    monkeypatch.setattr(app, "SIGNING_KEY", FakePath("signing_key", True, 65))
+    monkeypatch.setattr(app, "TOOL_SOURCE", FakePath("tool_source", True, 41))
+    monkeypatch.setattr(
+        app.subprocess, "run",
+        lambda *a, **kw: SimpleNamespace(stdout="disabled\n", returncode=1),
+    )
+    result = {item["name"]: item for item in app.deployment_control_diagnostics()}
+    assert all(item["status"] == "PASS" for item in result.values())
+    assert result["installed_tool_version"]["evidence"]["source_sha"] == NEW
+    assert "signing_key" not in read
+    assert read == ["tool_source"]
+
+
+def test_diagnostics_cli_is_read_only_and_reports_blocked_exit(monkeypatch, capsys):
+    app = module()
+    monkeypatch.setattr(app.sys, "argv", ["deployer", "--diagnose-release", NEW])
+    monkeypatch.setattr(app, "diagnose_release", lambda _: {
+        "status": "BLOCKED", "checks": [{"name": "release_plan", "status": "BLOCKED"}]
+    })
+    assert app.main() == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "BLOCKED"
+    monkeypatch.setattr(app, "diagnose_release", lambda _: {
+        "status": "REVIEW_REQUIRED", "deployment_authorized": False,
+    })
+    assert app.main() == 0
+    assert json.loads(capsys.readouterr().out)["deployment_authorized"] is False
+
+
+def test_installer_records_tool_source_without_advancing_checkout():
+    source = (ROOT / "deploy/scripts/install-production-deployer.sh").read_text()
+    assert 'git show "$target:$path"' in source
+    assert "installed-source-sha" in source
+    assert "install -o root -g root -m 0600" in source
+    assert "runtime_untouched=true" in source
 
 
 def test_release_plan_never_deploys_or_changes_authorization(monkeypatch):

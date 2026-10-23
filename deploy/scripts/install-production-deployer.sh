@@ -67,6 +67,12 @@ for unit in \
 done
 systemctl daemon-reload
 
+# Attest the newly installed tool source only after all installs and daemon reload.
+printf '%s\n' "$target" > "$staging/installed-source-sha"
+install -o root -g root -m 0600 \
+  "$staging/installed-source-sha" \
+  /usr/local/lib/katcha-production-deploy/installed-source-sha
+
 # No gate, signing secret, timer enablement, production service restart,
 # Git checkout advancement, OCI authority change or new networking.
 echo "DEPLOYER_INSTALLED source_sha=$target enablement=OFF runtime_untouched=true"
