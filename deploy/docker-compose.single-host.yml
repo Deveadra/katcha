@@ -107,4 +107,14 @@ services:
 
 volumes:
   local-resource-budget:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/katcha/resource-budget
   local-acquisition-state:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/katcha/acquisition-state

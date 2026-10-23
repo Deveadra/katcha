@@ -57,7 +57,11 @@ channel-scoped worker principal; preserve the existing operator principal. Files
 must be readable only by UID 10001. Do not copy the core env file into this service.
 
 The profile initializes persistent journal and budget volume ownership without
-network access. Keep `local-acquisition-state` on durable storage with enough free
+network access. The named volumes bind to `/srv/katcha/acquisition-state` and
+`/srv/katcha/resource-budget`; the supervisor requires the durable mount before
+creating either directory. Retaining this volume preserves local checkpoints across
+VM replacement. This is not an off-volume backup; verified media still uses the
+existing object-storage recovery path. Keep the durable volume provisioned with enough free
 space: the existing worker requires up to three times the configured acquisition
 byte limit for extraction/merge, plus its reserve. A low-disk rejection should remain
 visible; increasing concurrency is not a storage remedy.

@@ -856,22 +856,25 @@ async def test_ended_temporal_attempt_is_failed_without_redecode(indexed_context
 
 
 @pytest.mark.asyncio
-async def test_workflow_timeout_fences_attempt_without_automatic_decode_retry(monkeypatch):
+@pytest.mark.parametrize("queued", [False, True])
+async def test_workflow_timeout_fences_attempt_without_automatic_decode_retry(monkeypatch, queued):
     from datetime import timedelta
 
     from katcha.orchestration import scene_index_workflows as workflows
 
+    measure_name = "resource_queued_measure_project_media" if queued else "measure_project_media"
     calls = []
 
     async def execute(name, context, **kwargs):
         calls.append((name, context, kwargs))
-        if name == "measure_project_media":
+        if name == measure_name:
             raise TimeoutError("synthetic worker lost")
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
+    monkeypatch.setattr(workflows.workflow, "patched", lambda _: queued)
     context = {"index_id": "fixture", "token": "attempt"}
     await workflows.SceneIndexWorkflow().run(context)
-    assert [call[0] for call in calls] == ["measure_project_media", "fail_scene_index_attempt"]
+    assert [call[0] for call in calls] == [measure_name, "fail_scene_index_attempt"]
     assert calls[0][2]["retry_policy"].maximum_attempts == 1
     assert calls[0][2]["start_to_close_timeout"] == timedelta(minutes=3)
     assert calls[1][1] == context
