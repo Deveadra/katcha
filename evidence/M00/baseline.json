@@ -1,0 +1,106 @@
+{
+  "schema_version": "AutonomousBaselineV1",
+  "observed_at": "2026-10-23 23:14:33 UTC",
+  "accepted_main_sha": "55bd6e43b527211525286b370832de4428a21f94",
+  "pr_530": "merged",
+  "open_prs_at_initial_inspection": [],
+  "ci": {
+    "run_id": 40001172089,
+    "url": "https://github.com/Deveadra/katcha/actions/runs/40001172089",
+    "jobs": [
+      {
+        "id": 120577327668,
+        "name": "Plan affected checks",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 3
+      },
+      {
+        "id": 120577385385,
+        "name": "storage-image",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 6
+      },
+      {
+        "id": 120577385457,
+        "name": "python",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 23
+      },
+      {
+        "id": 120577385478,
+        "name": "terraform",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 8
+      },
+      {
+        "id": 120577385485,
+        "name": "temporal-smoke",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 7
+      },
+      {
+        "id": 120577385491,
+        "name": "explorer",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 15
+      },
+      {
+        "id": 120577385522,
+        "name": "acceptance-media",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 7
+      },
+      {
+        "id": 120577385543,
+        "name": "renderer",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 22
+      },
+      {
+        "id": 120577385658,
+        "name": "Server browser Chromium acceptance",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 10
+      },
+      {
+        "id": 120577385739,
+        "name": "ranked-render-e2e",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 12
+      },
+      {
+        "id": 120580810012,
+        "name": "PR Gate",
+        "status": "completed",
+        "conclusion": "success",
+        "recorded_steps": 3
+      }
+    ]
+  },
+  "runtime_images": {
+    "run_id": 40002198677,
+    "url": "https://github.com/Deveadra/katcha/actions/runs/40002198677",
+    "workflow_conclusion": "success",
+    "anonymous_pull_and_host_proof": "not_performed"
+  },
+  "remaining_issues": [
+    526,
+    527
+  ],
+  "production_sha": null,
+  "database_revision": null,
+  "channel_readiness": "not_probed",
+  "media_acquisition": "not_performed",
+  "provider_calls": "not_performed",
+  "benchmark": "evaluator_contract_fixture_only"
+}

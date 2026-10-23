@@ -1,0 +1,135 @@
+{
+  "schema_version": "SemanticBenchmarkV1",
+  "benchmark_id": "evaluator-contract-fixture-v1",
+  "evidence_tier": "fixture",
+  "assets": [
+    {
+      "asset_id": "owned-demo",
+      "source_title_id": "demo-a",
+      "clip_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "split": "holdout",
+      "duration_ticks": 100,
+      "timebase_numerator": 1,
+      "timebase_denominator": 2,
+      "source_origin_tick": 5000,
+      "permission_evidence_refs": [
+        "fixture:contract-only-no-real-media"
+      ]
+    },
+    {
+      "asset_id": "other-episode",
+      "source_title_id": "demo-b",
+      "clip_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "split": "holdout",
+      "duration_ticks": 100,
+      "timebase_numerator": 1,
+      "timebase_denominator": 2,
+      "source_origin_tick": 5000,
+      "permission_evidence_refs": [
+        "fixture:contract-only-no-real-media"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "throw",
+      "channel": "FORESCENE",
+      "category": "directionality",
+      "query": "Contract example: subject-a throw object-a",
+      "split": "holdout",
+      "asset_scope": [
+        "owned-demo",
+        "other-episode"
+      ],
+      "truth": "answerable",
+      "targets": [
+        {
+          "asset_id": "owned-demo",
+          "clip_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "start_tick": 10,
+          "end_tick": 20,
+          "subject": "subject-a",
+          "action": "throw",
+          "object": "object-a"
+        }
+      ],
+      "annotation_refs": [
+        "fixture:handwritten-evaluator-labels-not-video-annotations"
+      ]
+    },
+    {
+      "case_id": "enter",
+      "channel": "RankSnaxx",
+      "category": "identity",
+      "query": "Contract example: subject-a enter object-a",
+      "split": "holdout",
+      "asset_scope": [
+        "owned-demo",
+        "other-episode"
+      ],
+      "truth": "answerable",
+      "targets": [
+        {
+          "asset_id": "owned-demo",
+          "clip_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "start_tick": 10,
+          "end_tick": 20,
+          "subject": "subject-a",
+          "action": "enter",
+          "object": "object-a"
+        }
+      ],
+      "annotation_refs": [
+        "fixture:handwritten-evaluator-labels-not-video-annotations"
+      ]
+    },
+    {
+      "case_id": "missing",
+      "channel": "FORESCENE",
+      "category": "missing-scene",
+      "query": "Contract example: subject-a throw object-a",
+      "split": "holdout",
+      "asset_scope": [
+        "owned-demo",
+        "other-episode"
+      ],
+      "truth": "absent",
+      "targets": [],
+      "annotation_refs": [
+        "fixture:handwritten-evaluator-labels-not-video-annotations"
+      ]
+    },
+    {
+      "case_id": "ambiguous",
+      "channel": "RankSnaxx",
+      "category": "lookalike",
+      "query": "Contract example: subject-a enter object-a",
+      "split": "holdout",
+      "asset_scope": [
+        "owned-demo",
+        "other-episode"
+      ],
+      "truth": "ambiguous",
+      "targets": [],
+      "annotation_refs": [
+        "fixture:handwritten-evaluator-labels-not-video-annotations"
+      ]
+    },
+    {
+      "case_id": "unavailable",
+      "channel": "FORESCENE",
+      "category": "source-access",
+      "query": "Contract example: subject-a throw object-a",
+      "split": "holdout",
+      "asset_scope": [
+        "owned-demo",
+        "other-episode"
+      ],
+      "truth": "no_access",
+      "targets": [],
+      "annotation_refs": [
+        "fixture:handwritten-evaluator-labels-not-video-annotations"
+      ]
+    }
+  ]
+}
