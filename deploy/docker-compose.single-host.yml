@@ -85,6 +85,8 @@ services:
       KATCHA_LOCAL_RESOURCE_LOCK_PATH: /resource-budget/host.lock
       KATCHA_ACQUISITION_STATE_DIR: /acquisition-state
       KATCHA_ACQUISITION_TOKEN_FILE: /run/acquisition/worker-token
+      KATCHA_ACQUISITION_CF_ACCESS_ID_FILE: /run/acquisition/cf-access-id
+      KATCHA_ACQUISITION_CF_ACCESS_SECRET_FILE: /run/acquisition/cf-access-secret
     command: ["python", "-m", "katcha.acquisition.worker"]
     depends_on:
       resource-budget-init:
@@ -94,7 +96,24 @@ services:
     volumes:
       - local-resource-budget:/resource-budget
       - local-acquisition-state:/acquisition-state
-      - ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}:/run/acquisition:ro
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/worker-token
+        target: /run/acquisition/worker-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/cf-access-id
+        target: /run/acquisition/cf-access-id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/cf-access-secret
+        target: /run/acquisition/cf-access-secret
+        read_only: true
+        bind:
+          create_host_path: false
     mem_limit: 1g
     cpus: 1.0
     pids_limit: 256

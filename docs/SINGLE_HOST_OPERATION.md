@@ -52,6 +52,9 @@ route. Set `KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED=true` only after ever
 intended channel has an authorized worker polling its queue. A worker scoped only
 to Forescene cannot consume another channel's jobs.
 
+Follow [the credential installation runbook](ACQUISITION_CREDENTIALS.md) for
+responsibilities, hidden-input installation, and isolated mount verification.
+
 Prepare a dedicated acquisition env file containing its trusted HTTPS control URL
 and the **actual Forescene channel UUID**, not the display name. Supply any required
 Cloudflare Access credential file paths and the control CA path using the existing
