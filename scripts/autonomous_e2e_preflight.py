@@ -103,7 +103,10 @@ def build_report(capabilities: dict) -> dict:
         "database_revision": None,
         "deployed_sha": None,
         "evidence_scope": "local source/configuration; browser health only if requested",
-        "capabilities": capabilities,
+        "capabilities": {
+            **capabilities,
+            "execution_location": "Invoking preflight process; not a deployed-worker probe",
+        },
         "owners": owners,
         "program_acceptance": "not_assessed",
         "blockers": [

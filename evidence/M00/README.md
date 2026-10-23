@@ -6,9 +6,9 @@ production acceptance.
 - `baseline.json`: accepted main, merged acquisition work, individually inspected
   main CI job records, runtime-image workflow status and unprobed live boundaries.
 - `local-preflight.json`: output from the new read-only source/configuration
-  preflight while this implementation was uncommitted. Its `source_sha` is the
-  accepted baseline, and `working_tree_dirty=true` explicitly distinguishes the
-  edited code. No live browser or provider probe was requested.
+  preflight during implementation. Its `source_sha` is the implementation
+  commit at execution time, and `working_tree_dirty=true` explicitly distinguishes
+  the final reporting correction being tested. No live browser or provider probe was requested.
 
 Reproduce the preflight from the repository using its Python environment:
 

@@ -7,7 +7,7 @@
   ],
   "capabilities": {
     "discovery_configuration_tool": "discovery_adapters",
-    "execution_location": "Katcha server; independent of the browser running Katcha",
+    "execution_location": "Invoking preflight process; not a deployed-worker probe",
     "interactive_browser": {
       "configured": false,
       "coverage": "Server-side Chromium: JavaScript, forms, tabs, screenshots and cookies",
@@ -45,7 +45,7 @@
       "youtube_download_route_configured": false,
       "youtube_server_session_configured": false
     },
-    "observed_at": "2026-10-23T23:08:38.492439+00:00",
+    "observed_at": "2026-10-23T23:22:21.172862+00:00",
     "optional_semantic_inspection": {
       "automatic_selection_available": false,
       "dispatch_enabled": false,
@@ -160,6 +160,6 @@
   "source_migration_heads": [
     "0066_acquisition_handoff"
   ],
-  "source_sha": "55bd6e43b527211525286b370832de4428a21f94",
+  "source_sha": "349d7f97101088b155bb582b59f09e196aa1f13b",
   "working_tree_dirty": true
 }

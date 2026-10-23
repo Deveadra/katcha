@@ -48,6 +48,7 @@ def test_source_preflight_never_promotes_file_presence_to_live_or_channel_proof(
     report = module.build_report({"fixture": True})
     assert report["program_acceptance"] == "not_assessed"
     assert report["deployed_sha"] is report["database_revision"] is None
+    assert report["capabilities"]["execution_location"].startswith("Invoking preflight")
     assert report["source_migration_heads"]
     assert report["source_migration_heads"] == sorted(set(report["source_migration_heads"]))
     for owner in report["owners"].values():
