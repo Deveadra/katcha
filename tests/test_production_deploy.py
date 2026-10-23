@@ -1403,17 +1403,38 @@ def test_single_host_runtime_requires_exact_additional_services(tmp_path, monkey
         app.runtime(NEW)
 
 
-@pytest.mark.parametrize('current,target,requested,expected', [
-    ('legacy', 'single-host-profile-v1', 'approved-resume', 'refuse'),
-    ('single-host-profile-v1', 'single-host-profile-v1', 'approved-resume', 'approved-resume'),
-    ('single-host-profile-v1', 'single-host-profile-v1', 'refuse', 'refuse'),
-    ('legacy', 'legacy', 'approved-resume', 'approved-resume'),
+@pytest.mark.parametrize('workflow_type,allowed', [
+    ('AutomaticResearchWorkflow', True),
+    ('TopicWatchScheduleWorkflow', True),
+    ('ChannelIntelligenceScheduleWorkflow', True),
+    ('ClipIngestWorkflow', False),
+    ('RemoteAcquisitionWorkflow', False),
+    ('UnknownWorkflow', False),
 ])
-def test_first_profile_activation_cannot_resume_unguarded_workflows(
-    tmp_path, monkeypatch, current, target, requested, expected,
-):
+def test_first_profile_activation_only_resumes_idle_schedulers(monkeypatch, workflow_type, allowed):
     app = module()
-    env = tmp_path / 'core.env'
-    env.write_text('KATCHA_SINGLE_HOST_PROFILE_ENABLED=true')
-    monkeypatch.setattr(app, 'ENV', env)
-    assert app.profile_workflow_policy(current, target, requested) == expected
+    item = {'execution': {'workflowId': 'test', 'runId': 'test-run'},
+            'type': {'name': workflow_type}}
+    description = {'workflowExecutionInfo': {'execution': item['execution']},
+                   'pendingActivities': []}
+
+    def command(*args, **kwargs):
+        if 'count' in args:
+            return 'Total: 1'
+        if 'list' in args:
+            return json.dumps([item])
+        if 'describe' in args:
+            return json.dumps(description)
+        pytest.fail('Unexpected operation')
+
+    monkeypatch.setattr(app, 'run', command)
+    if allowed:
+        assert app.temporal_inventory('approved-resume', schedulers_only=True) == (
+            ('test', 'test-run'),
+        )
+        description['pendingActivities'] = [{'activityId': 'busy'}]
+        with pytest.raises(app.Blocked, match='pending activities'):
+            app.temporal_inventory('approved-resume', schedulers_only=True)
+    else:
+        with pytest.raises(app.Blocked, match='media workflows to drain'):
+            app.temporal_inventory('approved-resume', schedulers_only=True)

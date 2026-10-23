@@ -70,7 +70,10 @@ Before activation:
    release verifier then requires the acquisition and analysis services and stages
    the additional ARM64 analysis image. Default deployments remain unchanged.
    First activation must be prepared before upgrading from a release without the
-   profile marker; the deployer requires no running workflows for that transition.
+   profile marker; the deployer permits only explicitly approved, idle research,
+   topic-watch, and channel-intelligence schedulers during that transition. Other
+   workflows must finish. Pending activities, children, or workflow tasks still
+   block activation, and the inventory is checked again immediately before restart.
    Changing the profile on an already running release is not a supported hot toggle.
 2. Pause new media intake and drain existing media activities before enabling the
    budget. Old workflow histories retain original activity names for replay; already

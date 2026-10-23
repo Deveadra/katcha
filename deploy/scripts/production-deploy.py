@@ -333,13 +333,6 @@ def single_host_profile(compose_source: str) -> bool:
     return values == ["true"]
 
 
-def profile_workflow_policy(current_source: str, target_source: str, policy: str) -> str:
-    if single_host_profile(target_source) and not single_host_profile(current_source):
-        # Original replay activities do not acquire the new lock.
-        return "refuse"
-    return policy
-
-
 def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
     # The previous immutable release may predate the browser service. Derive its
     # required inventory from that exact revision so first rollout and rollback
@@ -413,7 +406,7 @@ def workflows(policy: str) -> int:
     return count
 
 
-def temporal_inventory(policy: str) -> tuple[tuple[str, str], ...]:
+def temporal_inventory(policy: str, *, schedulers_only: bool = False) -> tuple[tuple[str, str], ...]:
     """Inspect all open executions and forbid interrupted in-flight activities."""
     count = workflows(policy)
     if not count:
@@ -435,6 +428,12 @@ def temporal_inventory(policy: str) -> tuple[tuple[str, str], ...]:
     for item in executions:
         if not isinstance(item, dict) or not isinstance(item.get("execution"), dict):
             raise Blocked("Temporal workflow identity missing")
+        if schedulers_only and (not isinstance(item.get("type"), dict)
+                                or item["type"].get("name") not in {
+            "AutomaticResearchWorkflow", "TopicWatchScheduleWorkflow",
+            "ChannelIntelligenceScheduleWorkflow",
+        }):
+            raise Blocked("first single-host activation requires media workflows to drain")
         execution = item["execution"]
         wid, rid = execution.get("workflowId"), execution.get("runId")
         if (not isinstance(wid, str) or not wid or len(wid) > 255
@@ -941,14 +940,19 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     local_profile = single_host_profile(target_source)
     current_source = run("git", "-C", str(REPO), "show",
                          current + ":deploy/docker-compose.production.yml")
-    policy = profile_workflow_policy(current_source, target_source, policy)
-    before = temporal_inventory(policy)
+    first_activation = local_profile and not single_host_profile(current_source)
+    # Preserve idle recurring schedulers, whose heavy work starts new child
+    # workflows. All legacy media executions must finish before first activation.
+    before = (temporal_inventory(policy, schedulers_only=True) if first_activation
+              else temporal_inventory(policy))
     staged = stage_images(target, single_host=True) if local_profile else stage_images(target)
     backup_and_restore()
     # All operations above are preparation-only. Recheck authority, workflow
     # policy and verified release immediately before the maintenance window.
     authority()
-    if temporal_inventory(policy) != before:
+    current_inventory = (temporal_inventory(policy, schedulers_only=True) if first_activation
+                         else temporal_inventory(policy))
+    if current_inventory != before:
         raise Blocked("running Temporal executions changed during backup/preparation")
     if eligible(current, target, migration_policy) != migration:
         raise Blocked("migration classification changed during deployment review")
