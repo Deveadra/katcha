@@ -46,6 +46,12 @@ and selects local rendering with one render thread. Renderer limits increase to
 3 GiB / 1.25 CPUs; acquisition is bounded to 1 GiB / 1 CPU. These are ceilings, not
 reservations. Actual peak memory and disk usage still need measurement on VM1.
 
+Automatic dispatch defaults to **off** in this supervised profile. Explicitly queued
+Forescene jobs still use the local worker; unrelated ingests keep their existing
+route. Set `KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED=true` only after every
+intended channel has an authorized worker polling its queue. A worker scoped only
+to Forescene cannot consume another channel's jobs.
+
 Prepare a dedicated acquisition env file containing its trusted HTTPS control URL
 and the **actual Forescene channel UUID**, not the display name. Supply any required
 Cloudflare Access credential file paths and the control CA path using the existing

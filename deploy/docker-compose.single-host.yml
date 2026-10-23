@@ -19,13 +19,13 @@ services:
   api:
     environment:
       KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
-      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
 
   worker:
     environment:
       <<: *local-budget
       KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
-      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
     depends_on:
       resource-budget-init:
         condition: service_completed_successfully
@@ -46,7 +46,7 @@ services:
     environment:
       <<: *local-budget
       KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
-      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
     depends_on:
       resource-budget-init:
         condition: service_completed_successfully
@@ -57,7 +57,7 @@ services:
     environment:
       <<: *local-budget
       KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
-      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
     depends_on:
       resource-budget-init:
         condition: service_completed_successfully
