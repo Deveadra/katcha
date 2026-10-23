@@ -1,0 +1,165 @@
+{
+  "blockers": [
+    "Channel-specific auth, quotas, rights, storage, narration and review are unprobed.",
+    "Current host release, workers and migrations require existing release diagnostics.",
+    "A larger acquisition allowance does not expand measured scene-index capacity.",
+    "Semantic retrieval and temporal verification require independent media evaluation."
+  ],
+  "capabilities": {
+    "discovery_configuration_tool": "discovery_adapters",
+    "execution_location": "Invoking preflight process; not a deployed-worker probe",
+    "interactive_browser": {
+      "configured": false,
+      "coverage": "Server-side Chromium: JavaScript, forms, tabs, screenshots and cookies",
+      "limitations": [
+        "Sessions expire after 15 idle minutes or a browser service restart",
+        "Sign-in must happen in this server session; local browser cookies are not copied",
+        "Public HTTPS only; media access does not establish usage rights or scene verification"
+      ],
+      "live_browser_verified": false,
+      "operator_path": "/v1/ai/goals/{goal_id}/browser",
+      "service_status": "not_checked",
+      "tool": "browser_action",
+      "verification_scope": "A live Chromium health check does not verify external site access or video content"
+    },
+    "measured_scene_index": {
+      "coverage": "all_decoded_frames_visual_change_sparse_keyframes",
+      "live_index_verified": false,
+      "max_decoded_frames": 36000,
+      "max_duration_seconds": 600,
+      "max_input_bytes": 209715200,
+      "max_search_bytes": 536870912,
+      "next_action": "Use the existing rights-gated project media index. Larger or longer media requires bounded windowed analysis, not higher host limits.",
+      "schema_version": "SceneIndexV1",
+      "semantic_actions_verified": false
+    },
+    "media_download": {
+      "authentication_help": "Public videos normally need no sign-in. YouTube can still challenge the server request. An authorized server session may help but cannot guarantee access; try another accessible approved source. Client-browser sign-in does not authenticate the worker.",
+      "dependency_check_location": "API/goal process, not a probe of the ingestion worker",
+      "engine": "yt-dlp",
+      "ffmpeg_available": true,
+      "ffprobe_available": true,
+      "live_download_note": "No external media transfer is performed by this capability check",
+      "live_download_verification_state": "not_tested",
+      "live_download_verified": false,
+      "youtube_download_route_configured": false,
+      "youtube_server_session_configured": false
+    },
+    "observed_at": "2026-10-23T23:22:21.172862+00:00",
+    "optional_semantic_inspection": {
+      "automatic_selection_available": false,
+      "dispatch_enabled": false,
+      "evidence_kind": "shot_start_frame_hypotheses",
+      "external_authorization_required": true,
+      "live_provider_verified": false,
+      "max_requirements": 8,
+      "max_shots": 8,
+      "next_action": "Verify channel inspection permission, provider and budget admission; enabled dispatch alone does not prove inference or temporal understanding.",
+      "status": "not_enabled"
+    },
+    "public_page_reading": {
+      "available": true,
+      "coverage": "Public HTTPS HTML/text, with timestamp and content hash",
+      "limitations": [
+        "No interactive JavaScript or signed-in browser sessions",
+        "Page text does not verify video contents"
+      ],
+      "tool": "read_web_page"
+    },
+    "remote_acquisition": {
+      "analysis_capacity_is_independent": true,
+      "configured_max_bytes": 4294967296,
+      "live_transfer_verified": false
+    },
+    "scene_verification": {
+      "automatic_action_verification_available": false,
+      "limitations": "Search metadata and sampled stills cannot confirm an action through time, episode attribution, or rights clearance."
+    },
+    "source_failure_tool": "source_item_status"
+  },
+  "database_revision": null,
+  "deployed_sha": null,
+  "evidence_scope": "local source/configuration; browser health only if requested",
+  "next_action": "Review docs/AUTONOMOUS_E2E_IMPLEMENTATION.md; use existing live acceptance runners only after their specific authorization gates are satisfied.",
+  "owners": {
+    "acquisition": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/services/acquisition_jobs.py",
+        "src/katcha/services/acquisition_handoff.py"
+      ]
+    },
+    "activation": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/services/trend_auto_activation.py",
+        "src/katcha/services/trend_editorial_dispatch.py"
+      ]
+    },
+    "discovery": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/services/source_polling.py",
+        "src/katcha/services/discovery_polling.py"
+      ]
+    },
+    "editorial": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/orchestration/editorial_workflows.py",
+        "src/katcha/services/editorial_runs.py"
+      ]
+    },
+    "index": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/editorial/media_intake/scene_index.py",
+        "src/katcha/editorial/media_intake/scene_worker.py"
+      ]
+    },
+    "matching": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/services/editorial_shot_matching.py",
+        "src/katcha/services/editorial_semantic_matching.py"
+      ]
+    },
+    "publication": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/services/publications.py",
+        "src/katcha/services/channel_learning.py"
+      ]
+    },
+    "render": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/editorial/visual_compiler.py",
+        "src/katcha/editorial/render.py"
+      ]
+    },
+    "requirements": {
+      "all_sources_present": true,
+      "live_status": "unknown",
+      "source_paths": [
+        "src/katcha/editorial/source_intelligence/requirements.py",
+        "src/katcha/services/editorial_media_preparation.py"
+      ]
+    }
+  },
+  "program_acceptance": "not_assessed",
+  "schema_version": "AutonomousE2EPreflightV1",
+  "source_migration_heads": [
+    "0066_acquisition_handoff"
+  ],
+  "source_sha": "349d7f97101088b155bb582b59f09e196aa1f13b",
+  "working_tree_dirty": true
+}

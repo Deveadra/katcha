@@ -17,8 +17,13 @@ from katcha.orchestration.failure_details import safe_failure_text
 
 def retrieval_capabilities() -> dict:
     from katcha.config import get_settings
+    from katcha.editorial.media_intake.scene_index import MAX_INDEX_BYTES, MAX_SEARCH_BYTES
+    from katcha.editorial.media_intake.scene_worker import MAX_FRAMES, MAX_SECONDS
+    from katcha.editorial.semantic_schemas import SemanticMatchRequest
     from katcha.services.browser_client import browser_configuration
 
+    settings = get_settings()
+    semantic_schema = SemanticMatchRequest.model_json_schema()["properties"]
     return {
         "interactive_browser": browser_configuration(),
         "observed_at": datetime.now(UTC).isoformat(),
@@ -55,6 +60,35 @@ def retrieval_capabilities() -> dict:
             "automatic_action_verification_available": False,
             "limitations": "Search metadata and sampled stills cannot confirm an action "
             "through time, episode attribution, or rights clearance.",
+        },
+        "measured_scene_index": {
+            "schema_version": "SceneIndexV1",
+            "max_input_bytes": MAX_INDEX_BYTES,
+            "max_search_bytes": MAX_SEARCH_BYTES,
+            "max_duration_seconds": MAX_SECONDS,
+            "max_decoded_frames": MAX_FRAMES,
+            "coverage": "all_decoded_frames_visual_change_sparse_keyframes",
+            "semantic_actions_verified": False,
+            "live_index_verified": False,
+            "next_action": "Use the existing rights-gated project media index. Larger or "
+            "longer media requires bounded windowed analysis, not higher host limits.",
+        },
+        "optional_semantic_inspection": {
+            "status": "unknown" if settings.semantic_matching_dispatch_enabled else "not_enabled",
+            "dispatch_enabled": settings.semantic_matching_dispatch_enabled,
+            "max_requirements": semantic_schema["requirement_ids"]["maxItems"],
+            "max_shots": semantic_schema["shot_ids"]["maxItems"],
+            "evidence_kind": "shot_start_frame_hypotheses",
+            "external_authorization_required": True,
+            "automatic_selection_available": False,
+            "live_provider_verified": False,
+            "next_action": "Verify channel inspection permission, provider and budget admission; "
+            "enabled dispatch alone does not prove inference or temporal understanding.",
+        },
+        "remote_acquisition": {
+            "configured_max_bytes": settings.remote_acquisition_max_bytes,
+            "live_transfer_verified": False,
+            "analysis_capacity_is_independent": True,
         },
         "discovery_configuration_tool": "discovery_adapters",
         "source_failure_tool": "source_item_status",
