@@ -65,7 +65,13 @@ visible; increasing concurrency is not a storage remedy.
 Before activation:
 
 1. Pass the existing release, backup/restore, and hosted deployment gates for the
-   exact release. This overlay is not automatically consumed by the deployer.
+   exact release. The supervisor selects the overlay only when the core env file
+   contains exactly one `KATCHA_SINGLE_HOST_PROFILE_ENABLED=true`. The immutable
+   release verifier then requires the acquisition and analysis services and stages
+   the additional ARM64 analysis image. Default deployments remain unchanged.
+   First activation must be prepared before upgrading from a release without the
+   profile marker; the deployer requires no running workflows for that transition.
+   Changing the profile on an already running release is not a supported hot toggle.
 2. Pause new media intake and drain existing media activities before enabling the
    budget. Old workflow histories retain original activity names for replay; already
    scheduled legacy activities do not acquire the new budget. All relevant workers

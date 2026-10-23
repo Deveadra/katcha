@@ -129,6 +129,11 @@ if [[ "$route_enabled" == "true" ]]; then
   compose+=(-f deploy/docker-compose.download-route.yml)
 fi
 
+single_host_enabled=$(PYTHONPATH="${ROOT}/src" python3 -m katcha.ops.single_host_profile "${ENV_FILE}")
+if [[ "$single_host_enabled" == "true" ]]; then
+  compose+=(-f deploy/docker-compose.single-host.yml --profile local-heavy-analysis)
+fi
+
 "${compose[@]}" config --quiet
 "${compose[@]}" pull
 

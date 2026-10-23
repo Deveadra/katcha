@@ -1,3 +1,4 @@
+# Supports single-host-profile-v1 via the supervised opt-in overlay.
 name: katcha-production
 
 x-logging: &default-logging

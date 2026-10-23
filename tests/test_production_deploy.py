@@ -428,8 +428,9 @@ def test_backup_does_not_accept_successful_skip_without_completion_proof(
         app.backup_and_restore()
 
 
+@pytest.mark.parametrize("single_host", [False, True])
 def test_staging_attests_architecture_revision_digest_and_local_image_id(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, single_host,
 ) -> None:
     app = module()
     image_id = "sha256:" + "e" * 64
@@ -447,8 +448,8 @@ def test_staging_attests_architecture_revision_digest_and_local_image_id(
         raise AssertionError(args)
 
     monkeypatch.setattr(app, "run", fake)
-    staged = app.stage_images(NEW)
-    assert set(staged) == set(app.IMAGES)
+    staged = app.stage_images(NEW, single_host=single_host)
+    assert set(staged) == set(app.IMAGES) | ({"katcha-analysis"} if single_host else set())
     assert set(staged.values()) == {image_id}
 
 
@@ -1338,3 +1339,81 @@ def test_manual_release_approvals_do_not_block_pr_contract_validation():
     assert "docs/PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md" in workflow
     assert "if: github.event_name == 'pull_request'" in workflow
     assert "if: github.event_name == 'workflow_dispatch'" in workflow
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("", False), ("false", False), ("true", True), ('"true"', True),
+    ("yes", None), ("true\nKATCHA_SINGLE_HOST_PROFILE_ENABLED=false", None),
+])
+def test_single_host_profile_selection_is_explicit_and_release_bound(
+    tmp_path, monkeypatch, value, expected,
+):
+    from katcha.ops.single_host_profile import enabled_from_file
+
+    app = module()
+    env = tmp_path / 'core.env'
+    env.write_text('KATCHA_SINGLE_HOST_PROFILE_ENABLED=' + value if value else '')
+    monkeypatch.setattr(app, 'ENV', env)
+    assert app.single_host_profile('legacy release') is False
+    if expected is None:
+        with pytest.raises(app.Blocked):
+            app.single_host_profile('single-host-profile-v1')
+        with pytest.raises(ValueError):
+            enabled_from_file(env)
+    else:
+        assert app.single_host_profile('single-host-profile-v1') is expected
+        assert enabled_from_file(env) is expected
+
+
+@pytest.mark.parametrize('missing', [None, 'local-acquisition', 'analysis-worker'])
+def test_single_host_runtime_requires_exact_additional_services(tmp_path, monkeypatch, missing):
+    app = module()
+    env = tmp_path / 'core.env'
+    env.write_text('KATCHA_SINGLE_HOST_PROFILE_ENABLED=true')
+    monkeypatch.setattr(app, 'ENV', env)
+    services = app.EXPECTED | {'local-acquisition', 'analysis-worker'}
+    if missing:
+        services.remove(missing)
+
+    def command(*args, **kwargs):
+        if args[0] == 'git':
+            return '# single-host-profile-v1\nservices:\n  browser:\n'
+        if args[:2] == ('docker', 'ps'):
+            return '\n'.join(sorted(services))
+        if args[:2] == ('docker', 'inspect'):
+            name = args[2]
+            return json.dumps([{
+                'Config': {
+                    'Labels': {'com.docker.compose.service': name},
+                    'Image': 'ghcr.io/deveadra/' + app.IMAGE_FOR_SERVICE.get(name, name)
+                             + ':' + NEW,
+                },
+                'State': {'Running': True, 'Status': 'running',
+                          'Health': {'Status': 'healthy'}},
+            }])
+        pytest.fail('Unexpected operation')
+
+    monkeypatch.setattr(app, 'run', command)
+    monkeypatch.setattr(app.urllib.request, 'urlopen', lambda *args, **kwargs:
+                        io.StringIO(json.dumps({'release_sha': NEW})))
+    if missing:
+        with pytest.raises(app.Blocked, match='service count'):
+            app.runtime(NEW)
+    else:
+        app.runtime(NEW)
+
+
+@pytest.mark.parametrize('current,target,requested,expected', [
+    ('legacy', 'single-host-profile-v1', 'approved-resume', 'refuse'),
+    ('single-host-profile-v1', 'single-host-profile-v1', 'approved-resume', 'approved-resume'),
+    ('single-host-profile-v1', 'single-host-profile-v1', 'refuse', 'refuse'),
+    ('legacy', 'legacy', 'approved-resume', 'approved-resume'),
+])
+def test_first_profile_activation_cannot_resume_unguarded_workflows(
+    tmp_path, monkeypatch, current, target, requested, expected,
+):
+    app = module()
+    env = tmp_path / 'core.env'
+    env.write_text('KATCHA_SINGLE_HOST_PROFILE_ENABLED=true')
+    monkeypatch.setattr(app, 'ENV', env)
+    assert app.profile_workflow_policy(current, target, requested) == expected

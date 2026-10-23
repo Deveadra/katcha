@@ -76,6 +76,7 @@ IMAGE_FOR_SERVICE = {
     "api": "katcha-control", "intelligence-worker": "katcha-control",
     "telegram-worker": "katcha-control", "worker": "katcha-ingest",
     "renderer": "katcha-renderer", "production-worker": "katcha-production",
+    "local-acquisition": "katcha-ingest", "analysis-worker": "katcha-analysis",
 }
 
 
@@ -312,6 +313,33 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     return bool(migration_paths)
 
 
+def single_host_profile(compose_source: str) -> bool:
+    # Old immutable releases do not consume this opt-in. This also preserves
+    # rollback to the previous default stack during first activation.
+    if "single-host-profile-v1" not in compose_source:
+        return False
+    values = []
+    for line in ENV.read_text().splitlines():
+        key, separator, value = line.strip().partition("=")
+        if key.strip() == "KATCHA_SINGLE_HOST_PROFILE_ENABLED":
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            if not separator or value not in {"true", "false"}:
+                raise Blocked("invalid single-host profile selection")
+            values.append(value)
+    if len(values) > 1:
+        raise Blocked("duplicate single-host profile selection")
+    return values == ["true"]
+
+
+def profile_workflow_policy(current_source: str, target_source: str, policy: str) -> str:
+    if single_host_profile(target_source) and not single_host_profile(current_source):
+        # Original replay activities do not acquire the new lock.
+        return "refuse"
+    return policy
+
+
 def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
     # The previous immutable release may predate the browser service. Derive its
     # required inventory from that exact revision so first rollout and rollback
@@ -319,6 +347,8 @@ def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
     compose_source = run("git", "-C", str(REPO), "show",
                          sha + ":deploy/docker-compose.production.yml")
     expected = EXPECTED if "\n  browser:\n" in compose_source else EXPECTED - {"browser"}
+    if single_host_profile(compose_source):
+        expected = expected | {"local-acquisition", "analysis-worker"}
     ids = run("docker", "ps", "--filter", "label=com.docker.compose.project=katcha-production",
               "--format", "{{.ID}}").splitlines()
     if len(ids) != len(expected) or len(set(ids)) != len(expected):
@@ -707,9 +737,9 @@ def database_release_postflight(migration_policy: str = "refuse") -> None:
     verify_acquisition_jobs_schema()
 
 
-def stage_images(target: str) -> dict[str, str]:
+def stage_images(target: str, *, single_host: bool = False) -> dict[str, str]:
     staged: dict[str, str] = {}
-    for name in IMAGES:
+    for name in (*IMAGES, *(("katcha-analysis",) if single_host else ())):
         ref = "ghcr.io/deveadra/" + name + ":" + target
         run("docker", "pull", ref, timeout=900)
         output = run("docker", "image", "inspect", ref,
@@ -905,8 +935,15 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     )
     if not migration and target_has_handoff and database_query("revision") != HANDOFF_REVISION:
         raise Blocked("migration-free target requires reviewed 0066 schema")
+    run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
+    target_source = run("git", "-C", str(REPO), "show",
+                        target + ":deploy/docker-compose.production.yml")
+    local_profile = single_host_profile(target_source)
+    current_source = run("git", "-C", str(REPO), "show",
+                         current + ":deploy/docker-compose.production.yml")
+    policy = profile_workflow_policy(current_source, target_source, policy)
     before = temporal_inventory(policy)
-    staged = stage_images(target)
+    staged = stage_images(target, single_host=True) if local_profile else stage_images(target)
     backup_and_restore()
     # All operations above are preparation-only. Recheck authority, workflow
     # policy and verified release immediately before the maintenance window.
@@ -916,7 +953,6 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     if eligible(current, target, migration_policy) != migration:
         raise Blocked("migration classification changed during deployment review")
     database_release_preflight(migration, migration_policy)
-    run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
     # The pinned candidate is allowed to be behind newer main merges. Both
     # git checks enforce ancestry; neither switches to the mutable head.
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", target, "origin/main")
