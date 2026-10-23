@@ -7,7 +7,6 @@ import logging
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
 from katcha.config import get_settings
@@ -29,6 +28,7 @@ from katcha.orchestration.discovery_workflows import (
 )
 from katcha.orchestration.research_activities import prepare_research_jobs_activity
 from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.services.ingestion_sources import list_resumable_source_runs
 
 
@@ -69,7 +69,9 @@ async def main() -> None:
         resumed,
         already_present,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(6)
+    ) as activity_executor:
         worker = Worker(
             client,
             task_queue=DISCOVERY_TASK_QUEUE,

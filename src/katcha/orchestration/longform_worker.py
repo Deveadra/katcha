@@ -9,7 +9,6 @@ from sqlalchemy import select
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
@@ -28,6 +27,7 @@ from katcha.orchestration.longform_activities import (
     select_compilation_candidates_activity,
 )
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.orchestration.scene_index_dispatch import (
     fail_scene_index_attempt,
     measure_project_media,
@@ -131,7 +131,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(4)
+    ) as activity_executor:
         worker = create_longform_worker(client, settings, activity_executor)
         reconciler = asyncio.create_task(editorial_reconciler(client))
         try:

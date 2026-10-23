@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class RankedShortEpisodeEditorialWorkflow:
@@ -23,21 +25,21 @@ class RankedShortEpisodeEditorialWorkflow:
         if start_stage in {"script", "voice"}:
             try:
                 if start_stage == "script":
-                    await workflow.execute_activity(
+                    await execute_resource_activity(
                         "generate_episode_script_candidates",
                         episode_id,
                         start_to_close_timeout=timedelta(minutes=4),
                         retry_policy=paid_once,
 
                     )
-                    await workflow.execute_activity(
+                    await execute_resource_activity(
                         "select_episode_script_candidate",
                         episode_id,
                         start_to_close_timeout=timedelta(seconds=30),
                         retry_policy=local_retry,
 
                     )
-                voiced = await workflow.execute_activity(
+                voiced = await execute_resource_activity(
                     "generate_episode_narration_assets",
                     episode_id,
                     start_to_close_timeout=timedelta(minutes=12),
@@ -46,7 +48,7 @@ class RankedShortEpisodeEditorialWorkflow:
                 )
                 voice_profile = voiced.get("voice_profile")
             except Exception as exc:
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "mark_short_episode_failed",
                     args=[episode_id, str(exc)],
                     start_to_close_timeout=timedelta(seconds=30),
@@ -54,7 +56,7 @@ class RankedShortEpisodeEditorialWorkflow:
                 )
                 raise
 
-            editorial = await workflow.execute_activity(
+            editorial = await execute_resource_activity(
                 "advance_short_episode_editorial_automation_activity",
                 episode_id,
                 start_to_close_timeout=timedelta(seconds=30),
@@ -72,14 +74,14 @@ class RankedShortEpisodeEditorialWorkflow:
             raise ValueError(f"unsupported short episode editorial stage: {start_stage}")
 
         try:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "build_ranked_episode_render_manifest_activity",
                 episode_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
 
             )
-            rendered = await workflow.execute_activity(
+            rendered = await execute_resource_activity(
                 "render_ranked_episode_activity",
                 episode_id,
                 start_to_close_timeout=timedelta(minutes=30),
@@ -87,7 +89,7 @@ class RankedShortEpisodeEditorialWorkflow:
 
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_short_episode_failed",
                 args=[episode_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),
@@ -95,7 +97,7 @@ class RankedShortEpisodeEditorialWorkflow:
             )
             raise
 
-        automation = await workflow.execute_activity(
+        automation = await execute_resource_activity(
             "advance_short_episode_render_automation_activity",
             episode_id,
             start_to_close_timeout=timedelta(seconds=30),
@@ -107,7 +109,7 @@ class RankedShortEpisodeEditorialWorkflow:
         handoff_started = False
         if publication_id and publication_workflow_id:
             try:
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "start_registered_publication_activity",
                     args=[str(publication_id), str(publication_workflow_id)],
                     start_to_close_timeout=timedelta(seconds=30),

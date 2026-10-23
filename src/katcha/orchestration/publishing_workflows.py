@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class YouTubeAnalyticsWorkflow:
@@ -31,7 +33,7 @@ class YouTubeAnalyticsWorkflow:
             if delay > 0:
                 await workflow.sleep(delay)
             try:
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "collect_analytics_snapshot_activity",
                     args=[publication_id, f"offset-{offset}h"],
                     start_to_close_timeout=timedelta(minutes=3),
@@ -41,7 +43,7 @@ class YouTubeAnalyticsWorkflow:
                 sampled += 1
             except Exception as exc:
                 failures += 1
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "mark_analytics_observation_failed",
                     args=[publication_id, f"offset-{offset}h: {exc}"],
                     start_to_close_timeout=timedelta(seconds=30),
@@ -58,7 +60,7 @@ class YouTubeAnalyticsWorkflow:
 class YouTubeAnalyticsRefreshWorkflow:
     @workflow.run
     async def run(self, publication_id: str, sample_key: str) -> dict[str, Any]:
-        return await workflow.execute_activity(
+        return await execute_resource_activity(
             "collect_analytics_snapshot_activity",
             args=[publication_id, sample_key],
             start_to_close_timeout=timedelta(minutes=3),
@@ -90,7 +92,7 @@ class YouTubePublicationWorkflow:
         )
         provider_mutation_once = RetryPolicy(maximum_attempts=1)
         try:
-            prepared = await workflow.execute_activity(
+            prepared = await execute_resource_activity(
                 "prepare_publication_activity",
                 publication_id,
                 start_to_close_timeout=timedelta(seconds=30),
@@ -98,14 +100,14 @@ class YouTubePublicationWorkflow:
 
             )
             if not prepared.get("youtube_video_id"):
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "initiate_upload_session_activity",
                     publication_id,
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=provider_mutation_once,
 
                 )
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "upload_video_activity",
                     publication_id,
                     start_to_close_timeout=timedelta(minutes=45),
@@ -116,7 +118,7 @@ class YouTubePublicationWorkflow:
 
             processing_complete = False
             for _ in range(max_polls):
-                current = await workflow.execute_activity(
+                current = await execute_resource_activity(
                     "refresh_video_status_activity",
                     publication_id,
                     start_to_close_timeout=timedelta(minutes=2),
@@ -129,7 +131,7 @@ class YouTubePublicationWorkflow:
                 await workflow.sleep(poll_seconds)
 
             if not processing_complete:
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "mark_processing_timeout_activity",
                     publication_id,
                     start_to_close_timeout=timedelta(seconds=30),
@@ -140,7 +142,7 @@ class YouTubePublicationWorkflow:
                     "status": "processing_timeout",
                 }
 
-            finalized = await workflow.execute_activity(
+            finalized = await execute_resource_activity(
                 "finalize_publication_activity",
                 publication_id,
                 start_to_close_timeout=timedelta(minutes=2),
@@ -148,7 +150,7 @@ class YouTubePublicationWorkflow:
 
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_publication_failed",
                 args=[publication_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),
@@ -167,7 +169,7 @@ class YouTubePublicationWorkflow:
                 id=f"yt-analytics-{publication_id}",
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_analytics_observation_failed",
                 args=[publication_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),

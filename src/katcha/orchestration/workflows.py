@@ -7,6 +7,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from katcha.orchestration.failure_details import failure_details
+from katcha.orchestration.resource_queue import execute_resource_activity
 
 
 @workflow.defn
@@ -24,7 +25,7 @@ class ClipIngestWorkflow:
                 from katcha.orchestration.acquisition_workflows import wait_for_remote_source
 
                 await wait_for_remote_source(source_id)
-            result = await workflow.execute_activity(
+            result = await execute_resource_activity(
                 "ingest_source",
                 source_id,
                 start_to_close_timeout=timedelta(minutes=20),
@@ -32,7 +33,7 @@ class ClipIngestWorkflow:
                 result_type=dict[str, str | bool],
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_source_failed",
                 args=[source_id, failure_details(exc)["message"]],
                 start_to_close_timeout=timedelta(seconds=30),
@@ -42,14 +43,14 @@ class ClipIngestWorkflow:
         # Preserve replay compatibility for ingests already in Temporal history.
         # Analysis dispatch failure must not change a successful download to failed.
         if workflow.patched("analyze-after-ingest-v1") and result.get("clip_id"):
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "enqueue_ingested_analysis_activity",
                 str(result["clip_id"]),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=retry_policy,
             )
         if workflow.patched("authorized-trailer-passthrough-v1") and result.get("clip_id"):
-            prepared = await workflow.execute_activity(
+            prepared = await execute_resource_activity(
                 "prepare_authorized_passthrough_activity",
                 source_id,
                 start_to_close_timeout=timedelta(minutes=5),

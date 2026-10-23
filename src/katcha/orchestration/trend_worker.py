@@ -5,9 +5,9 @@ import concurrent.futures
 import logging
 
 from temporalio.client import Client
-from temporalio.worker import Worker
 
 from katcha.config import get_settings
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.orchestration.trend_activities import (
     refresh_channel_trends_activity,
     refresh_scheduled_channel_trends_activity,
@@ -30,7 +30,9 @@ async def main() -> None:
         settings.temporal_host,
         namespace=settings.temporal_namespace,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(4)
+    ) as activity_executor:
         worker = Worker(
             client,
             task_queue=TREND_TASK_QUEUE,

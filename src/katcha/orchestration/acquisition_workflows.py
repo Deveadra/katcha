@@ -5,13 +5,15 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class RemoteAcquisitionWorkflow:
     @workflow.run
     async def run(self, channel_id: str, job_id: str) -> dict:
         for _ in range(500):
-            result = await workflow.execute_activity(
+            result = await execute_resource_activity(
                 "reconcile_remote_acquisition",
                 args=[channel_id, job_id],
                 start_to_close_timeout=timedelta(hours=2),
@@ -27,7 +29,7 @@ class RemoteAcquisitionWorkflow:
 async def wait_for_remote_source(source_id: str, *, task_queue: str | None = None):
     from temporalio.exceptions import ApplicationError
 
-    result = await workflow.execute_activity(
+    result = await execute_resource_activity(
         "remote_source_acquisition",
         source_id,
         task_queue=task_queue,

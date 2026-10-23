@@ -154,6 +154,13 @@ Do not resize production or provision a new route as part of installing software
 A separate VM behind the same NAT is still the same outward identity; admission
 requires a measured independent route and a released-worker storage/channel test.
 
+## Running acquisition on the core VM
+
+The existing worker can run on VM1 using the same scoped HTTPS API and durable
+journal. See [Single-host operation](SINGLE_HOST_OPERATION.md) for the shared
+resource queue, Compose profile, rollout gates, and Forescene acceptance checklist.
+The worker protocol and provider permission checks stay the same on either host.
+
 ## Acceptance evidence
 
 Offline tests exercise the real worker/control API/receipt promotion with synthetic

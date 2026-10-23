@@ -1,0 +1,139 @@
+# Append to docker-compose.production.yml only after the single-host runbook gates.
+# This is opt-in: it adds no resources to the default production deployment.
+x-local-budget: &local-budget
+  KATCHA_LOCAL_DEGRADED_MODE: "true"
+  KATCHA_LOCAL_RESOURCE_LOCK_PATH: /resource-budget/host.lock
+
+services:
+  resource-budget-init:
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-ingest:${KATCHA_RELEASE_SHA:?Set the exact release SHA}
+    user: "0:0"
+    network_mode: none
+    command: ["python", "-c", "import os; os.chown('/resource-budget',10001,10001); os.chmod('/resource-budget',0o700); os.chown('/acquisition-state',10001,10001); os.chmod('/acquisition-state',0o700)"]
+    volumes:
+      - local-resource-budget:/resource-budget
+      - local-acquisition-state:/acquisition-state
+    mem_limit: 128m
+    cpus: 0.1
+
+  api:
+    environment:
+      KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
+
+  worker:
+    environment:
+      <<: *local-budget
+      KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
+    depends_on:
+      resource-budget-init:
+        condition: service_completed_successfully
+    volumes:
+      - local-resource-budget:/resource-budget
+
+  analysis-worker:
+    # Include this profile when starting the production stack.
+    profiles: ["local-heavy-analysis"]
+    environment: *local-budget
+    depends_on:
+      resource-budget-init:
+        condition: service_completed_successfully
+    volumes:
+      - local-resource-budget:/resource-budget
+
+  production-worker:
+    environment:
+      <<: *local-budget
+      KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
+    depends_on:
+      resource-budget-init:
+        condition: service_completed_successfully
+    volumes:
+      - local-resource-budget:/resource-budget
+
+  intelligence-worker:
+    environment:
+      <<: *local-budget
+      KATCHA_REMOTE_ACQUISITION_ENABLED: "true"
+      KATCHA_REMOTE_ACQUISITION_AUTO_DISPATCH_ENABLED: ${KATCHA_LOCAL_ACQUISITION_AUTO_DISPATCH_ENABLED:-false}
+    depends_on:
+      resource-budget-init:
+        condition: service_completed_successfully
+    volumes:
+      - local-resource-budget:/resource-budget
+
+  renderer:
+    environment:
+      KATCHA_RENDER_BACKEND: local
+      KATCHA_RENDER_CONCURRENCY: "1"
+      KATCHA_EXTERNAL_COMPUTE_ENABLED: "false"
+    # Allow one local Chromium/FFmpeg render to use spare RAM and CPU.
+    mem_limit: 3g
+    cpus: 1.25
+    init: true
+
+  local-acquisition:
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-ingest:${KATCHA_RELEASE_SHA:?Set the exact release SHA}
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    # A dedicated channel-scoped worker configuration, never the core env file.
+    env_file: ${KATCHA_ACQUISITION_ENV_FILE:?Set the dedicated acquisition configuration file}
+    environment:
+      KATCHA_LOCAL_RESOURCE_LOCK_PATH: /resource-budget/host.lock
+      KATCHA_ACQUISITION_STATE_DIR: /acquisition-state
+      KATCHA_ACQUISITION_TOKEN_FILE: /run/acquisition/worker-token
+      KATCHA_ACQUISITION_CF_ACCESS_ID_FILE: /run/acquisition/cf-access-id
+      KATCHA_ACQUISITION_CF_ACCESS_SECRET_FILE: /run/acquisition/cf-access-secret
+    command: ["python", "-m", "katcha.acquisition.worker"]
+    depends_on:
+      resource-budget-init:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    volumes:
+      - local-resource-budget:/resource-budget
+      - local-acquisition-state:/acquisition-state
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/worker-token
+        target: /run/acquisition/worker-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/cf-access-id
+        target: /run/acquisition/cf-access-id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KATCHA_ACQUISITION_CREDENTIAL_DIR:?Set the private acquisition credential directory}/cf-access-secret
+        target: /run/acquisition/cf-access-secret
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [backend]
+
+volumes:
+  local-resource-budget:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/katcha/resource-budget
+  local-acquisition-state:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/katcha/acquisition-state

@@ -253,9 +253,11 @@ def test_acquisition_selection_cannot_use_invented_candidates(saved):
         )
 
 
+@pytest.mark.parametrize("queued", [False, True])
 async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_review(
-    saved, monkeypatch
+    saved, monkeypatch, queued
 ):
+    ingest_name = "resource_queued_ingest_source" if queued else "ingest_source"
     scout = completed_scout(saved)
     row = start_run(
         scout.channel_profile_id,
@@ -277,7 +279,7 @@ async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_revie
         values = args if args is not None else positional
         if name == "remote_source_acquisition":
             return {}
-        if name == "ingest_source":
+        if name == ingest_name:
             clip_id = uuid.uuid4()
             with db.session_scope() as session:
                 session.add(
@@ -298,7 +300,10 @@ async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_revie
         return registry[name](*values)
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
-    monkeypatch.setattr(workflows.workflow, "patched", lambda _name: True)
+    monkeypatch.setattr(
+        workflows.workflow, "patched",
+        lambda name: queued if name == "local-media-resource-queue-v1" else True,
+    )
     result = await workflows.EditorialProjectWorkflow().run(str(row.id), 1)
     assert result["stage"] == "assets_acquired_for_review"
     current = get_run(row.channel_profile_id, row.project_id, row.id)
@@ -307,7 +312,8 @@ async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_revie
     candidate = current.artifacts["asset_scout"]["candidates"][0]
     assert candidate["acquired"] is True
     assert candidate["production_eligible"] is False
-    assert calls.count("ingest_source") == 1
+    assert calls.count(ingest_name) == 1
+    assert "resource_queued_build_local_intelligence" not in calls
     assert "build_local_intelligence" not in calls
     with db.session_scope() as session:
         assert session.query(RightsAssessment).count() == 0

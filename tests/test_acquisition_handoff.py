@@ -691,8 +691,9 @@ async def test_remote_workflow_waits_then_accepts_verified_handoff(monkeypatch):
 
     monkeypatch.setattr(module.workflow, "execute_activity", execute)
     monkeypatch.setattr(module.workflow, "sleep", sleep)
+    monkeypatch.setattr(module.workflow, "patched", lambda _: True)
     assert (await module.RemoteAcquisitionWorkflow().run("channel", "job"))["status"] == "completed"
-    assert seen == [("reconcile_remote_acquisition", ["channel", "job"])] * 3
+    assert seen == [("resource_queued_reconcile_remote_acquisition", ["channel", "job"])] * 3
 
 
 def test_ingest_automatically_dispatches_authorized_receipt_once(job_db, monkeypatch):

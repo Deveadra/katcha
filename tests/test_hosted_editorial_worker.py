@@ -22,6 +22,7 @@ async def test_hosted_entry_point_serves_editorial_and_cleans_up_reconciliation(
     client = object()
     settings = SimpleNamespace(
         log_level="CRITICAL", temporal_host="fixture", temporal_namespace="fixture",
+        activity_executor_workers=lambda count: count,
         temporal_production_task_queue="production", temporal_longform_task_queue="longform",
     )
     started = asyncio.Event()

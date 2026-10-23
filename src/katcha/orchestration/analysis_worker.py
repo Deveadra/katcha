@@ -8,7 +8,6 @@ from sqlalchemy import select
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -21,6 +20,7 @@ from katcha.orchestration.analysis_activities import (
     score_local_candidate,
 )
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.orchestration.similarity_activities import detect_near_duplicates
 
 
@@ -68,7 +68,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(2)
+    ) as activity_executor:
         worker = Worker(
             client,
             task_queue=settings.temporal_analysis_task_queue,

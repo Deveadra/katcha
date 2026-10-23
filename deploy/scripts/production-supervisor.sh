@@ -129,6 +129,18 @@ if [[ "$route_enabled" == "true" ]]; then
   compose+=(-f deploy/docker-compose.download-route.yml)
 fi
 
+single_host_enabled=$(PYTHONPATH="${ROOT}/src" python3 -m katcha.ops.single_host_profile "${ENV_FILE}")
+if [[ "$single_host_enabled" == "true" ]]; then
+  for directory in resource-budget acquisition-state; do
+    if [[ -L "${DATA_ROOT}/${directory}" ]]; then
+      echo "Unsafe single-host storage directory; refusing to start." >&2
+      exit 25
+    fi
+    install -d -o "$runtime_uid" -g "$runtime_uid" -m 0700 "${DATA_ROOT}/${directory}"
+  done
+  compose+=(-f deploy/docker-compose.single-host.yml --profile local-heavy-analysis)
+fi
+
 "${compose[@]}" config --quiet
 "${compose[@]}" pull
 

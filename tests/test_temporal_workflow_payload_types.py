@@ -89,9 +89,9 @@ async def test_ingest_passthrough_decodes_activity_and_final_workflow_payloads(m
         calls.append((name, arg))
         value = {
             "remote_source_acquisition": {},
-            "ingest_source": ingest,
+            "resource_queued_ingest_source": ingest,
             "enqueue_ingested_analysis_activity": {"analysis_run_id": "analysis"},
-            "prepare_authorized_passthrough_activity": prepared,
+            "resource_queued_prepare_authorized_passthrough_activity": prepared,
         }[name]
         payloads = await converter.encode([value])
         hint = kwargs.get("result_type")
@@ -104,9 +104,9 @@ async def test_ingest_passthrough_decodes_activity_and_final_workflow_payloads(m
     assert result == expected
     assert calls == [
         ("remote_source_acquisition", "source"),
-        ("ingest_source", "source"),
+        ("resource_queued_ingest_source", "source"),
         ("enqueue_ingested_analysis_activity", "saved-clip"),
-        ("prepare_authorized_passthrough_activity", "source"),
+        ("resource_queued_prepare_authorized_passthrough_activity", "source"),
     ]
     result_hint = workflow._Definition.must_from_class(ClipIngestWorkflow).ret_type
     assert (await converter.decode(await converter.encode([result]), [result_hint]))[0] == expected

@@ -9,7 +9,6 @@ from sqlalchemy import select
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.worker import Worker
 
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -58,6 +57,7 @@ from katcha.orchestration.reach_activities import (
     sync_reach_reports_activity,
 )
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
+from katcha.orchestration.resource_worker import ResourceWorker as Worker
 from katcha.orchestration.worker_group import run_worker_group
 from katcha.orchestration.workflows import ClipIngestWorkflow
 from katcha.packaging_models import PublicationPackagingActivation
@@ -175,7 +175,9 @@ async def main() -> None:
         present,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.activity_executor_workers(8)
+    ) as activity_executor:
         ingest_worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,

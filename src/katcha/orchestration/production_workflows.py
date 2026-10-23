@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.resource_queue import execute_resource_activity
+
 
 @workflow.defn
 class ShortProductionWorkflow:
@@ -20,21 +22,21 @@ class ShortProductionWorkflow:
         )
         try:
             if start_stage == "script":
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "generate_script_candidates",
                     production_id,
                     start_to_close_timeout=timedelta(minutes=3),
                     retry_policy=paid_once,
 
                 )
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "select_script_candidate",
                     production_id,
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=local_retry,
 
                 )
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "generate_narration_assets",
                     production_id,
                     start_to_close_timeout=timedelta(minutes=5),
@@ -42,7 +44,7 @@ class ShortProductionWorkflow:
 
                 )
             elif start_stage == "voice":
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "generate_narration_assets",
                     production_id,
                     start_to_close_timeout=timedelta(minutes=5),
@@ -53,21 +55,21 @@ class ShortProductionWorkflow:
                 raise ValueError(f"unsupported production start stage: {start_stage}")
 
             if workflow.patched("production-meme-assets-v1"):
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "prepare_meme_assets",
                     production_id,
                     start_to_close_timeout=timedelta(minutes=12),
                     retry_policy=paid_once,
                 )
 
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "build_render_manifest_activity",
                 production_id,
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=local_retry,
 
             )
-            rendered = await workflow.execute_activity(
+            rendered = await execute_resource_activity(
                 "render_short_activity",
                 production_id,
                 # Cold source preparation and Lambda rendering share the existing
@@ -78,7 +80,7 @@ class ShortProductionWorkflow:
 
             )
         except Exception as exc:
-            await workflow.execute_activity(
+            await execute_resource_activity(
                 "mark_production_failed",
                 args=[production_id, str(exc)],
                 start_to_close_timeout=timedelta(seconds=30),
@@ -86,7 +88,7 @@ class ShortProductionWorkflow:
             )
             raise
 
-        automation = await workflow.execute_activity(
+        automation = await execute_resource_activity(
             "advance_production_render_automation_activity",
             production_id,
             start_to_close_timeout=timedelta(seconds=30),
@@ -98,7 +100,7 @@ class ShortProductionWorkflow:
         handoff_started = False
         if publication_id and publication_workflow_id:
             try:
-                await workflow.execute_activity(
+                await execute_resource_activity(
                     "start_registered_publication_activity",
                     args=[str(publication_id), str(publication_workflow_id)],
                     start_to_close_timeout=timedelta(seconds=30),
