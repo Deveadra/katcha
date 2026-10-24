@@ -56,16 +56,26 @@ class Signal:
     completed_at: float | None = None
 
 
+class ProbeError(RuntimeError):
+    """Only controlled, non-secret tool names and failure codes belong here."""
+
+
 def command(*args: str, timeout: int = 20, accept_failure: bool = False) -> str:
     if DEADLINE is not None:
         remaining = DEADLINE - time.monotonic()
         if remaining < 1:
-            raise RuntimeError("Operations probe budget exhausted")
+            raise ProbeError("Operations probe budget exhausted; retry on the next observation.")
         timeout = min(timeout, remaining)
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    tool = Path(args[0]).name
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ProbeError(tool + " exceeded its diagnostic time limit.") from None
+    except OSError as exc:
+        raise ProbeError(tool + " could not start (system error " + str(exc.errno) + ").") from None
     if result.returncode and not accept_failure:
         # Neither stderr nor command arguments are safe diagnostics.
-        raise RuntimeError("Operations probe did not complete")
+        raise ProbeError(tool + " exited with status " + str(result.returncode) + ".")
     return result.stdout.strip()
 
 
@@ -105,7 +115,7 @@ def properties(unit: str) -> dict[str, str]:
     )
     result = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
     if result.get("LoadState") != "loaded":
-        raise RuntimeError("Required operations unit is missing")
+        raise ProbeError("Required systemd unit is missing: " + unit)
     return result
 
 
@@ -258,7 +268,12 @@ def release_signals() -> list[Signal]:
     old = pins["KATCHA_RELEASE_SHA"]
     new = observer.current_main(release_eligibility.api_get)
     if old == new:
-        return [Signal("drift", "Release cadence", "healthy", "Production matches main.")]
+        return [
+            Signal("drift", "Release cadence", "healthy", "Production matches main."),
+            Signal(
+                "release", "Next release review", "healthy", "No newer main release needs review."
+            ),
+        ]
     diff = observer.compare_releases(release_eligibility.api_get, old, new)
     warning = diff["commits"] >= 60 or diff["changed_files"] >= 80
     return [
@@ -352,13 +367,14 @@ def collect(now: float) -> list[Signal]:
         try:
             value = fn()
             signals.extend(value if isinstance(value, list) else [value])
-        except Exception:
+        except Exception as exc:
             signals.append(
                 Signal(
                     key,
                     label,
                     "unknown",
-                    "The check could not be completed.",
+                    "The check could not be completed. "
+                    + (str(exc) if isinstance(exc, ProbeError) else type(exc).__name__ + "."),
                     "The remediation bot has queued diagnostics; inspect host logs.",
                 )
             )
@@ -563,6 +579,13 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
 def remediate(db: sqlite3.Connection, now: float) -> None:
     """One durable attempt per incident; no arbitrary commands or inferred authority."""
     rows = db.execute("SELECT * FROM incidents WHERE resolved IS NULL AND bot='queued'").fetchall()
+    safety_claimed = (
+        db.execute(
+            "SELECT 1 FROM incidents WHERE resolved IS NULL AND bot='verifying' "
+            "AND key IN ('backup','restore') LIMIT 1"
+        ).fetchone()
+        is not None
+    )
     for row in rows:
         key = row["key"]
         if key not in SAFETY:
@@ -650,6 +673,8 @@ def remediate(db: sqlite3.Connection, now: float) -> None:
             continue
         if row["attempts"]:
             continue
+        if safety_claimed:
+            continue
         try:
             # Serialize with the deployer. Never race its final backup/restore checks.
             fd = os.open(DEPLOY_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -683,6 +708,7 @@ def remediate(db: sqlite3.Connection, now: float) -> None:
                 )
                 event(db, row["id"], now, row["label"] + ": bot requested one safety job retry.")
                 db.commit()
+                safety_claimed = True
                 command("systemctl", "start", "--no-block", SAFETY[key][0])
         except BlockingIOError:
             continue

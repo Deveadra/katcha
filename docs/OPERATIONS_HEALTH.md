@@ -37,8 +37,9 @@ and current runtime authority verified. It uses the root deployer's existing loc
 
 The bot commits its claim before calling systemd. An uncertain start is never
 redispatched automatically. Recovery needs a later positive completion newer than
-the attempt. An unverified backup retry after 50 minutes, or restore retry after
-100 minutes, requires operator review. Normal schedules keep running.
+the attempt. A finished retry without new proof requires prompt operator review;
+an unverified running backup after 50 minutes, or restore after 100 minutes, also
+escalates. Normal schedules keep running.
 
 The bot does not restart production, cancel workflows, change OCI/IAM, rotate
 credentials, clear gates, approve migrations, delete data or call paid AI/providers.

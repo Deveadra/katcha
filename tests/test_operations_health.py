@@ -93,6 +93,20 @@ def test_unknown_start_outcome_is_never_retried(ledger, monkeypatch, tmp_path):
     assert "SECRET" not in str([tuple(row) for row in ledger.execute("SELECT * FROM events")])
 
 
+def test_bot_serializes_backup_and_restore_until_positive_completion(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    rows = signals() + [ops.Signal("restore", "Restores", "critical", "Overdue")]
+    ops.reconcile(ledger, rows, NOW)
+    ops.remediate(ledger, NOW)
+    ops.remediate(ledger, NOW + 5)
+    assert calls == [("systemctl", "start", "--no-block", "katcha-backup.service")]
+    ops.reconcile(ledger, signals("healthy", NOW + 10) + rows[-1:], NOW + 11)
+    ops.remediate(ledger, NOW + 12)
+    assert calls[-1] == ("systemctl", "start", "--no-block", "katcha-restore-test.service")
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize("blocked", ["runtime", "storage", "authority"])
 def test_bot_defers_without_independent_safety_evidence(ledger, monkeypatch, tmp_path, blocked):
     calls = []
@@ -256,6 +270,38 @@ def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch
     assert rows[0].status == "warning"
     assert rows[1].status == "decision"
     assert "b" * 40 in rows[1].detail
+
+
+def test_completed_rollout_closes_release_review_incident(ledger, monkeypatch):
+    from katcha.ops import production_release_observer as observer
+
+    monkeypatch.setattr(observer, "read_pins", lambda path: {"KATCHA_RELEASE_SHA": "a" * 40})
+    monkeypatch.setattr(observer, "current_main", lambda fn: "a" * 40)
+    ops.reconcile(ledger, [ops.Signal("release", "Release review", "decision", "Candidate")], NOW)
+    ops.reconcile(ledger, ops.release_signals(), NOW + 1)
+    assert ledger.execute("SELECT resolved FROM incidents").fetchone()[0] == NOW + 1
+
+
+def test_finished_safety_retry_without_proof_escalates_promptly(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    ops.reconcile(ledger, signals(), NOW)
+    ops.remediate(ledger, NOW)
+    ops.remediate(ledger, NOW + 300)
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "operator_decision"
+    assert len(calls) == 1
+
+
+def test_command_errors_preserve_safe_codes_without_raw_output(monkeypatch):
+    monkeypatch.setattr(
+        ops.subprocess,
+        "run",
+        lambda *args, **kw: SimpleNamespace(returncode=7, stdout="SECRET", stderr="PRIVATE"),
+    )
+    with pytest.raises(ops.ProbeError, match="systemctl exited with status 7") as error:
+        ops.command("systemctl", "show", "katcha-backup.service")
+    assert "SECRET" not in str(error.value)
+    assert "PRIVATE" not in str(error.value)
 
 
 def test_release_bot_can_only_call_diagnostic_mode(ledger, monkeypatch):
