@@ -27,10 +27,10 @@ def test_supervisor_acquires_private_lease_before_any_compose_actions() -> None:
     )
     assert 'exec "${compose[@]}" up --remove-orphans' in source
 
-    # No unit lifecycle changes are needed to reject duplicate instances
-    # after supervised adoption of the new supervisor code on the host.
+    # The Bash entrypoint preserves the supervisor lease across exec, including
+    # checkouts that deliver the script without an executable bit.
     unit = (root / "deploy/systemd/katcha.service").read_text()
-    assert "ExecStart=/opt/katcha/deploy/scripts/production-supervisor.sh" in unit
+    assert "ExecStart=/bin/bash /opt/katcha/deploy/scripts/production-supervisor.sh" in unit
 
 
 @pytest.mark.skipif(shutil.which("flock") is None, reason="Linux flock unavailable")
