@@ -58,7 +58,9 @@ def configuration(path: Path = ENV) -> tuple[str, str, str] | None:
             continue
         key, sep, value = line.partition("=")
         if sep and key in {
+            "KATCHA_TELEGRAM_DIAGNOSTIC_BOT_TOKEN",
             "KATCHA_TELEGRAM_BOT_TOKEN",
+            "KATCHA_TELEGRAM_DIAGNOSTIC_CHAT_ID",
             "KATCHA_TELEGRAM_CHAT_ID",
             "KATCHA_TELEGRAM_THREAD_ID",
         }:
@@ -68,8 +70,8 @@ def configuration(path: Path = ENV) -> tuple[str, str, str] | None:
             if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
                 value = value[1:-1]
             values[key] = value
-    token = values.get("KATCHA_TELEGRAM_BOT_TOKEN", "")
-    chat = values.get("KATCHA_TELEGRAM_CHAT_ID", "")
+    token = values.get("KATCHA_TELEGRAM_DIAGNOSTIC_BOT_TOKEN") or values.get("KATCHA_TELEGRAM_BOT_TOKEN", "")
+    chat = values.get("KATCHA_TELEGRAM_DIAGNOSTIC_CHAT_ID") or values.get("KATCHA_TELEGRAM_CHAT_ID", "")
     thread = values.get("KATCHA_TELEGRAM_THREAD_ID", "")
     if not TOKEN.fullmatch(token) or not CHAT.fullmatch(chat):
         return None
