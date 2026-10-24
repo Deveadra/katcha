@@ -154,6 +154,9 @@ Do not resize production or provision a new route as part of installing software
 A separate VM behind the same NAT is still the same outward identity; admission
 requires a measured independent route and a released-worker storage/channel test.
 
+For a persistent workstation with direct Cloudflare Access authentication, see
+[Persistent workstation acquisition](ACQUISITION_WORKSTATION.md).
+
 ## Running acquisition on the core VM
 
 The existing worker can run on VM1 using the same scoped HTTPS API and durable

@@ -1,0 +1,27 @@
+[Unit]
+Description=Katcha workstation acquisition worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/katcha-acquisition
+EnvironmentFile=%h/.config/katcha-acquisition/worker.env
+LoadCredential=worker-token:%h/.config/katcha-acquisition/credentials/worker-token
+Environment=KATCHA_ACQUISITION_TOKEN_FILE=%d/worker-token
+Environment=KATCHA_ACQUISITION_STATE_DIR=%h/.local/state/katcha-acquisition
+ExecStart=%h/.local/share/katcha-acquisition/.venv/bin/python -m katcha.acquisition.worker
+Restart=always
+RestartSec=15
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=4G
+CPUQuota=200%
+TasksMax=256
+LimitNOFILE=4096
+
+[Install]
+WantedBy=default.target
