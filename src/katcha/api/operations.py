@@ -39,6 +39,15 @@ from katcha.trend_models import (
 router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
 
+@router.get("/health")
+def operations_health(request: Request) -> dict[str, object]:
+    from katcha.api.control_auth import require_global_control_operator
+    from katcha.services.operations_health import read_health
+
+    require_global_control_operator(request)
+    return read_health()
+
+
 @router.get("/system-check")
 async def check_systems(request: Request) -> dict[str, object]:
     from katcha.api.control_auth import require_control_scope

@@ -181,7 +181,25 @@ function payload(selected = "") {
     const requests = [];
     const errors = [];
     let failRefresh = false;
+    let healthMode = "attention";
     page.on("pageerror", (error) => errors.push(error.message));
+
+    await page.route("**/v1/operations/health", async (route) => {
+        if (route.request().headers().authorization !== "Bearer fixture-token") {
+            return route.fulfill({status: 401, json: {detail: "Token required"}});
+        }
+        if (healthMode === "forbidden") return route.fulfill({status: 403, json: {detail: "Global operator required"}});
+        if (healthMode === "failed") return route.fulfill({status: 503, json: {detail: "Fixture unavailable"}});
+        return route.fulfill({json: {
+            status: healthMode, checked_at: Date.now() / 1000,
+            message: healthMode === "stale" ? "Monitoring stopped reporting; last report is historical." : "Operations need attention.",
+            notifications: {status: "failed", pending: 2},
+            signals: [{key: "backup", label: "Protected backups", status: "critical",
+                detail: "Completion overdue <script>bad()</script>", action: "Retry safely"}],
+            incidents: [{label: "Protected backups", bot: "verifying", resolved: null, action: "Await fresh completion"}],
+            history: [{at: Date.now() / 1000, message: "Bot requested a safety job retry."}],
+        }});
+    });
 
     await page.route("**/v1/operations/work/**", async (route) => {
         const request = route.request();
@@ -286,6 +304,26 @@ function payload(selected = "") {
         assert.match(await page.locator("#briefing-list").innerText(), /measured revenue/);
         assert.equal(await page.locator("#briefing-list a").count(), 4);
         assert.equal(await page.locator("#connect-form").isVisible(), false);
+        await page.getByText("Bot retry awaiting verification", {exact: true}).waitFor();
+        assert.match(await page.locator("#health-status").innerText(), /Telegram delivery failed/);
+        assert.equal(await page.locator("#health-signals script").count(), 0);
+        assert.match(await page.locator("#health-signals").innerText(), /<script>bad/);
+        healthMode = "stale";
+        await page.locator("#health-refresh").click();
+        await page.getByText(/Monitoring stopped reporting/).waitFor();
+        healthMode = "failed";
+        await page.locator("#health-refresh").click();
+        await page.getByText(/Previously shown results may be outdated/).waitFor();
+        assert.match(await page.locator("#health-incidents").innerText(), /Await fresh completion/);
+        healthMode = "forbidden";
+        await page.locator("#health-refresh").click();
+        await page.getByText(/Host health is available to a global operator/).waitFor();
+        assert.equal(await page.locator("#health-signals").innerText(), "");
+        assert.equal(await page.locator("#health-incidents").innerText(), "");
+        healthMode = "attention";
+        await page.locator("#health-refresh").focus();
+        await page.keyboard.press("Enter");
+        await page.getByText("Bot retry awaiting verification", {exact: true}).waitFor();
         assert.equal(await page.locator("#pulse-active").innerText(), "2");
         assert.equal(await page.locator("#pulse-opportunities").innerText(), "1");
         assert.equal(await page.locator("#pulse-published").innerText(), "1");

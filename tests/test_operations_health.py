@@ -1,0 +1,466 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException, Response
+from starlette.requests import Request
+
+from katcha.api.operations import operations_health
+from katcha.ops import operations_health as ops
+from katcha.services import operations_health as view
+
+NOW = 1_792_800_000.0
+
+
+@pytest.fixture
+def ledger(tmp_path):
+    with ops.connect(tmp_path) as db:
+        yield db
+
+
+def signals(status="critical", completed_at=None):
+    return [
+        ops.Signal("backup", "Backups", status, "Completion overdue", "Retry safely", completed_at),
+        *[
+            ops.Signal(key, key, "healthy", "Verified")
+            for key in ("runtime", "storage", "authority")
+        ],
+    ]
+
+
+def ready(monkeypatch, tmp_path, calls):
+    monkeypatch.setattr(ops, "DEPLOY_LOCK", tmp_path / "deployment.lock")
+    monkeypatch.setattr(
+        ops,
+        "properties",
+        lambda unit: {
+            "LoadState": "loaded",
+            "ActiveState": "active" if unit.endswith("timer") else "inactive",
+            "UnitFileState": "enabled",
+            "Result": "success",
+            "ExecMainStatus": "0",
+        },
+    )
+    monkeypatch.setattr(ops, "command", lambda *args, **kw: calls.append(args) or "")
+
+
+def test_incident_deduplicates_survives_reopen_and_records_recovery(tmp_path):
+    with ops.connect(tmp_path) as db:
+        ops.reconcile(db, signals(), NOW)
+        ops.reconcile(db, signals(), NOW + 5)
+    with ops.connect(tmp_path) as db:
+        assert db.execute("SELECT count(*) FROM incidents").fetchone()[0] == 1
+        assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+        ops.reconcile(db, signals("healthy"), NOW + 10)
+        assert db.execute("SELECT bot FROM incidents").fetchone()[0] == "verified"
+        ops.reconcile(db, signals(), NOW + 20)
+        assert db.execute("SELECT count(*) FROM incidents").fetchone()[0] == 2
+        assert db.execute("SELECT count(*) FROM events").fetchone()[0] == 3
+
+
+def test_bot_claims_before_side_effect_and_requires_new_completion(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    ops.reconcile(ledger, signals(), NOW)
+    ops.remediate(ledger, NOW + 1)
+    ops.remediate(ledger, NOW + 2)
+    assert calls == [("systemctl", "start", "--no-block", "katcha-backup.service")]
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "verifying"
+    # A skipped unit returning success plus an old receipt must not verify remediation.
+    ops.reconcile(ledger, signals("healthy", NOW - 10), NOW + 3)
+    assert ledger.execute("SELECT resolved FROM incidents").fetchone()[0] is None
+    ops.reconcile(ledger, signals("healthy", NOW + 4), NOW + 5)
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "verified"
+
+
+def test_unknown_start_outcome_is_never_retried(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+
+    def uncertain(*args, **kwargs):
+        calls.append(args)
+        assert ledger.execute("SELECT attempts FROM incidents").fetchone()[0] == 1
+        raise TimeoutError("SECRET provider output")
+
+    monkeypatch.setattr(ops, "command", uncertain)
+    ops.reconcile(ledger, signals(), NOW)
+    ops.remediate(ledger, NOW + 1)
+    ops.remediate(ledger, NOW + 5000)
+    assert len(calls) == 1
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "operator_decision"
+    assert "SECRET" not in str([tuple(row) for row in ledger.execute("SELECT * FROM events")])
+
+
+def test_bot_serializes_backup_and_restore_until_positive_completion(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    rows = signals() + [ops.Signal("restore", "Restores", "critical", "Overdue")]
+    ops.reconcile(ledger, rows, NOW)
+    ops.remediate(ledger, NOW)
+    ops.remediate(ledger, NOW + 5)
+    assert calls == [("systemctl", "start", "--no-block", "katcha-backup.service")]
+    ops.reconcile(ledger, signals("healthy", NOW + 10) + rows[-1:], NOW + 11)
+    ops.remediate(ledger, NOW + 12)
+    assert calls[-1] == ("systemctl", "start", "--no-block", "katcha-restore-test.service")
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("blocked", ["runtime", "storage", "authority"])
+def test_bot_defers_without_independent_safety_evidence(ledger, monkeypatch, tmp_path, blocked):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    ops.reconcile(ledger, [s for s in signals() if s.key != blocked], NOW)
+    ops.remediate(ledger, NOW)
+    assert not calls
+
+
+def test_bot_does_not_race_deployment_or_an_active_safety_job(ledger, monkeypatch, tmp_path):
+    import fcntl
+
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    ops.reconcile(ledger, signals(), NOW)
+    with (tmp_path / "deployment.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        ops.remediate(ledger, NOW)
+    assert not calls
+    monkeypatch.setattr(ops, "properties", lambda unit: {"ActiveState": "activating"})
+    ops.remediate(ledger, NOW)
+    assert not calls
+
+
+def test_bot_requires_enabled_timer_and_escalates_unverified_retry(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    original = ops.properties
+    monkeypatch.setattr(
+        ops,
+        "properties",
+        lambda unit: {
+            **original(unit),
+            **({"UnitFileState": "disabled"} if unit.endswith("timer") else {}),
+        },
+    )
+    ops.reconcile(ledger, signals(), NOW)
+    ops.remediate(ledger, NOW)
+    assert not calls
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "operator_decision"
+    ledger.execute("UPDATE incidents SET bot='verifying',attempted=?,attempts=1", (NOW,))
+    ops.remediate(ledger, NOW + 3001)
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "operator_decision"
+
+
+def test_notification_outbox_retries_and_only_marks_confirmed_delivery(ledger, monkeypatch):
+    calls = []
+    failing = True
+
+    def send(credentials, message):
+        calls.append(message)
+        if failing:
+            raise RuntimeError("SECRET")
+
+    monkeypatch.setattr(
+        ops,
+        "installed_notifier",
+        lambda: SimpleNamespace(
+            configuration=lambda: ("private-token", "operator", ""), telegram_send=send
+        ),
+    )
+    ops.reconcile(ledger, signals(), NOW)
+    ops.notify(ledger, NOW)
+    assert ledger.execute("SELECT delivered FROM events").fetchone()[0] == 0
+    failing = False
+    ops.notify(ledger, NOW + 1)
+    ops.notify(ledger, NOW + 2)
+    assert len(calls) == 2
+    assert ops.HEALTH_URL in calls[-1]
+    assert "private-token" not in calls[-1]
+    assert ledger.execute("SELECT delivered FROM events").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("age,status", [(3600, "healthy"), (7201, "critical"), (-301, "unknown")])
+def test_backup_positive_completion_age(monkeypatch, tmp_path, age, status):
+    ready(monkeypatch, tmp_path, [])
+    receipt = {
+        "__REALTIME_TIMESTAMP": str(int((NOW - age) * 1_000_000)),
+        "_SYSTEMD_UNIT": "katcha-backup.service",
+        "MESSAGE": "Katcha PostgreSQL backup completed: 20261024T000000Z-abc",
+    }
+    monkeypatch.setattr(ops, "command", lambda *args, **kw: json.dumps(receipt))
+    result = ops.safety_signal("backup", NOW)
+    assert result.status == status
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Katcha restore test already running; exiting.",
+        "Katcha disaster restore test passed for 1 databases.",
+    ],
+)
+def test_skipped_or_partial_restore_is_not_health_evidence(monkeypatch, tmp_path, message):
+    ready(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(
+        ops,
+        "command",
+        lambda *args, **kw: json.dumps(
+            {
+                "__REALTIME_TIMESTAMP": str(int(NOW * 1_000_000)),
+                "_SYSTEMD_UNIT": "katcha-restore-test.service",
+                "MESSAGE": message,
+            }
+        ),
+    )
+    assert ops.safety_signal("restore", NOW).status == "unknown"
+
+
+def test_active_jobs_do_not_substitute_for_evidence(monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path, [])
+    original = ops.properties
+    monkeypatch.setattr(
+        ops,
+        "properties",
+        lambda unit: {
+            **original(unit),
+            **({"ActiveState": "activating"} if unit.endswith("service") else {}),
+        },
+    )
+    monkeypatch.setattr(ops, "command", lambda *args, **kw: "")
+    assert ops.safety_signal("backup", NOW).status == "unknown"
+
+
+def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monkeypatch):
+    execution = {"workflowId": "scheduler", "runId": "run-1"}
+    activities = []
+
+    def command(*args, **kwargs):
+        if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+            return "[]"
+        if "list" in args:
+            return json.dumps([{"execution": execution}])
+        return json.dumps(
+            {"workflowExecutionInfo": {"execution": execution}, "pendingActivities": activities}
+        )
+
+    monkeypatch.setattr(ops, "command", command)
+    assert ops.temporal_signal().status == "healthy"
+    activities.append({"lastFailure": {"message": "SECRET"}, "attempt": 3})
+    warning = ops.temporal_signal()
+    assert warning.status == "warning"
+    assert "SECRET" not in warning.detail
+
+
+def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
+    from katcha.ops import production_release_observer as observer
+    from katcha.ops import release_eligibility
+
+    monkeypatch.setattr(observer, "read_pins", lambda path: {"KATCHA_RELEASE_SHA": "a" * 40})
+    monkeypatch.setattr(observer, "current_main", lambda fn: "b" * 40)
+    monkeypatch.setattr(
+        observer,
+        "compare_releases",
+        lambda *args: {"commits": 60, "changed_files": 10, "migration_changes": True},
+    )
+    monkeypatch.setattr(
+        release_eligibility, "check_release", lambda *args: pytest.fail("CI gates drift")
+    )
+    rows = ops.release_signals()
+    assert rows[0].status == "warning"
+    assert rows[1].status == "decision"
+    assert "b" * 40 in rows[1].detail
+
+
+def test_release_cache_limits_remote_checks(ledger, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ops,
+        "release_signals",
+        lambda: calls.append(1) or [ops.Signal("drift", "Cadence", "healthy", "Current")],
+    )
+    ops.cached_release_signals(ledger, NOW)
+    ops.cached_release_signals(ledger, NOW + 300)
+    ops.cached_release_signals(ledger, NOW + 900)
+    assert len(calls) == 2
+
+
+def test_completed_rollout_closes_release_review_incident(ledger, monkeypatch):
+    from katcha.ops import production_release_observer as observer
+
+    monkeypatch.setattr(observer, "read_pins", lambda path: {"KATCHA_RELEASE_SHA": "a" * 40})
+    monkeypatch.setattr(observer, "current_main", lambda fn: "a" * 40)
+    ops.reconcile(ledger, [ops.Signal("release", "Release review", "decision", "Candidate")], NOW)
+    ops.reconcile(ledger, ops.release_signals(), NOW + 1)
+    assert ledger.execute("SELECT resolved FROM incidents").fetchone()[0] == NOW + 1
+
+
+def test_finished_safety_retry_without_proof_escalates_promptly(ledger, monkeypatch, tmp_path):
+    calls = []
+    ready(monkeypatch, tmp_path, calls)
+    ops.reconcile(ledger, signals(), NOW)
+    ops.remediate(ledger, NOW)
+    ops.remediate(ledger, NOW + 300)
+    assert ledger.execute("SELECT bot FROM incidents").fetchone()[0] == "operator_decision"
+    assert len(calls) == 1
+
+
+def test_command_errors_preserve_safe_codes_without_raw_output(monkeypatch):
+    monkeypatch.setattr(
+        ops.subprocess,
+        "run",
+        lambda *args, **kw: SimpleNamespace(returncode=7, stdout="SECRET", stderr="PRIVATE"),
+    )
+    with pytest.raises(ops.ProbeError, match="systemctl exited with status 7") as error:
+        ops.command("systemctl", "show", "katcha-backup.service")
+    assert "SECRET" not in str(error.value)
+    assert "PRIVATE" not in str(error.value)
+
+
+def test_release_bot_can_only_call_diagnostic_mode(ledger, monkeypatch):
+    calls = []
+    sha = "a" * 40
+    monkeypatch.setattr(ops, "trusted_file", lambda path: True)
+
+    def command(*args, **kwargs):
+        calls.append(args)
+        return json.dumps(
+            {
+                "target_sha": sha,
+                "checks": [
+                    {"name": "migration_review", "status": "REVIEW_REQUIRED", "detail": "SECRET"}
+                ],
+            }
+        )
+
+    monkeypatch.setattr(ops, "command", command)
+    ops.reconcile(ledger, [ops.Signal("release", "Release", "decision", "Candidate " + sha)], NOW)
+    ops.remediate(ledger, NOW)
+    ops.remediate(ledger, NOW + 5)
+    assert calls == [(str(ops.DEPLOYER), "--diagnose-release", sha)]
+    assert "SECRET" not in str([tuple(row) for row in ledger.execute("SELECT * FROM events")])
+
+    review = json.loads(ledger.execute("SELECT data FROM release_reviews").fetchone()[0])
+    assert review["checks"] == [{"name": "migration_review", "status": "REVIEW_REQUIRED"}]
+    assert "SECRET" not in json.dumps(review)
+    events = ledger.execute("SELECT count(*) FROM events").fetchone()[0]
+    ops.reconcile(
+        ledger, [ops.Signal("release", "Release", "decision", "Candidate " + sha)], NOW + 3601
+    )
+    ops.remediate(ledger, NOW + 3601)
+    assert len(calls) == 2
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == events
+
+
+def test_snapshot_unavailable_stale_and_delivery_failure(ledger, monkeypatch, tmp_path):
+    monkeypatch.setattr(view, "SNAPSHOT", tmp_path / "public/health.json")
+    assert view.read_health(now=NOW)["status"] == "unavailable"
+    ops.reconcile(ledger, signals("healthy"), NOW)
+    ops.snapshot(ledger, tmp_path)
+    assert view.read_health(now=NOW)["status"] == "healthy"
+    assert view.read_health(now=NOW + 901)["status"] == "stale"
+    ledger.execute("INSERT OR REPLACE INTO state VALUES ('delivery', 'failed')")
+    ops.snapshot(ledger, tmp_path)
+    assert view.read_health(now=NOW)["status"] == "attention"
+    assert (tmp_path / "ledger.sqlite3").stat().st_mode & 0o077 == 0
+    assert (tmp_path / "public").stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize(
+    "scopes,channels,allowed",
+    [({"*"}, None, True), ({"*"}, ["channel"], False), ({"ai:read", "channels:read"}, None, False)],
+)
+def test_global_operations_do_not_leak_across_channel_principals(
+    monkeypatch, scopes, channels, allowed
+):
+    request = Request({"type": "http"})
+    request.state.control_scopes = scopes
+    request.state.control_channel_ids = channels
+    monkeypatch.setattr("katcha.api.control_auth.control_allowed_channel_ids", lambda req: channels)
+    monkeypatch.setattr(view, "read_health", lambda: {"status": "healthy"})
+    if allowed:
+        assert operations_health(request)["status"] == "healthy"
+    else:
+        with pytest.raises(HTTPException) as denied:
+            operations_health(request)
+        assert denied.value.status_code == 403
+
+
+def test_public_heartbeat_contains_only_freshness(monkeypatch):
+    from katcha.api.main import operations_heartbeat
+
+    monkeypatch.setattr(
+        view,
+        "read_health",
+        lambda: {"status": "attention", "checked_at": NOW, "incidents": ["PRIVATE"]},
+    )
+    response = Response()
+    assert operations_heartbeat(response) == {"status": "reporting", "checked_at": NOW}
+    assert response.status_code == 200
+    monkeypatch.setattr(view, "read_health", lambda: {"status": "stale", "checked_at": NOW})
+    assert operations_heartbeat(response)["status"] == "unavailable"
+    assert response.status_code == 503
+
+
+def test_alert_delivery_failure_reaches_external_watchdog(monkeypatch):
+    from katcha.api.main import operations_heartbeat
+
+    monkeypatch.setattr(
+        view,
+        "read_health",
+        lambda: {
+            "status": "attention",
+            "checked_at": NOW,
+            "notifications": {"status": "failed", "pending": 1},
+        },
+    )
+    response = Response()
+    assert operations_heartbeat(response)["status"] == "unavailable"
+    assert response.status_code == 503
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        {"notifications": None},
+        {"signals": [None]},
+        {"checked_at": float("nan")},
+        {"history": "bad"},
+    ],
+)
+def test_invalid_snapshots_are_unavailable(ledger, monkeypatch, tmp_path, corruption):
+    ops.reconcile(ledger, signals("healthy"), NOW)
+    data = ops.snapshot(ledger, tmp_path)
+    data.update(corruption)
+    target = tmp_path / "public/health.json"
+    target.write_text(json.dumps(data))
+    monkeypatch.setattr(view, "SNAPSHOT", target)
+    assert view.read_health(now=NOW)["status"] == "unavailable"
+
+
+def test_health_api_authentication_and_public_heartbeat(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import katcha.api.control_auth as auth
+    from katcha.api.main import app
+    from katcha.config import Settings
+
+    token = "operator-fixture-token-0000001"
+    monkeypatch.setattr(
+        auth,
+        "get_settings",
+        lambda: Settings(_env_file=None, control_api_token=token, control_api_scopes="*"),
+    )
+    monkeypatch.setattr(
+        view,
+        "read_health",
+        lambda: {"status": "healthy", "checked_at": NOW, "incidents": ["PRIVATE"]},
+    )
+    client = TestClient(app)
+    assert client.get("/v1/operations/health").status_code == 401
+    result = client.get("/v1/operations/health", headers={"Authorization": "Bearer " + token})
+    assert result.status_code == 200
+    assert result.json()["incidents"] == ["PRIVATE"]
+    public = client.get("/v1/health/operations")
+    assert public.status_code == 200
+    assert "PRIVATE" not in public.text

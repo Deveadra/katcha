@@ -26,6 +26,7 @@ _PUBLIC_PATHS = {
     "/v1/health/live",
     "/v1/health/ready",
     "/v1/health/release",
+    "/v1/health/operations",
     "/v1/control/access-login",
     "/v1/integrations/youtube/oauth/callback",
     "/auth/callback",

@@ -357,6 +357,61 @@ function syncChannelFilter(channels, selected = "") {
     $("channel-filter").disabled = false;
 }
 
+async function loadOperationsHealth() {
+    const button = $("health-refresh");
+    button.disabled = true;
+    try {
+        const health = await api("/v1/operations/health");
+        const notifications = health.notifications;
+        $("health-status").textContent = health.message
+            + (health.checked_at ? " Last checked " + when(health.checked_at * 1000) + "." : "")
+            + (notifications.status === "failed" ? " Telegram delivery failed; alerts remain queued." : "")
+            + (notifications.pending ? " " + notifications.pending + " alerts await delivery." : "");
+        $("health-signals").innerHTML = health.signals.map((row) => {
+            const sha = row.key === "release" && row.detail.match(/\b[0-9a-f]{40}\b/);
+            const detail = sha ? row.detail.replace(sha[0], "ahead of production") : row.detail;
+            return (
+            '<article class="ops-item"><strong>' + escapeHTML(row.label) + " · "
+            + escapeHTML(friendly(row.status)) + '</strong><p>' + escapeHTML(detail)
+            + '</p>' + (row.action ? '<p>' + escapeHTML(row.action) + '</p>' : '')
+            + (sha ? '<details class="ae-help"><summary>Release details</summary><p>'
+                + escapeHTML(row.detail) + '</p><a href="https://github.com/Deveadra/katcha/commit/'
+                + sha[0] + '">Review this release on GitHub</a></details>' : '') + '</article>'
+            );
+        }).join("");
+        const active = health.incidents.filter((row) => row.resolved === null);
+        const botLabels = { queued: "Bot investigation queued", verifying: "Bot retry awaiting verification",
+            operator_decision: "Operator review needed", verified: "Recovery verified" };
+        $("health-incidents").innerHTML = active.length ? active.map((row) =>
+            '<article class="ops-item"><strong>' + escapeHTML(row.label) + '</strong><p>'
+            + escapeHTML(botLabels[row.bot] || friendly(row.bot)) + '</p><p>'
+            + escapeHTML(row.action) + '</p></article>'
+        ).join("") : '<p>' + (health.status === "healthy" ? 'No outstanding operational decisions.'
+            : 'No current incident list is available. Check monitoring before relying on this view.') + '</p>';
+        $("health-history").innerHTML = health.history.map((row) =>
+            '<p><time>' + escapeHTML(when(row.at * 1000)) + '</time> · ' + escapeHTML(row.message) + '</p>'
+        ).join("") || '<p>No health history has been recorded yet.</p>';
+        const review = health.release_review;
+        $("health-release-review").textContent = review
+            ? "Candidate " + review.target_sha + ". Checked " + when(review.checked_at * 1000) + ". "
+                + review.checks.map((row) => friendly(row.name) + ": " + friendly(row.status)).join("; ")
+                + ". Deployment approval still required. This review belongs only to the candidate shown."
+            : "The bot has not prepared a release review yet. Review the selected release through the existing deployment runbook.";
+    } catch (error) {
+        if (error.status === 401 || error.status === 403) {
+            for (const id of ["health-signals", "health-incidents", "health-history", "health-release-review"]) $(id).replaceChildren();
+        }
+        $("health-status").textContent = error.status === 403
+            ? "Host health is available to a global operator. Your channel briefing remains available."
+            : "Health could not be refreshed. Previously shown results may be outdated. Retry or inspect host monitoring.";
+    } finally {
+        button.disabled = false;
+    }
+}
+
+$('health-refresh').addEventListener('click', loadOperationsHealth);
+setInterval(() => { if (!document.hidden) void loadOperationsHealth(); }, 60000);
+
 async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
     if (state.loading) return;
     state.loading = true;
@@ -372,10 +427,11 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
         else syncChannelFilter([], channelId);
         renderOverview(payload);
         void loadAiReadiness();
+        void loadOperationsHealth();
         setStatus(
             payload.summary.needs_attention
                 ? payload.summary.needs_attention + " item(s) need operator attention."
-                : "Operations are clear. No intervention is required.",
+                : "Your channel queue is clear. Check Operations Health for service readiness.",
             payload.summary.needs_attention ? "" : "success",
         );
         $("refresh").disabled = false;

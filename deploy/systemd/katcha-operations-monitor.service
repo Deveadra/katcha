@@ -1,0 +1,25 @@
+[Unit]
+Description=Katcha operations monitor and bounded remediation bot
+Wants=network-online.target
+After=network-online.target docker.service
+RequiresMountsFor=/srv/katcha
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/katcha
+Environment=PYTHONPATH=/usr/local/lib/katcha-operations
+ExecStart=/usr/bin/python3 -m katcha.ops.operations_health
+TimeoutStartSec=240s
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/katcha/operations /run/lock
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal

@@ -1,5 +1,9 @@
 # Katcha production deployment pipeline
 
+Production setup includes the separate [Operations Health](OPERATIONS_HEALTH.md)
+monitor, incident ledger, bounded remediation bot and external heartbeat watchdog.
+Its timer is independent of deployment authorization and polling.
+
 For a supervised one-off production release without enabling the deployment timer, follow the [manual deployment checklist](PRODUCTION_MANUAL_DEPLOYMENT_RUNBOOK.md).
 
 Status: **CI-gated image publication, read-only release observation, runtime attestation and protected host-pull production promotion implemented; production promotion remains disabled by default**. Fully unattended/continuous production promotion is not enabled.
