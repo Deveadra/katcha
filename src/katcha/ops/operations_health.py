@@ -266,6 +266,14 @@ def release_signals() -> list[Signal]:
 
     pins = observer.read_pins(ENV)
     old = pins["KATCHA_RELEASE_SHA"]
+    split = (pins.get("KATCHA_API_RELEASE_SHA") or old) != old
+    pin_signal = Signal(
+        "release_pins",
+        "Application release alignment",
+        "decision" if split else "healthy",
+        "API and worker release pins differ." if split else "Release pins agree.",
+        "Review the separately promoted API before the next full rollout." if split else "",
+    )
     new = observer.current_main(release_eligibility.api_get)
     if old == new:
         return [
@@ -273,6 +281,7 @@ def release_signals() -> list[Signal]:
             Signal(
                 "release", "Next release review", "healthy", "No newer main release needs review."
             ),
+            pin_signal,
         ]
     diff = observer.compare_releases(release_eligibility.api_get, old, new)
     warning = diff["commits"] >= 60 or diff["changed_files"] >= 80
@@ -298,7 +307,24 @@ def release_signals() -> list[Signal]:
             ),
             "Review exact-SHA evidence, migrations and workflow restart compatibility.",
         ),
+        pin_signal,
     ]
+
+
+def cached_release_signals(db: sqlite3.Connection, now: float) -> list[Signal]:
+    row = db.execute("SELECT value FROM state WHERE key='release_cache'").fetchone()
+    if row:
+        with suppress(ValueError, TypeError, KeyError):
+            cached = json.loads(row[0])
+            if 0 <= now - cached["at"] < 900:
+                return [Signal(**value) for value in cached["signals"]]
+    result = release_signals()
+    db.execute(
+        "INSERT OR REPLACE INTO state VALUES ('release_cache', ?)",
+        (json.dumps({"at": now, "signals": [asdict(s) for s in result]}),),
+    )
+    db.commit()
+    return result
 
 
 def deployment_signals() -> list[Signal]:
@@ -360,7 +386,7 @@ def deployment_signals() -> list[Signal]:
     return result
 
 
-def collect(now: float) -> list[Signal]:
+def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
     signals: list[Signal] = []
 
     def probe(key: str, label: str, fn: Any) -> None:
@@ -386,7 +412,7 @@ def collect(now: float) -> list[Signal]:
             lambda kind=kind: safety_signal(kind, now),
         )
     probe("temporal", "Background workflows", temporal_signal)
-    probe("drift", "Release cadence", release_signals)
+    probe("drift", "Release cadence", release_probe or release_signals)
     probe("deployment", "Deployment and recovery controls", deployment_signals)
 
     def runtime() -> Signal:
@@ -567,7 +593,12 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                     db, row["id"], now, signal.label + ": " + signal.status + ". " + signal.detail
                 )
             if signal.key == "release" and row["detail"] != signal.detail:
-                db.execute("UPDATE incidents SET bot='queued',attempts=0 WHERE id=?", (row["id"],))
+                db.execute(
+                    "UPDATE incidents SET bot='queued',attempts=0,attempted=NULL WHERE id=?",
+                    (row["id"],),
+                )
+            elif signal.key == "release" and row["attempted"] and now - row["attempted"] >= 3600:
+                db.execute("UPDATE incidents SET bot='queued' WHERE id=?", (row["id"],))
     db.execute(
         "INSERT OR REPLACE INTO state VALUES ('signals', ?)",
         (json.dumps([asdict(s) for s in signals]),),
@@ -594,6 +625,11 @@ def remediate(db: sqlite3.Connection, now: float) -> None:
                 if match and trusted_file(DEPLOYER):
                     # Only the read-only diagnostic mode is callable by this bot.
                     try:
+                        db.execute(
+                            "UPDATE incidents SET attempted=?,attempts=attempts+1 WHERE id=?",
+                            (now, row["id"]),
+                        )
+                        db.commit()
                         raw = command(
                             str(DEPLOYER),
                             "--diagnose-release",
@@ -646,30 +682,42 @@ def remediate(db: sqlite3.Connection, now: float) -> None:
                                 if isinstance(p, str)
                                 and re.fullmatch(r"migrations/versions/[0-9]{4}_[a-z0-9_]+\.py", p)
                             ]
+                        previous = db.execute(
+                            "SELECT data FROM release_reviews WHERE sha=?", (match[0],)
+                        ).fetchone()
+                        old_review = json.loads(previous[0]) if previous else {}
+                        unchanged = {k: v for k, v in old_review.items() if k != "checked_at"} == {
+                            k: v for k, v in review.items() if k != "checked_at"
+                        }
                         db.execute(
                             "INSERT OR REPLACE INTO release_reviews VALUES (?,?,?)",
                             (match[0], now, json.dumps(review)),
                         )
-                        event(
-                            db,
-                            row["id"],
-                            now,
-                            "Exact release "
-                            + match[0]
-                            + ": diagnostic review prepared "
-                            + json.dumps(counts, sort_keys=True)
-                            + ". Approval remains required in the manual deployment runbook.",
-                        )
+                        if not unchanged:
+                            event(
+                                db,
+                                row["id"],
+                                now,
+                                "Exact release "
+                                + match[0]
+                                + ": diagnostic review prepared "
+                                + json.dumps(counts, sort_keys=True)
+                                + ". Approval remains required in the manual deployment runbook.",
+                            )
                     except Exception:
-                        event(
-                            db,
-                            row["id"],
-                            now,
-                            "Exact release diagnostic unavailable; "
-                            "review installed tooling and GitHub connectivity.",
-                        )
+                        if not row["attempts"]:
+                            event(
+                                db,
+                                row["id"],
+                                now,
+                                "Exact release diagnostic unavailable; "
+                                "review installed tooling and GitHub connectivity.",
+                            )
             db.execute("UPDATE incidents SET bot='operator_decision' WHERE id=?", (row["id"],))
-            event(db, row["id"], now, row["label"] + ": diagnostics collected; " + row["action"])
+            if not row["attempts"]:
+                event(
+                    db, row["id"], now, row["label"] + ": diagnostics collected; " + row["action"]
+                )
             continue
         if row["attempts"]:
             continue
@@ -834,7 +882,9 @@ def main() -> int:
                         "outstanding decisions in the Operations workspace.",
                     )
                 DEADLINE = time.monotonic() + 120
-                reconcile(db, collect(now), now)
+                reconcile(
+                    db, collect(now, release_probe=lambda: cached_release_signals(db, now)), now
+                )
                 snapshot(db, ROOT)
                 DEADLINE = time.monotonic() + 45
                 if not args.observe_only:

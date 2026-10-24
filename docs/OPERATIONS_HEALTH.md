@@ -10,6 +10,8 @@ and recent history. Channel-scoped principals cannot read host incidents.
 The separate root-owned `katcha-operations-monitor.timer` runs every five minutes,
 starting 90 seconds after boot. Normal production-unit setup includes the timer.
 Its frozen installation can begin reporting without restarting the application.
+Release comparisons are cached for 15 minutes to limit remote API traffic. Exact
+release diagnostics refresh hourly; unchanged reviews do not repeat alerts.
 
 | Signal | Evidence and attention policy |
 | --- | --- |

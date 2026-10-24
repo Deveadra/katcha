@@ -272,6 +272,19 @@ def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch
     assert "b" * 40 in rows[1].detail
 
 
+def test_release_cache_limits_remote_checks(ledger, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ops,
+        "release_signals",
+        lambda: calls.append(1) or [ops.Signal("drift", "Cadence", "healthy", "Current")],
+    )
+    ops.cached_release_signals(ledger, NOW)
+    ops.cached_release_signals(ledger, NOW + 300)
+    ops.cached_release_signals(ledger, NOW + 900)
+    assert len(calls) == 2
+
+
 def test_completed_rollout_closes_release_review_incident(ledger, monkeypatch):
     from katcha.ops import production_release_observer as observer
 
@@ -330,6 +343,13 @@ def test_release_bot_can_only_call_diagnostic_mode(ledger, monkeypatch):
     review = json.loads(ledger.execute("SELECT data FROM release_reviews").fetchone()[0])
     assert review["checks"] == [{"name": "migration_review", "status": "REVIEW_REQUIRED"}]
     assert "SECRET" not in json.dumps(review)
+    events = ledger.execute("SELECT count(*) FROM events").fetchone()[0]
+    ops.reconcile(
+        ledger, [ops.Signal("release", "Release", "decision", "Candidate " + sha)], NOW + 3601
+    )
+    ops.remediate(ledger, NOW + 3601)
+    assert len(calls) == 2
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == events
 
 
 def test_snapshot_unavailable_stale_and_delivery_failure(ledger, monkeypatch, tmp_path):
