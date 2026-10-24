@@ -121,6 +121,7 @@ services:
       KATCHA_BROWSER_SERVICE_TOKEN: ${KATCHA_BROWSER_SERVICE_TOKEN:?Set a unique KATCHA_BROWSER_SERVICE_TOKEN}
     volumes:
       - /srv/katcha/handoff:/handoff
+      - /srv/katcha/operations/public:/operations-health:ro
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:

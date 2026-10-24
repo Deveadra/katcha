@@ -1,5 +1,9 @@
 # Katcha: manual production deployment (repeatable operator checklist)
 
+[Operations Health](OPERATIONS_HEALTH.md) continuously checks safety jobs,
+release drift and authorization controls, sends alerts, and prepares bounded
+remediation before this checklist. The final checks below remain authoritative.
+
 **Scope:** reviewed, CI-published release to the *existing* OCI A1 primary
 (`katcha-prod-primary-001`). This is a **manual, one-request deployment**, not
 continuous deployment. Do not enable the deployment timer. The only application

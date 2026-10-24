@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Katcha operations and advance remediation every five minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5min
+Persistent=true
+Unit=katcha-operations-monitor.service
+
+[Install]
+WantedBy=timers.target

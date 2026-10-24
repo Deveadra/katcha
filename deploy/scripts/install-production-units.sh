@@ -31,3 +31,11 @@ if [[ "$start" == true ]]; then
 fi
 
 systemctl is-enabled katcha.service katcha-backup.timer katcha-restore-test.timer
+
+# Operations monitoring is part of normal production setup, independent of cutover.
+if [[ "$start" == true ]]; then
+  bash "$ROOT/deploy/scripts/install-operations-monitor.sh" --enable
+else
+  bash "$ROOT/deploy/scripts/install-operations-monitor.sh" --install
+  systemctl enable katcha-operations-monitor.timer
+fi

@@ -360,6 +360,22 @@ def release_identity(response: Response) -> dict[str, str]:
     return {"release_sha": sha}
 
 
+@app.get("/v1/health/operations", include_in_schema=False)
+def operations_heartbeat(response: Response) -> dict[str, object]:
+    from katcha.services.operations_health import read_health
+
+    response.headers["Cache-Control"] = "no-store"
+    health = read_health()
+    # Public dead-man signal contains no incidents, workflow data or operator details.
+    fresh = (health["status"] not in {"unavailable", "stale"}
+             and health.get("notifications", {}).get("status") != "failed"
+             and not any(row.get("key") == "telegram" and row.get("status") != "healthy"
+                         for row in health.get("signals", [])))
+    if not fresh:
+        response.status_code = 503
+    return {"status": "reporting" if fresh else "unavailable", "checked_at": health["checked_at"]}
+
+
 @app.get("/v1/runtime/ai")
 def ai_runtime() -> dict[str, object]:
     settings = get_settings()
