@@ -55,8 +55,8 @@ jobs:
       - name: Deliver outage or recovery notification
         if: steps.probe.outputs.action != 'none'
         env:
-          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
-          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_OCI_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_OCI_CHAT_ID }}
           KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
           KATCHA_TELEGRAM_REQUIRED: 'true'
           WATCHDOG_ACTION: ${{ steps.probe.outputs.action }}

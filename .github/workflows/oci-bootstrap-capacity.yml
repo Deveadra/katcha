@@ -120,8 +120,8 @@ jobs:
         if: github.event_name == 'repository_dispatch'
         shell: bash
         env:
-          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
-          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_OCI_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_OCI_CHAT_ID }}
           KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
           KATCHA_TELEGRAM_REQUIRED: "false"
         run: |
@@ -232,8 +232,8 @@ jobs:
           KATCHA_BOOTSTRAP_SUBNET_ID: ${{ steps.bootstrap.outputs.subnet_id }}
           KATCHA_BOOTSTRAP_VOLUME_ID: ${{ steps.bootstrap.outputs.volume_id }}
           KATCHA_BOOTSTRAP_ATTACHMENT_ID: ${{ steps.bootstrap.outputs.attachment_id }}
-          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
-          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_OCI_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_OCI_CHAT_ID }}
           KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
           KATCHA_TELEGRAM_REQUIRED: "true"
         run: |
