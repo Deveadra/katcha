@@ -1,5 +1,10 @@
 # Host-initiated Katcha release observation
 
+For continuous alerts, incident history and bounded remediation, use
+[Operations Health](OPERATIONS_HEALTH.md). It reuses this observer's comparison
+logic and is included in production-unit setup. The standalone observer below
+remains a read-only diagnostic option.
+
 **Status: read-only candidate detection implemented; production promotion not enabled.**
 This is a separate stage toward automatic cloud deployment, not a deployer.
 

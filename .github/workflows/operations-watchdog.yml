@@ -1,0 +1,82 @@
+name: Operations heartbeat watchdog
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: operations-heartbeat-watchdog
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check outside the production host
+        id: probe
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let healthy = false;
+            try {
+              const response = await fetch('https://app.katcha.stream/v1/health/operations', {
+                signal: AbortSignal.timeout(15000), redirect: 'error', cache: 'no-store',
+              });
+              const data = await response.json();
+              const age = Date.now() / 1000 - data.checked_at;
+              healthy = response.ok && data.status === 'reporting'
+                && typeof data.checked_at === 'number' && age >= -60 && age <= 900;
+            } catch { /* No provider payloads, URLs with credentials or exceptions in logs. */ }
+            const title = '[Operations] Production monitor stopped reporting';
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: 'open', creator: 'github-actions[bot]', per_page: 100,
+            });
+            let issue = issues.find(row => row.title === title && !row.pull_request);
+            const url = 'https://app.katcha.stream/operations#operations-health';
+            const pending = 'Production or its operations monitor is unreachable or stale. '
+              + 'Inspect host connectivity, the monitor timer and Telegram delivery. '
+              + 'No automatic production restart or authority change is authorized by this incident.\n\n'
+              + '[Operations Health](' + url + ')';
+            if (!healthy && !issue) {
+              issue = (await github.rest.issues.create({...context.repo, title, body: pending})).data;
+            }
+            const delivered = '<!-- operations-alert-delivered -->';
+            core.setOutput('action', healthy && issue ? 'recovered'
+              : issue && !(issue.body || '').includes(delivered) ? 'outage' : 'none');
+            core.setOutput('issue', issue ? String(issue.number) : '');
+            core.info(healthy ? 'Host monitor heartbeat is fresh.' : 'Host monitor heartbeat is unavailable.');
+      - name: Deliver outage or recovery notification
+        if: steps.probe.outputs.action != 'none'
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: 'true'
+          WATCHDOG_ACTION: ${{ steps.probe.outputs.action }}
+          WATCHDOG_ISSUE: ${{ steps.probe.outputs.issue }}
+        run: |
+          bash scripts/notify-telegram.sh "Katcha operations heartbeat: ${WATCHDOG_ACTION}. Review https://github.com/Deveadra/katcha/issues/${WATCHDOG_ISSUE} and https://app.katcha.stream/operations#operations-health"
+      - name: Record confirmed delivery
+        if: steps.probe.outputs.action != 'none'
+        uses: actions/github-script@v7
+        env:
+          WATCHDOG_ACTION: ${{ steps.probe.outputs.action }}
+          WATCHDOG_ISSUE: ${{ steps.probe.outputs.issue }}
+        with:
+          script: |
+            const issue_number = Number(process.env.WATCHDOG_ISSUE);
+            if (!Number.isSafeInteger(issue_number) || issue_number <= 0) throw new Error('Invalid incident identity');
+            if (process.env.WATCHDOG_ACTION === 'recovered') {
+              await github.rest.issues.update({...context.repo, issue_number, state: 'closed', state_reason: 'completed'});
+            } else {
+              const issue = (await github.rest.issues.get({...context.repo, issue_number})).data;
+              await github.rest.issues.update({...context.repo, issue_number,
+                body: issue.body + '\n\n<!-- operations-alert-delivered -->'});
+            }

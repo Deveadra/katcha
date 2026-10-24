@@ -80,6 +80,20 @@
                 <p id="home-ai-readiness" role="status"></p>
             </section>
 
+            <section id="operations-health" class="ops-panel" aria-labelledby="health-title">
+                <div class="panel-head">
+                    <div><span class="ops-kicker">SERVICE READINESS</span><h2 id="health-title">Operations Health</h2></div>
+                    <button id="health-refresh" class="ops-secondary" type="button">Refresh health</button>
+                </div>
+                <p id="health-status" role="status" aria-live="polite">Loading operations health…</p>
+                <p>Health checks run independently of deployments. Final release checks still use fresh evidence.</p>
+                <div id="health-signals" class="ops-list"></div>
+                <h3>Recovery actions and decisions</h3>
+                <div id="health-incidents" class="ops-list"></div>
+                <details class="ae-help"><summary>Prepared release review</summary><div id="health-release-review"></div></details>
+                <details class="ae-help"><summary>Recent health history</summary><div id="health-history" class="ops-list"></div></details>
+            </section>
+
             <section class="pulse-strip" aria-label="Operations pulse">
                 <a href="#attention"><small>NEEDS ATTENTION</small><strong id="pulse-attention">—</strong><span>Operator decisions or recovery</span></a>
                 <a href="#active"><small>IN MOTION</small><strong id="pulse-active">—</strong><span>Work Katcha is advancing</span></a>

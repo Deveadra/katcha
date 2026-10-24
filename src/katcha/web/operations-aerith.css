@@ -197,6 +197,33 @@ body[data-katcha-page="operations"] .briefing-panel {
     border-left: 2px solid var(--ae-cyan);
 }
 
+#operations-health > p,
+#operations-health > h3 {
+    margin: var(--ae-space-4);
+    overflow-wrap: anywhere;
+}
+
+#operations-health .ops-item,
+#health-history > p {
+    padding: var(--ae-space-3) var(--ae-space-4);
+    border-bottom: 1px solid var(--ae-line);
+    overflow-wrap: anywhere;
+}
+
+#operations-health .ops-item p {
+    color: var(--ae-text-secondary);
+    margin: var(--ae-space-2) 0;
+}
+
+#health-incidents > p {
+    margin: var(--ae-space-4);
+}
+
+#health-release-review {
+    padding: var(--ae-space-4);
+    overflow-wrap: anywhere;
+}
+
 body[data-katcha-page="operations"] .attention-panel {
     border-left: 2px solid var(--ae-danger);
 }
