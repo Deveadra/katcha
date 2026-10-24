@@ -11,7 +11,7 @@ User=root
 WorkingDirectory=/opt/katcha
 Environment=KATCHA_REPO_ROOT=/opt/katcha
 Environment=KATCHA_ENV_FILE=/etc/katcha/katcha.env
-ExecStart=/opt/katcha/deploy/scripts/production-supervisor.sh
+ExecStart=/bin/bash /opt/katcha/deploy/scripts/production-supervisor.sh
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=15min
