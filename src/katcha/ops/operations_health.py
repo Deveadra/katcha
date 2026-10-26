@@ -761,8 +761,22 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
         row = db.execute(
             "SELECT * FROM incidents WHERE key=? AND resolved IS NULL", (signal.key,)
         ).fetchone()
+        new_failure_after_quiet = (
+            signal.key == "temporal"
+            and signal.status == "warning"
+            and row is not None
+            and db.execute(
+                "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
+            ).fetchone() is not None
+        )
         signal = stabilize_temporal_signal(db, signal, row, now)
         observed.append(signal)
+        if new_failure_after_quiet:
+            event(
+                db, row["id"], now,
+                "Background workflows: new failures detected after a quiet period. "
+                + signal.detail + " " + signal.action,
+            )
         if signal.status == "healthy":
             if row:
                 if (
