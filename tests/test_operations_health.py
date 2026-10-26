@@ -375,7 +375,9 @@ def test_temporal_history_probe_failure_preserves_failed_count(monkeypatch):
 
     def command(*args, **kwargs):
         if "list" in args:
-            return json.dumps(failed) if any('ExecutionStatus="Failed"' in str(arg) for arg in args) else "[]"
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return json.dumps(failed)
+            return "[]"
         if "show" in args:
             raise ops.ProbeError("temporal exceeded its diagnostic time limit.")
         raise AssertionError("Unexpected command")
