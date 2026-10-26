@@ -1273,6 +1273,11 @@ def notify(db: sqlite3.Connection, now: float) -> None:
         included = []
         for row in rows:
             line = "Event " + str(row["id"]) + ": " + row["message"] + "\n"
+            if isinstance(row["incident"], int) and row["incident"] > 0:
+                line += (
+                    "Review: https://app.katcha.stream/operations?incident="
+                    + str(row["incident"]) + "#operations-health\n"
+                )
             if len(message) + len(line) > 3500:
                 break
             message += line
