@@ -396,3 +396,34 @@ async def test_snapshot_exposes_no_secret_bearing_budget_values():
     assert result["research_budget"]["navigations_used"] == 3
     assert result["research_budget"]["network_connects_used"] == 7
     assert "token" not in str(result["research_budget"])
+
+
+@pytest.mark.parametrize(
+    ("navigation_exhausted", "expected_code"),
+    [
+        (True, "browser_navigation_budget_exhausted"),
+        (False, "browser_network_budget_exhausted"),
+    ],
+)
+async def test_async_link_navigation_reports_budget_not_generic_timeout(
+    monkeypatch, navigation_exhausted, expected_code
+):
+    token = "a" * 32
+    monkeypatch.setenv("KATCHA_BROWSER_SERVICE_TOKEN", token)
+    scope = ("actor", "channel", "goal")
+
+    async def timed_out(*args):
+        raise TimeoutError("potentially sensitive provider error")
+
+    monkeypatch.setattr(server_browser.pool, "execute", timed_out)
+    proxy = SimpleNamespace(exhausted=not navigation_exhausted)
+    monkeypatch.setattr(server_browser.pool, "sessions", {
+        scope: SimpleNamespace(navigation_budget_exhausted=navigation_exhausted, proxy=proxy)
+    })
+    request = server_browser.BrowserRequest(
+        scope=scope, arguments={"action": "click", "ref": "e1"}
+    )
+    result = await server_browser.execute(request, "Bearer " + token)
+    assert result["code"] == expected_code
+    assert result["outcome_uncertain"] is True
+    assert "sensitive" not in str(result)
