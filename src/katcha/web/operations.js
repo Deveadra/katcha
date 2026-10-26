@@ -658,7 +658,7 @@ $("attention-list").addEventListener("click", inspectOutcome);
 $("active-list").addEventListener("click", inspectOutcome);
 function navigateCard(event) {
     const card = event.target.closest(".ops-row[data-card-href]");
-    if (!card || event.target.closest("a, button, input, select, textarea")) return;
+    if (!card || event.target.closest("a, button, input, select, textarea, .ops-outcome-note")) return;
     if (event.type === "keydown" && (event.target !== card || !["Enter", " "].includes(event.key))) return;
     if (event.type === "keydown") event.preventDefault();
     const href = card.dataset.cardHref;
