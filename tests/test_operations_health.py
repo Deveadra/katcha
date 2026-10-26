@@ -652,6 +652,30 @@ def test_private_temporal_evidence_prunes_old_and_bounds_retention(ledger):
     ).fetchone() is None
 
 
+def test_evidence_inspector_redacts_private_ids_by_default():
+    import runpy
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts/inspect-operations-temporal-evidence.py"
+    module = runpy.run_path(str(script))
+    row = {
+        "fingerprint": "a" * 64,
+        "workflow_id": "SECRET-workflow",
+        "run_id": "PRIVATE-run",
+        "workflow_type": "SourceIngestWorkflow",
+        "cause_code": "RATE_LIMIT",
+        "first_seen": NOW,
+        "last_seen": NOW + 60,
+    }
+    safe = module["summarize"]([row], include_private_ids=False)
+    private = module["summarize"]([row], include_private_ids=True)
+    assert "SECRET-workflow" not in json.dumps(safe)
+    assert "PRIVATE-run" not in json.dumps(safe)
+    assert private[0]["workflow_id"] == "SECRET-workflow"
+    assert private[0]["run_id"] == "PRIVATE-run"
+    assert safe[0]["cause_code"] == "RATE_LIMIT"
+
+
 def test_private_temporal_evidence_rejects_invalid_workflow_id(ledger):
     with pytest.raises(ops.ProbeError, match="identity"):
         ops.record_temporal_execution(
