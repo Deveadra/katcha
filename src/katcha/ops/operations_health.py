@@ -715,7 +715,10 @@ def collect(now: float, *, release_probe: Any = None, evidence_sink: Any = None)
             "Protected backups" if kind == "backup" else "Isolated restore tests",
             lambda kind=kind: safety_signal(kind, now),
         )
-    probe("temporal", "Background workflows", lambda: temporal_signal(now=now, evidence_sink=evidence_sink))
+    probe(
+        "temporal", "Background workflows",
+        lambda: temporal_signal(now=now, evidence_sink=evidence_sink),
+    )
     probe("drift", "Release cadence", release_probe or release_signals)
     probe("deployment", "Deployment and recovery controls", deployment_signals)
 
