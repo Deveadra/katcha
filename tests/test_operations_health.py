@@ -353,6 +353,64 @@ def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monke
 
 
 
+def test_very_old_running_scheduler_without_pending_activity_is_not_stalled(monkeypatch):
+    execution = {"workflowId": "schedule-a", "runId": "run-01"}
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return "[]"
+            return json.dumps([{"execution": execution}])
+        return json.dumps({
+            "workflowExecutionInfo": {
+                "execution": execution,
+                "startTime": "2025-01-01T00:00:00Z",
+            },
+            "pendingActivities": [],
+        })
+
+    monkeypatch.setattr(ops, "command", command)
+    assert ops.temporal_signal(now=NOW).status == "healthy"
+
+
+def test_long_pending_activity_is_attention_not_proof_of_failure(monkeypatch):
+    from datetime import UTC, datetime
+
+    execution = {"workflowId": "private-workflow", "runId": "private-run"}
+    at = datetime.fromtimestamp(NOW - 5 * 3600, UTC).isoformat()
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return "[]"
+            return json.dumps([{"execution": execution}])
+        return json.dumps({
+            "workflowExecutionInfo": {"execution": execution},
+            "pendingActivities": [
+                {"activityId": "private", "scheduledTime": at, "attempt": 1},
+                {"activityId": "new", "scheduledTime": datetime.fromtimestamp(
+                    NOW - 60, UTC
+                ).isoformat(), "attempt": 1},
+            ],
+        })
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal(now=NOW)
+    assert signal.status == "warning"
+    assert "1 activities pending at least 4 hours" in signal.detail
+    assert "oldest 5.0 hours" in signal.detail
+    assert "does not prove a dead worker" in signal.action
+    assert "private" not in signal.detail + signal.action
+
+
+@pytest.mark.parametrize(
+    "scheduled",
+    ["PRIVATE_SECRET", "2000-01-01T00:00:00Z", "2025-01-01", None, 17200],
+)
+def test_pending_activity_unknown_timestamp_does_not_invent_age(scheduled):
+    assert ops.pending_activity_age({"scheduledTime": scheduled}, NOW) is None
+
+
 def test_temporal_failure_types_are_bounded_and_no_private_errors_leak(monkeypatch):
     rows = [
         {"type": {"name": "SourceIngestWorkflow"}, "execution": {"workflowId": "private-A"}},
