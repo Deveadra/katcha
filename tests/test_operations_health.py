@@ -607,6 +607,96 @@ def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
     assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 3
 
 
+def test_private_temporal_evidence_preserves_identity_without_public_leak(ledger, tmp_path):
+    item = {
+        "type": {"name": "SourceIngestWorkflow"},
+        "execution": {"workflowId": "SECRET-workflow", "runId": "PRIVATE-run"},
+        "failure": {"message": "PRIVATE token=ABC"},
+    }
+    ops.record_temporal_execution(ledger, item, "RATE_LIMIT", NOW)
+    ops.record_temporal_execution(ledger, item, "HISTORY_NOT_SAMPLED", NOW + 300)
+    records = ledger.execute(
+        "SELECT * FROM temporal_execution_evidence"
+    ).fetchall()
+    assert len(records) == 1
+    assert records[0]["workflow_id"] == "SECRET-workflow"
+    assert records[0]["run_id"] == "PRIVATE-run"
+    assert records[0]["cause_code"] == "RATE_LIMIT"
+    assert records[0]["first_seen"] == NOW
+    assert records[0]["last_seen"] == NOW + 300
+    assert len(records[0]["fingerprint"]) == 64
+
+    ops.reconcile(ledger, [ops.Signal("temporal", "Temporal", "warning", "Failure")], NOW)
+    public = json.dumps(ops.snapshot(ledger, tmp_path))
+    assert "SECRET-workflow" not in public
+    assert "PRIVATE-run" not in public
+    assert "token=ABC" not in public
+
+
+def test_private_temporal_evidence_prunes_old_and_bounds_retention(ledger):
+    sample = {
+        "type": {"name": "DiscoveryWorkflow"},
+        "execution": {"workflowId": "old", "runId": "old-run"},
+    }
+    ops.record_temporal_execution(ledger, sample, "TIMEOUT", NOW - 15 * 86400)
+    for index in range(2005):
+        sample["execution"] = {"workflowId": f"job-{index}", "runId": f"run-{index}"}
+        ops.record_temporal_execution(ledger, sample, "HISTORY_NOT_SAMPLED", NOW + index)
+    ops.prune_temporal_evidence(ledger, NOW + 2006)
+    records = ledger.execute(
+        "SELECT count(*) FROM temporal_execution_evidence"
+    ).fetchone()[0]
+    assert records == 2000
+    assert ledger.execute(
+        "SELECT 1 FROM temporal_execution_evidence WHERE workflow_id='old'"
+    ).fetchone() is None
+
+
+def test_private_temporal_evidence_rejects_invalid_workflow_id(ledger):
+    with pytest.raises(ops.ProbeError, match="identity"):
+        ops.record_temporal_execution(
+            ledger, {"execution": {"workflowId": "", "runId": "valid"}},
+            "UNCLASSIFIED", NOW,
+        )
+    assert ledger.execute(
+        "SELECT count(*) FROM temporal_execution_evidence"
+    ).fetchone()[0] == 0
+
+
+def test_temporal_monitor_captures_all_failed_ids_and_samples_three_histories(monkeypatch):
+    samples = []
+    rows = [
+        {"type": {"name": "DownloadWorkflow"}, "execution": {
+            "workflowId": f"private-{i}", "runId": f"run-{i}",
+        }} for i in range(5)
+    ]
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return json.dumps(rows)
+            return "[]"
+        if "show" in args:
+            return json.dumps({"events": [{
+                "workflowExecutionFailedEventAttributes": {
+                    "failure": {"message": "No space left on device PRIVATE"}
+                }
+            }]})
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal(
+        now=NOW, evidence_sink=lambda item, code: samples.append((
+            item["execution"]["workflowId"], code
+        )),
+    )
+    assert signal.status == "warning"
+    assert len(samples) == 5
+    assert [code for _, code in samples[:3]] == ["DISK_FULL"] * 3
+    assert [code for _, code in samples[3:]] == ["HISTORY_NOT_SAMPLED"] * 2
+    assert "PRIVATE" not in signal.detail
+
+
 def test_temporal_cause_signature_ignores_counts_and_does_not_contain_secrets():
     first = ops.temporal_cause_fingerprint(
         {"SourceIngestWorkflow": 2, "DiscoveryWorkflow": 1},
