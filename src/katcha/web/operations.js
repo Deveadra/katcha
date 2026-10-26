@@ -56,6 +56,12 @@ function when(value) {
     }).format(date);
 }
 
+function incidentHref(id) {
+    const numeric = Number(id);
+    if (!Number.isSafeInteger(numeric) || numeric <= 0) return "";
+    return "/operations?incident=" + numeric + "#operations-health";
+}
+
 function setStatus(message, kind = "") {
     const host = $("status");
     host.textContent = message;
@@ -381,16 +387,52 @@ async function loadOperationsHealth() {
         }).join("");
         const active = health.incidents.filter((row) => row.resolved === null);
         const botLabels = { queued: "Bot investigation queued", verifying: "Bot retry awaiting verification",
-            operator_decision: "Operator review needed", verified: "Recovery verified" };
-        $("health-incidents").innerHTML = active.length ? active.map((row) =>
-            '<article class="ops-item"><strong>' + escapeHTML(row.label) + '</strong><p>'
-            + escapeHTML(botLabels[row.bot] || friendly(row.bot)) + '</p><p>'
-            + escapeHTML(row.action) + '</p></article>'
-        ).join("") : '<p>' + (health.status === "healthy" ? 'No outstanding operational decisions.'
-            : 'No current incident list is available. Check monitoring before relying on this view.') + '</p>';
-        $("health-history").innerHTML = health.history.map((row) =>
-            '<p><time>' + escapeHTML(when(row.at * 1000)) + '</time> · ' + escapeHTML(row.message) + '</p>'
-        ).join("") || '<p>No health history has been recorded yet.</p>';
+            operator_decision: "Operator review needed", verified: "Recovery verified",
+            quieted: "No new failures observed; earlier work not proven recovered" };
+        const selected = new URLSearchParams(location.search).get("incident");
+        const selectedId = selected && /^\d{1,12}$/.test(selected) ? Number(selected) : null;
+        const focused = selectedId !== null
+            ? health.incidents.find((row) => row.id === selectedId)
+            : null;
+        const focusedHistory = focused
+            ? health.history.filter((row) => row.incident === focused.id).slice(0, 10)
+            : [];
+        const focusedMarkup = selectedId === null ? "" : focused
+            ? '<article class="ops-item" id="focused-health-incident"><strong>Incident #'
+                + escapeHTML(focused.id) + ' · ' + escapeHTML(friendly(focused.status))
+                + '</strong><p>' + escapeHTML(focused.label) + '</p><p>'
+                + escapeHTML(focused.detail || "No detailed diagnostic available.")
+                + '</p><p>' + escapeHTML(focused.action || "")
+                + '</p><p>' + (focused.resolved === null ? "Unresolved" : "Closed")
+                + ' · Last updated ' + escapeHTML(when(focused.updated * 1000))
+                + '</p>' + focusedHistory.map((event) =>
+                    '<p>' + escapeHTML(when(event.at * 1000)) + ' · '
+                    + escapeHTML(event.message) + '</p>'
+                ).join("")
+                + '<p>Sanitized recent history only; full evidence requires authorized host inspection.</p></article>'
+            : '<article class="ops-item" id="focused-health-incident">'
+                + '<strong>Incident not in recent snapshot</strong><p>'
+                + 'The health feed only includes the latest bounded incidents. '
+                + 'Inspect the private host ledger for older evidence.</p></article>';
+        $("health-incidents").innerHTML = focusedMarkup + (active.length ? active.map((row) => {
+            const href = incidentHref(row.id);
+            return '<article class="ops-item"><strong>' + escapeHTML(row.label) + '</strong><p>'
+                + escapeHTML(botLabels[row.bot] || friendly(row.bot)) + '</p><p>'
+                + escapeHTML(row.action) + '</p>'
+                + (href ? '<a href="' + escapeHTML(href) + '">Inspect incident #'
+                    + escapeHTML(row.id) + '</a>' : "") + '</article>';
+        }).join("") : '<p>' + (health.status === "healthy"
+            ? "No outstanding operational decisions."
+            : "No current incident list is available. Check monitoring before relying on this view.")
+            + '</p>');
+        $("health-history").innerHTML = health.history.map((row) => {
+            const href = incidentHref(row.incident);
+            return '<p><time>' + escapeHTML(when(row.at * 1000)) + '</time> · '
+                + escapeHTML(row.message)
+                + (href ? ' · <a href="' + escapeHTML(href)
+                    + '">Incident #' + escapeHTML(row.incident) + '</a>' : '')
+                + '</p>';
+        }).join("") || '<p>No health history has been recorded yet.';
         const review = health.release_review;
         $("health-release-review").textContent = review
             ? "Candidate " + review.target_sha + ". Checked " + when(review.checked_at * 1000) + ". "
