@@ -346,7 +346,7 @@ def pending_activity_age(activity: Any, now: float) -> float | None:
     return age if 0 <= age <= 366 * 86400 else None
 
 
-def temporal_signal(*, now: float | None = None) -> Signal:
+def temporal_signal(*, now: float | None = None, evidence_sink: Any = None) -> Signal:
     """Show bounded failure categories and useful next actions, never raw errors."""
     prefix = (
         "docker",
@@ -425,11 +425,22 @@ def temporal_signal(*, now: float | None = None) -> Signal:
         # Most recent listed executions supply a small diagnostic sample; errors
         # inspecting one execution must not hide the failed-run count.
         sampled = min(3, len(failed))
-        causes = list(pending_causes)
-        causes.extend(
+        closed_causes = [
             temporal_failure_cause(prefix, common, item.get("execution"))
             for item in failed[:sampled]
-        )
+        ]
+        causes = [*pending_causes, *closed_causes]
+        capture_failed = False
+        if evidence_sink is not None:
+            for index, item in enumerate(failed):
+                try:
+                    evidence_sink(
+                        item,
+                        closed_causes[index] if index < sampled else "HISTORY_NOT_SAMPLED",
+                    )
+                except Exception:
+                    # A failed ledger write must not hide the underlying failures.
+                    capture_failed = True
         cause_counts: dict[str, int] = {}
         for cause in causes:
             cause_counts[cause] = cause_counts.get(cause, 0) + 1
@@ -455,7 +466,8 @@ def temporal_signal(*, now: float | None = None) -> Signal:
                if long_pending else "")
             + (f" Types: {summary}." if summary else "")
             + (f" Diagnosed causes ({sampled} sampled closed runs): {cause_summary}."
-               if cause_summary else ""),
+               if cause_summary else "")
+            + (" Private evidence capture unavailable." if capture_failed else ""),
             (
                 " ".join(actions[:2])
                 + (" Review activity schedule/heartbeat and worker task queue; "
@@ -678,7 +690,7 @@ def production_container_pressure() -> Signal:
     )
 
 
-def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
+def collect(now: float, *, release_probe: Any = None, evidence_sink: Any = None) -> list[Signal]:
     signals: list[Signal] = []
 
     def probe(key: str, label: str, fn: Any) -> None:
@@ -703,7 +715,7 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
             "Protected backups" if kind == "backup" else "Isolated restore tests",
             lambda kind=kind: safety_signal(kind, now),
         )
-    probe("temporal", "Background workflows", lambda: temporal_signal(now=now))
+    probe("temporal", "Background workflows", lambda: temporal_signal(now=now, evidence_sink=evidence_sink))
     probe("drift", "Release cadence", release_probe or release_signals)
     probe("deployment", "Deployment and recovery controls", deployment_signals)
 
@@ -816,6 +828,54 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
     return signals
 
 
+def record_temporal_execution(
+    db: sqlite3.Connection, item: Any, code: str, now: float
+) -> None:
+    """Record execution identity only in the root-owned 0600 operations ledger."""
+    if not isinstance(item, dict) or not isinstance(item.get("execution"), dict):
+        raise ProbeError("Temporal evidence identity is invalid.")
+    execution = item["execution"]
+    wid, rid = execution.get("workflowId"), execution.get("runId")
+    if (
+        not isinstance(wid, str) or not isinstance(rid, str)
+        or not 0 < len(wid) <= 255 or not 0 < len(rid) <= 128
+    ):
+        raise ProbeError("Temporal evidence identity is invalid.")
+    kind = item.get("type") or item.get("workflowType")
+    name = kind.get("name") if isinstance(kind, dict) else None
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name):
+        name = "unidentified"
+    code = code if code in TEMPORAL_ACTIONS or code == "HISTORY_NOT_SAMPLED" else "UNCLASSIFIED"
+    identity = json.dumps([wid, rid], separators=(",", ":"))
+    key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    db.execute(
+        """
+        INSERT INTO temporal_execution_evidence
+          (fingerprint, workflow_id, run_id, workflow_type, cause_code, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fingerprint) DO UPDATE SET
+          last_seen=excluded.last_seen,
+          cause_code=CASE WHEN excluded.cause_code='HISTORY_NOT_SAMPLED'
+            THEN temporal_execution_evidence.cause_code ELSE excluded.cause_code END
+        """,
+        (key, wid, rid, name, code, now, now),
+    )
+
+
+def prune_temporal_evidence(db: sqlite3.Connection, now: float) -> None:
+    """Bound private evidence without affecting Temporal history or job state."""
+    db.execute(
+        "DELETE FROM temporal_execution_evidence WHERE last_seen < ?",
+        (now - 14 * 86400,),
+    )
+    db.execute(
+        "DELETE FROM temporal_execution_evidence WHERE fingerprint NOT IN "
+        "(SELECT fingerprint FROM temporal_execution_evidence "
+        "ORDER BY last_seen DESC, fingerprint DESC LIMIT 2000)"
+    )
+    db.commit()
+
+
 def connect(root: Path) -> sqlite3.Connection:
     root.mkdir(mode=0o755, parents=True, exist_ok=True)
     path = root / "ledger.sqlite3"
@@ -839,6 +899,17 @@ def connect(root: Path) -> sqlite3.Connection:
             message TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS release_reviews (sha TEXT PRIMARY KEY, at REAL, data TEXT);
+        CREATE TABLE IF NOT EXISTS temporal_execution_evidence (
+            fingerprint TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            workflow_type TEXT NOT NULL,
+            cause_code TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS temporal_evidence_last_seen
+            ON temporal_execution_evidence(last_seen);
     """)
     return db
 
@@ -1282,8 +1353,17 @@ def main() -> int:
                     )
                 DEADLINE = time.monotonic() + 120
                 reconcile(
-                    db, collect(now, release_probe=lambda: cached_release_signals(db, now)), now
+                    db,
+                    collect(
+                        now,
+                        release_probe=lambda: cached_release_signals(db, now),
+                        evidence_sink=lambda item, code: record_temporal_execution(
+                            db, item, code, now
+                        ),
+                    ),
+                    now,
                 )
+                prune_temporal_evidence(db, now)
                 snapshot(db, ROOT)
                 DEADLINE = time.monotonic() + 45
                 if not args.observe_only:
