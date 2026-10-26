@@ -44,7 +44,7 @@ def assess_render_records(
         missing.append("RENDER_ATTEMPT_MISSING")
     else:
         if attempt.status == "dead_letter":
-            evidence.append("RENDER_DEAD_LETTER")
+            missing.append("RENDER_DEAD_LETTER")
             conflicting = asset is not None and bool((asset.asset_metadata or {}).get("verified"))
         elif attempt.status == "verified" and attempt.completed_at is not None:
             evidence.append("RENDER_ATTEMPT_VERIFIED_RECORD")
