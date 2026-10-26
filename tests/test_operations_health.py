@@ -607,6 +607,70 @@ def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
     assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 3
 
 
+def test_temporal_cause_signature_ignores_counts_and_does_not_contain_secrets():
+    first = ops.temporal_cause_fingerprint(
+        {"SourceIngestWorkflow": 2, "DiscoveryWorkflow": 1},
+        ["RATE_LIMIT", "AUTHENTICATION"],
+        long_pending=False,
+    )
+    second = ops.temporal_cause_fingerprint(
+        {"DiscoveryWorkflow": 99, "SourceIngestWorkflow": 10},
+        ["AUTHENTICATION", "RATE_LIMIT", "RATE_LIMIT"],
+        long_pending=False,
+    )
+    assert first == second
+    assert len(first) == 24
+    assert ops.temporal_cause_fingerprint(
+        {"SourceIngestWorkflow": 2}, ["DISK_FULL"], long_pending=False
+    ) != first
+    assert "SourceIngest" not in first
+
+
+def test_temporal_cause_change_pages_only_after_two_stable_observations(ledger):
+    def temporal(fp, description="1 failed"):
+        return ops.Signal(
+            "temporal", "Background workflows", "warning",
+            description, "Check dependency.", fingerprint=fp,
+        )
+
+    original = "a" * 24
+    changed = "b" * 24
+    ops.reconcile(ledger, [temporal(original)], NOW)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 300)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(original)], NOW + 600)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 900)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 1200)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    events = [
+        row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")
+    ]
+    assert "sustained change in failure types/causes" in events[-1]
+    ops.reconcile(ledger, [temporal(changed)], NOW + 1500)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    assert "SECRET" not in " ".join(events)
+
+
+def test_temporal_signature_resets_when_quiet_incident_resolves(ledger):
+    fp = "c" * 24
+    failed = ops.Signal(
+        "temporal", "Background workflows", "warning", "failed", fingerprint=fp,
+    )
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "zero new failures")
+    ops.reconcile(ledger, [failed], NOW)
+    for n in range(1, 75):
+        ops.reconcile(ledger, [quiet], NOW + n * 300)
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_cause_signature'"
+    ).fetchone() is None
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_pending_signature'"
+    ).fetchone() is None
+
+
 def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
     from katcha.ops import production_release_observer as observer
     from katcha.ops import release_eligibility
