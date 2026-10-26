@@ -546,6 +546,81 @@ def deployment_signals() -> list[Signal]:
     return result
 
 
+def filesystem_signal(path: str, key: str, label: str) -> Signal:
+    """Monitor capacity and inodes without traversing or deleting host data."""
+    usage = shutil.disk_usage(path)
+    meta = os.statvfs(path)
+    if usage.total <= 0 or meta.f_blocks <= 0:
+        raise ProbeError("Filesystem capacity could not be measured.")
+    bytes_free = 100.0 * usage.free / usage.total
+    # Some filesystems do not report inode accounting. Mark it unknown rather
+    # than interpreting zero counters as a full disk.
+    inodes_free = (
+        100.0 * meta.f_favail / meta.f_files if meta.f_files > 0 else None
+    )
+    if inodes_free is not None and not 0 <= inodes_free <= 100:
+        raise ProbeError("Filesystem inode measurement is invalid.")
+    critical = bytes_free < 10 or (inodes_free is not None and inodes_free < 5)
+    warning = bytes_free < 20 or (inodes_free is not None and inodes_free < 15)
+    status = "critical" if critical else "warning" if warning else "healthy"
+    detail = f"{bytes_free:.1f}% bytes free on {label}."
+    detail += (
+        f" {inodes_free:.1f}% inodes free."
+        if inodes_free is not None else " Inode availability not reported."
+    )
+    action = (
+        "Inspect filesystem and Docker storage growth; do not prune volumes, "
+        "images, backups or logs automatically."
+        if status != "healthy" else ""
+    )
+    return Signal(key, label, status, detail, action)
+
+
+def production_container_pressure() -> Signal:
+    """Read bounded Compose-container restart/OOM metadata, never environments."""
+    raw = command(
+        "docker", "ps", "-a",
+        "--filter", "label=com.docker.compose.project=katcha-production",
+        "--format", "{{.Names}}",
+    )
+    names = raw.splitlines()
+    if not names or len(names) > 32 or len(set(names)) != len(names):
+        raise ProbeError("Production container inspection inventory is unavailable.")
+    if any(not re.fullmatch(r"katcha-production-[a-z0-9-]+-[0-9]+", n) for n in names):
+        raise ProbeError("Production container inspection inventory is invalid.")
+    # Safe, allowlisted Go-template fields. .State.Error, .Config, .LogPath
+    # and arbitrary Docker inspect JSON must never reach the snapshot.
+    records = command(
+        "docker", "inspect", "--format",
+        "{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.Status}}",
+        *names,
+    ).splitlines()
+    if len(records) != len(names):
+        raise ProbeError("Production container inspection result is incomplete.")
+    ooms, stopped, historical_restarts = 0, 0, 0
+    for record in records:
+        match = re.fullmatch(r"([0-9]{1,9})\|(true|false)\|([a-z]+)", record)
+        if match is None:
+            raise ProbeError("Production container inspection result is invalid.")
+        restarts, oom, state = match.groups()
+        historical_restarts += int(restarts)
+        ooms += oom == "true"
+        stopped += state not in {"running"}
+    if ooms or stopped:
+        return Signal(
+            "containers",
+            "Production container failures",
+            "critical" if ooms else "warning",
+            f"{ooms} containers flagged OOM-killed; {stopped} not running. "
+            f"{historical_restarts} cumulative Docker restarts (not a recent rate).",
+            "Inspect cgroup pressure and affected service logs before restarting containers.",
+        )
+    return Signal(
+        "containers", "Production container failures", "healthy",
+        f"{len(names)} containers running; {historical_restarts} cumulative Docker restarts.",
+    )
+
+
 def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
     signals: list[Signal] = []
 
@@ -632,17 +707,15 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
         )
 
     probe("runtime", "Production services", runtime)
-    disk = shutil.disk_usage("/srv/katcha")
-    free = 100 * disk.free / disk.total
-    signals.append(
-        Signal(
-            "storage",
-            "Persistent storage",
-            "critical" if free < 10 else "warning" if free < 20 else "healthy",
-            f"{free:.1f}% free on the production data volume.",
-            "Review storage growth; preserve backups and application data." if free < 20 else "",
-        )
+    probe(
+        "root_storage", "Root filesystem",
+        lambda: filesystem_signal("/", "root_storage", "Root filesystem"),
     )
+    probe(
+        "storage", "Persistent storage",
+        lambda: filesystem_signal("/srv/katcha", "storage", "Persistent storage"),
+    )
+    probe("containers", "Production container failures", production_container_pressure)
 
     def notification() -> Signal:
         notifier = installed_notifier()
