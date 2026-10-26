@@ -252,6 +252,80 @@ def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monke
     assert "SECRET" not in warning.detail
 
 
+
+def test_temporal_failure_types_are_bounded_and_no_private_errors_leak(monkeypatch):
+    rows = [
+        {"type": {"name": "SourceIngestWorkflow"}, "execution": {"workflowId": "private-A"}},
+        {"type": {"name": "SourceIngestWorkflow"}, "error": "SECRET"},
+        {"type": {"name": "private:SECRET"}, "failure": {"message": "SECRET"}},
+    ]
+
+    def command(*args, **kwargs):
+        if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+            return json.dumps(rows)
+        return "[]"
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal()
+    assert signal.status == "warning"
+    assert "3 failed executions" in signal.detail
+    assert "SourceIngestWorkflow (2)" in signal.detail
+    assert "unidentified (1)" in signal.detail
+    assert "SECRET" not in signal.detail
+    assert "private-A" not in signal.detail
+
+    rows[:] = [{"type": {"name": "DiscoveryWorkflow"}}] * 101
+    with pytest.raises(ValueError, match="incomplete"):
+        ops.temporal_signal()
+
+
+def test_temporal_rolling_window_expiry_is_not_verified_recovery(ledger):
+    failed = ops.Signal("temporal", "Background workflows", "warning", "1 failed", "Investigate")
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "0 failed recently")
+
+    ops.reconcile(ledger, [failed], NOW)
+    for step in range(1, 73):
+        ops.reconcile(ledger, [quiet], NOW + step * 300)
+    incident = ledger.execute("SELECT * FROM incidents WHERE key='temporal'").fetchone()
+    assert incident["resolved"] is None
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    snapshot_signals = json.loads(
+        ledger.execute("SELECT value FROM state WHERE key='signals'").fetchone()[0]
+    )
+    assert snapshot_signals[0]["status"] == "warning"
+    assert "quiet period" in snapshot_signals[0]["detail"]
+
+    ops.reconcile(ledger, [quiet], NOW + 73 * 300)
+    incident = ledger.execute("SELECT * FROM incidents WHERE key='temporal'").fetchone()
+    assert incident["resolved"] == NOW + 73 * 300
+    assert incident["bot"] == "quieted"
+    messages = [
+        row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")
+    ]
+    assert len(messages) == 2
+    assert "six hours without observed failures" in messages[-1]
+    assert not any("recovery verified" in message for message in messages)
+
+
+def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
+    failed = ops.Signal("temporal", "Background workflows", "warning", "failed")
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "no recent failures")
+    ops.reconcile(ledger, [failed], NOW)
+    ops.reconcile(ledger, [quiet], NOW + 300)
+    ops.reconcile(ledger, [quiet], NOW + 7 * 3600)
+    assert ledger.execute("SELECT resolved FROM incidents").fetchone()[0] is None
+
+    ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 300)
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
+    ).fetchone() is None
+    ops.reconcile(ledger, [quiet], NOW + 7 * 3600 + 600)
+    assert float(ledger.execute(
+        "SELECT value FROM state WHERE key='temporal_quiet_since'"
+    ).fetchone()[0]) == NOW + 7 * 3600 + 600
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+
+
 def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
     from katcha.ops import production_release_observer as observer
     from katcha.ops import release_eligibility
