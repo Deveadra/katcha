@@ -76,6 +76,16 @@ environment, or credential-bearing logs into public issues. Redact URLs and
 tokens before sharing diagnostic excerpts. Use the workflow ID/run ID from the
 listing; do not guess or manually retry potentially non-idempotent jobs.
 
+Stalled-work detection is intentionally conservative: an activity still
+pending **at least four hours** after its Temporal `scheduledTime` raises an
+attention warning with count and oldest age. This is not a claim of failure:
+long-running media processing can be legitimate. The monitor does not call a
+long-lived scheduler stalled simply because its workflow start time is old.
+Unknown/malformed activity timestamps are not converted to a guessed age.
+Inspect the relevant activity's schedule-to-close policy, last heartbeat,
+task queue worker polling and downstream media progress before considering a
+retry or cancellation.
+
 The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
 no new failure was observed under continuous monitoring; it is not proof that
 earlier failed work reran, resumed, or reached its business outcome.
