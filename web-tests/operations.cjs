@@ -370,7 +370,7 @@ function payload(selected = "") {
             await page.locator("#output-metrics").innerText(),
             /Choose one channel to inspect/,
         );
-        await page.locator("#attention-list [data-outcome-kind='production']").first().click();
+        await page.locator("#attention-list [data-outcome-kind='short_episode']").first().click();
         await page.getByText(/Recorded outcome: Unverified/).waitFor();
         assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /Live provider and business recovery not verified/);
         assert.equal(await page.locator("#attention-list .ops-outcome-note script").count(), 0);
