@@ -111,6 +111,7 @@ async def dispatch_planned_trend_editorial(
             }
 
         assert policy is not None
+        dispatch_limit = _safe_limit(policy)
         candidates = list(
             session.scalars(
                 select(ShortEpisode)
@@ -155,17 +156,37 @@ async def dispatch_planned_trend_editorial(
             selected.append(
                 (episode.id, episode.workflow_id, tuple(item.clip_id for item in items))
             )
-            if len(selected) >= _safe_limit(policy):
-                break
 
     started: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
+    dispatch_attempts = 0
     for episode_id, episode_workflow_id, clip_ids in selected:
+        if dispatch_attempts >= dispatch_limit:
+            break
         try:
             # Rights can change after planning. Revalidate against the current
             # acquisition ledger immediately before scheduling paid editorial.
             for clip_id in clip_ids:
                 assert_clip_production_eligible(clip_id)
+        except ValueError:
+            failed.append({
+                "episode_id": str(episode_id),
+                "reason": "source_rights_changed_or_not_ready",
+            })
+            continue
+        except Exception:
+            # A ledger outage is not evidence that another candidate is safe.
+            failed.append({
+                "episode_id": str(episode_id),
+                "reason": "source_eligibility_check_unavailable",
+            })
+            break
+        # Count attempts, not successful replies: Temporal may have accepted a
+        # start before the connection failed. Never backfill an ambiguous start
+        # beyond the configured paid-work limit. Local eligibility rejection,
+        # however, must not starve later ready candidates in the bounded window.
+        dispatch_attempts += 1
+        try:
             workflow_id = f"{episode_workflow_id}-editorial-script"
             await start_short_episode_editorial_workflow(
                 str(episode_id), workflow_id, start_stage="script"
@@ -173,11 +194,6 @@ async def dispatch_planned_trend_editorial(
             started.append({
                 "episode_id": str(episode_id),
                 "workflow_id": workflow_id,
-            })
-        except ValueError:
-            failed.append({
-                "episode_id": str(episode_id),
-                "reason": "source_rights_changed_or_not_ready",
             })
         except Exception:
             # The planned episode survives a Temporal outage and will be

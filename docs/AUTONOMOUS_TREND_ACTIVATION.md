@@ -12,6 +12,15 @@ Before a handoff, Katcha requires: enabled AI execution; a usable provider; an e
 
 The existing editorial workflow produces script and narration, then obeys **existing channel review policy** before rendering, and existing render approval/publication policy afterward. Enabling auto start does not automatically authorize publication. Handoff outcomes or explicit block reasons are stored in `TrendActivationRun.run_metadata.editorial_dispatch`; an unavailable Temporal worker leaves the planned episode intact for retry.
 
+Dispatch examines at most 100 newest planned episodes. A frozen-eligible episode
+whose current media/rights check rejects it records
+`source_rights_changed_or_not_ready` and does not consume a dispatch slot; the
+scan continues to the next candidate. An unavailable eligibility ledger records
+`source_eligibility_check_unavailable` and stops the scan. Every Temporal start
+attempt consumes a slot, including an ambiguous failure, because the server may
+already have accepted it. Retries retain the same workflow identity. These bounds
+apply per scan; they are not a cross-scan spend reservation or live output proof.
+
 This is not evidence of a live production rollout: provider health, budget snapshots, channel policy enablement, production worker and actual rendered output must all be independently verified.
 
 The scanner calls the same P7.1 `preview_trend_activation` and `activate_trend_opportunity` services used by the manual API. There is no second planner.
