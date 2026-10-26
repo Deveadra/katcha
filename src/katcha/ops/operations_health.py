@@ -390,7 +390,9 @@ def temporal_signal() -> Signal:
             cause_counts[cause] = cause_counts.get(cause, 0) + 1
         cause_summary = ", ".join(
             f"{kind} ({count})"
-            for kind, count in sorted(cause_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:4]
+            for kind, count in sorted(
+                cause_counts.items(), key=lambda pair: (-pair[1], pair[0])
+            )[:4]
         )
         actions = []
         for cause in causes:
