@@ -58,6 +58,23 @@ accepted it. There is no automatic replay of uncertain submissions. Sign in agai
 when a session has expired. An unavailable browser returns a recovery message;
 configuration alone does not prove a live session works.
 
+## Bounded research sessions
+
+The server enforces a maximum of 64 document navigations (including frames and
+popups), 512 proxy CONNECT attempts (including TLS subresources/WebSockets), a
+30-minute absolute session lifetime, and a 2 MB screenshot response ceiling.
+These are conservative ceilings for a single ephemeral browser session, not
+reusable quotas or evidence of a durable goal budget. Returned snapshots include
+remaining navigation, network and session-time budgets; goal observations retain
+the resulting measurement. An exceeded limit fails closed with a typed diagnostic
+rather than claiming research completion. An explicit close remains available.
+
+Browser sessions still cannot resume after a process restart. This slice does
+not enforce cumulative limits across newly created sessions or independently
+confine a compromised Chromium process from the container's network. Durable
+goal-level budgeting and independent egress isolation remain separate rollout
+prerequisites, not capabilities established by these limits.
+
 ## Network and isolation
 
 Navigation and subresources use a local CONNECT proxy that resolves public HTTPS
