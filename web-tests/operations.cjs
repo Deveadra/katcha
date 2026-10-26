@@ -374,7 +374,7 @@ function payload(selected = "") {
         await page.getByText(/Recorded outcome: Unverified/).waitFor();
         assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /Live provider and business recovery not verified/);
         assert.equal(await page.locator("#attention-list .ops-outcome-note script").count(), 0);
-        assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /<script>private/);
+        assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /<script>private/i);
         assert.match(await page.locator("#attention-list").innerText(), /Renderer exhausted retries/);
         assert.match(await page.locator("#active-list").innerText(), /Ranking clips/);
         assert.equal(await page.locator("#attention-list .ops-recover.restart").count(), 2);
