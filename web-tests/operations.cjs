@@ -242,6 +242,38 @@ function payload(selected = "") {
         });
     });
 
+    await page.route("**/v1/operations/work/**/outcome-evidence", async (route) => {
+        assert.equal(route.request().headers().authorization, "Bearer fixture-token");
+        assert.equal(route.request().method(), "GET");
+        await route.fulfill({json: {
+            assessment: "unverified",
+            evidence_codes: [],
+            missing_codes: ["RENDER_ATTEMPT_MISSING", "<script>private()</script>"],
+            live_provider_checked: false,
+            business_recovery_verified: false,
+        }});
+    });
+
+    await page.route("**/v1/operations/output-metrics**", async (route) => {
+        assert.equal(route.request().headers().authorization, "Bearer fixture-token");
+        const selected = new URL(route.request().url()).searchParams.get("channel_profile_id");
+        assert(selected === channelOne || selected === channelTwo);
+        await route.fulfill({json: {
+            render_attempt_records: 4,
+            render_attempts_marked_verified: 2,
+            render_attempts_dead_lettered: 1,
+            recorded_published_videos: 1,
+            failed_publication_records: 1,
+            analytics_snapshots_collected: 2,
+            stale_production_candidates: 1,
+            stale_short_episode_candidates: 0,
+            youtube_connection_configured: true,
+            measurement_basis: "durable_database_records_only",
+            live_youtube_videos_verified: null,
+            remote_media_objects_verified: null,
+        }});
+    });
+
     await page.route("**/v1/operations/overview**", async (route) => {
         const request = route.request();
         const url = new URL(request.url());
@@ -334,6 +366,15 @@ function payload(selected = "") {
         assert.equal(await page.locator("#pulse-opportunities").innerText(), "1");
         assert.equal(await page.locator("#pulse-published").innerText(), "1");
         assert.equal(await page.locator("#attention-list .ops-row").count(), 2);
+        assert.match(
+            await page.locator("#output-metrics").innerText(),
+            /Choose one channel to inspect/,
+        );
+        await page.locator("#attention-list [data-outcome-kind='production']").first().click();
+        await page.getByText(/Recorded outcome: Unverified/).waitFor();
+        assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /Live provider and business recovery not verified/);
+        assert.equal(await page.locator("#attention-list .ops-outcome-note script").count(), 0);
+        assert.match(await page.locator("#attention-list .ops-outcome-note").first().innerText(), /<script>private/);
         assert.match(await page.locator("#attention-list").innerText(), /Renderer exhausted retries/);
         assert.match(await page.locator("#active-list").innerText(), /Ranking clips/);
         assert.equal(await page.locator("#attention-list .ops-recover.restart").count(), 2);
@@ -397,6 +438,8 @@ function payload(selected = "") {
             "channel filter should request a scoped operations overview",
         );
         assert.equal(await page.locator("#channel-list .channel-card").count(), 1);
+        await page.getByText(/Last 48 hours: 2 verified render-attempt records/).waitFor();
+        assert.match(await page.locator("#output-metrics").innerText(), /remote object existence and live YouTube status are unverified/i);
 
         failRefresh = true;
         await page.locator("#refresh").click();
