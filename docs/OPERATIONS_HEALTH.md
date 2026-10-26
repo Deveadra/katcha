@@ -21,7 +21,7 @@ release diagnostics refresh hourly; unchanged reviews do not repeat alerts.
 | Release cadence | Existing observer's bounded descendant comparison, even while main's CI is incomplete; warnings at 60 commits or 80 files, ahead of the 75/100 review thresholds and 250/299 hard limits. |
 | Next release | Exact candidate and migration presence. The bot invokes the existing deployer's read-only `--diagnose-release` and records review counts ahead of approval. |
 | Authorization and recovery | Existing deployment-control diagnostics and running API authority verification. An open host gate or enabled automatic deployment polling raises attention. Signed requests retain the existing protected approval/notifier path. |
-| Infrastructure | Required production containers, local API readiness and persistent storage; warn below 20% free, critical below 10%. |
+| Infrastructure | Required production containers and API readiness. Independently check root (`/`) and production data (`/srv/katcha`) for free bytes (<20% warning, <10% critical) and free inodes (<15% warning, <5% critical), with unknown rather than healthy when a probe fails. Read bounded Docker Compose container OOM, stopped-state and cumulative restart metadata without exposing Docker configuration/environment. Historical restart counts are informational, not automatically incident-worthy. |
 | Notifications | Existing protected Telegram configuration and durable delivery state. No second update consumer is started. |
 
 Missing evidence is unknown, never healthy. Journal retention must cover the
@@ -79,6 +79,27 @@ listing; do not guess or manually retry potentially non-idempotent jobs.
 The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
 no new failure was observed under continuous monitoring; it is not proof that
 earlier failed work reran, resumed, or reached its business outcome.
+
+## Host pressure first-response
+
+The root filesystem and data volume are separate health signals. A healthy
+`/srv/katcha` volume does not imply the root filesystem has room for
+Docker layers or service logs. Both byte and inode capacity are checked.
+
+For an alert, inspect read-only evidence before any cleanup:
+
+```bash
+df -h / /srv/katcha
+df -i / /srv/katcha
+sudo docker system df
+sudo docker ps -a --filter label=com.docker.compose.project=katcha-production
+```
+
+Docker metadata can identify OOM-killed and stopped containers, plus their
+**cumulative** restart counts. A nonzero restart count alone does not prove
+recent instability. Do not run `docker system prune`, delete images or logs,
+or remove volumes as automatic remediation. Check Docker storage growth and
+the specific container journal first, and preserve release/backup evidence.
 
 ## Bounded remediation bot
 
