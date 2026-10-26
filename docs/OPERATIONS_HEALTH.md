@@ -86,6 +86,16 @@ Inspect the relevant activity's schedule-to-close policy, last heartbeat,
 task queue worker polling and downstream media progress before considering a
 retry or cancellation.
 
+Newly diagnosed Temporal failure categories are fingerprinted from **safe
+workflow type names and allowlisted cause codes**, not raw execution IDs, error
+strings or volatile failure counts. An active incident raises a new notification
+only if a different category combination persists for two consecutive monitor
+observations. This avoids an alert for every five-minute count change while
+still notifying for a materially changed failure pattern. The fingerprint is
+a diagnostic category hash, not a unique execution identity; individual
+failure attribution and private evidence review require a separate workflow
+evidence inspector.
+
 The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
 no new failure was observed under continuous monitoring; it is not proof that
 earlier failed work reran, resumed, or reached its business outcome.
