@@ -308,7 +308,27 @@ def temporal_failure_cause(
         return "HISTORY_UNAVAILABLE"
 
 
-def temporal_signal() -> Signal:
+PENDING_ACTIVITY_ATTENTION_SECONDS = 4 * 3600
+
+
+def pending_activity_age(activity: Any, now: float) -> float | None:
+    """Bounded read of Temporal's original scheduledTime, not untrusted messages."""
+    if not isinstance(activity, dict):
+        return None
+    raw = activity.get("scheduledTime")
+    if not isinstance(raw, str) or len(raw) > 64:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return None
+        age = now - stamp.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+    return age if 0 <= age <= 366 * 86400 else None
+
+
+def temporal_signal(*, now: float | None = None) -> Signal:
     """Show bounded failure categories and useful next actions, never raw errors."""
     prefix = (
         "docker",
@@ -320,6 +340,7 @@ def temporal_signal() -> Signal:
         "workflow",
     )
     common = ("--address", "temporal:7233", "--namespace", "default")
+    now = time.time() if now is None else now
     failed = json.loads(
         command(
             *prefix,
@@ -327,7 +348,7 @@ def temporal_signal() -> Signal:
             *common,
             "--query",
             'ExecutionStatus="Failed" AND CloseTime > "'
-            + datetime.fromtimestamp(time.time() - 3600, UTC).isoformat()
+            + datetime.fromtimestamp(now - 3600, UTC).isoformat()
             + '"',
             "--limit",
             "101",
@@ -352,6 +373,8 @@ def temporal_signal() -> Signal:
         raise ProbeError("Temporal running workflow inventory is incomplete (limit 100).")
     pending = 0
     failing = 0
+    long_pending = 0
+    oldest_pending = 0.0
     pending_causes: list[str] = []
     for row in rows:
         execution = row["execution"]
@@ -369,8 +392,12 @@ def temporal_signal() -> Signal:
             if activity.get("lastFailure") and int(activity.get("attempt", 0)) >= 3:
                 failing += 1
                 pending_causes.append(classify_temporal_failure(activity["lastFailure"]))
+            age = pending_activity_age(activity, now)
+            if age is not None and age >= PENDING_ACTIVITY_ATTENTION_SECONDS:
+                long_pending += 1
+                oldest_pending = max(oldest_pending, age)
 
-    if failing or failed:
+    if failing or failed or long_pending:
         kinds = sorted(failed_types.items(), key=lambda pair: (-pair[1], pair[0]))
         summary = ", ".join(f"{kind} ({count})" for kind, count in kinds[:4])
         if len(kinds) > 4:
@@ -405,10 +432,19 @@ def temporal_signal() -> Signal:
             "warning",
             f"{len(failed)} failed executions in the past hour; "
             f"{failing} pending activities with repeated failures."
+            + (f" {long_pending} activities pending at least 4 hours "
+               f"(oldest {oldest_pending / 3600:.1f} hours)."
+               if long_pending else "")
             + (f" Types: {summary}." if summary else "")
             + (f" Diagnosed causes ({sampled} sampled closed runs): {cause_summary}."
                if cause_summary else ""),
-            " ".join(actions[:2]) + " Never replay a possibly accepted operation blindly.",
+            (
+                " ".join(actions[:2])
+                + (" Review activity schedule/heartbeat and worker task queue; "
+                   "long pending does not prove a dead worker."
+                   if long_pending else "")
+                + " Never replay a possibly accepted operation blindly."
+            ),
         )
     return Signal(
         "temporal",
@@ -646,7 +682,7 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
             "Protected backups" if kind == "backup" else "Isolated restore tests",
             lambda kind=kind: safety_signal(kind, now),
         )
-    probe("temporal", "Background workflows", temporal_signal)
+    probe("temporal", "Background workflows", lambda: temporal_signal(now=now))
     probe("drift", "Release cadence", release_probe or release_signals)
     probe("deployment", "Deployment and recovery controls", deployment_signals)
 
