@@ -196,8 +196,14 @@ function payload(selected = "") {
             notifications: {status: "failed", pending: 2},
             signals: [{key: "backup", label: "Protected backups", status: "critical",
                 detail: "Completion overdue <script>bad()</script>", action: "Retry safely"}],
-            incidents: [{label: "Protected backups", bot: "verifying", resolved: null, action: "Await fresh completion"}],
-            history: [{at: Date.now() / 1000, message: "Bot requested a safety job retry."}],
+            incidents: [{
+                id: 42, label: "Protected backups", status: "critical", bot: "verifying",
+                opened: Date.now() / 1000 - 3600, updated: Date.now() / 1000,
+                resolved: null, detail: "Provider rate limited <script>bad()</script>",
+                action: "Await fresh completion",
+            }],
+            history: [{incident: 42, at: Date.now() / 1000,
+                message: "Bot requested a safety job retry."}],
         }});
     });
 
@@ -412,6 +418,17 @@ function payload(selected = "") {
         assert.equal(await linkedWork.getAttribute("data-work-id"), requestedWork);
         assert.equal(await linkedWork.evaluate((node) => document.activeElement === node), true);
         assert.match(await linkedWork.innerText(), /Ranking clips/);
+
+        assert.equal(await page.locator("#health-incidents a[href*='incident=42']").count(), 1);
+        assert.equal(await page.locator("#health-history a[href*='incident=42']").count(), 1);
+        await page.goto(
+            "http://127.0.0.1:" + port + "/operations.html?incident=42#operations-health",
+        );
+        await page.locator("#focused-health-incident").waitFor();
+        assert.match(await page.locator("#focused-health-incident").innerText(), /Provider rate limited/);
+        assert.equal(await page.locator("#focused-health-incident script").count(), 0);
+        assert.match(await page.locator("#focused-health-incident").innerText(), /<script>bad/);
+        assert.match(await page.locator("#focused-health-incident").innerText(), /Bot requested a safety job retry/);
 
         assert.equal(await page.locator("#token").inputValue(), "");
         assert.equal(await page.evaluate(() => localStorage.length), 0);
