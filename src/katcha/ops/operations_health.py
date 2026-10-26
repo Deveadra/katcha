@@ -597,7 +597,7 @@ def stabilize_temporal_signal(
         since = float(quiet[0]) if quiet else now
     except (TypeError, ValueError, OverflowError):
         prior_check, since = 0, now
-    if not 0 <= now - prior_check <= TEMPORAL_MAX_GAP_SECONDS or not 0 <= now - since:
+    if not 0 <= now - prior_check <= TEMPORAL_MAX_GAP_SECONDS or now < since:
         since = now
     db.execute(
         "INSERT OR REPLACE INTO state VALUES ('temporal_quiet_since', ?)", (str(since),)
