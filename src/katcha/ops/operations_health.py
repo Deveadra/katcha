@@ -32,6 +32,9 @@ DEPLOY_LOCK = Path("/run/lock/katcha-production-deployment.lock")
 HOST = "katcha-prod-primary-001"
 DEADLINE: float | None = None
 HEALTH_URL = "https://app.katcha.stream/operations#operations-health"
+# A sliding failed-execution lookback expiring is not evidence of recovery.
+TEMPORAL_QUIET_SECONDS = 6 * 3600
+TEMPORAL_MAX_GAP_SECONDS = 15 * 60
 SAFETY = {
     "backup": (
         "katcha-backup.service",
@@ -192,8 +195,121 @@ def safety_signal(kind: str, now: float) -> Signal:
     return Signal(kind, label, "healthy", detail, completed_at=stamp)
 
 
+# Error strings are inspected only in process memory. Never include the input
+# values, raw Temporal history, IDs or stack traces in the ledger or Telegram.
+TEMPORAL_CAUSES = (
+    ("DISK_FULL", r"enospc|no space left on device|disk full|filesystem full",
+     "Check root/data volume space and inode usage; preserve stored data."),
+    ("OUT_OF_MEMORY", r"out of memory|oomkilled|oom killed|memoryerror",
+     "Check worker OOMs, container limits and host memory pressure."),
+    ("RATE_LIMIT", r"rate.?limit|too many requests|quota.?exceeded|http.?429|\b429\b",
+     "Inspect the affected provider quota and bounded retry/backoff settings."),
+    ("AUTHENTICATION", r"unauthorized|unauthenticated|invalid.?token|invalid.?credential|"
+     r"expired.?token|authentication failed|http.?401|\b401\b",
+     "Check the relevant provider credential's validity and authorized scope."),
+    ("PERMISSION", r"permission denied|access denied|forbidden|http.?403|\b403\b",
+     "Check the failing service's access policy and filesystem permissions."),
+    ("CODE_COMPATIBILITY", r"non.?deterministic|not registered|unknown workflow type|"
+     r"workflow task failed cause non deterministic",
+     "Inspect worker workflow registration and replay compatibility."),
+    ("DEPENDENCY_MISSING", r"modulenotfounderror|importerror|no module named|"
+     r"command not found|executable file not found",
+     "Inspect installed worker dependencies and deployed image versions."),
+    ("SOURCE_UNAVAILABLE", r"not found|http.?404|\b404\b|source unavailable",
+     "Verify the source/provider endpoint and source availability."),
+    ("NETWORK", r"connection refused|network unreachable|name resolution|"
+     r"getaddrinfo|dns failed|tls handshake|http.?50[234]|\b50[234]\b",
+     "Inspect provider reachability, DNS, egress and service availability."),
+    ("TIMEOUT", r"timed out|timeout|deadline exceeded",
+     "Inspect worker capacity, activity timeouts and dependent services."),
+)
+TEMPORAL_ACTIONS = {kind: action for kind, _, action in TEMPORAL_CAUSES}
+TEMPORAL_ACTIONS.update({
+    "HISTORY_UNAVAILABLE": "Inspect the exact failed execution on the Temporal host.",
+    "UNCLASSIFIED": "Inspect the private Temporal event history for the terminal failure.",
+    "ACTIVITY_FAILURE": "Inspect failing activity history and its worker logs.",
+    "ACTIVITY_TIMEOUT": "Inspect activity timeouts, heartbeat settings and worker capacity.",
+})
+
+
+def classify_temporal_failure(failure: Any, *, event_cause: str = "") -> str:
+    """Classify without ever returning unchecked failure content."""
+    if "NON_DETERMINISTIC" in event_cause.upper():
+        return "CODE_COMPATIBILITY"
+    fragments: list[str] = []
+    current = failure
+    for _ in range(5):
+        if not isinstance(current, dict):
+            break
+        for key in ("message", "source"):
+            value = current.get(key)
+            if isinstance(value, str):
+                fragments.append(value[:512])
+        info = current.get("applicationFailureInfo")
+        if isinstance(info, dict) and isinstance(info.get("type"), str):
+            fragments.append(info["type"][:160])
+        if isinstance(current.get("timeoutFailureInfo"), dict):
+            return "ACTIVITY_TIMEOUT"
+        current = current.get("cause")
+    sample = " ".join(fragments)
+    for kind, pattern, _ in TEMPORAL_CAUSES:
+        if re.search(pattern, sample, flags=re.IGNORECASE):
+            return kind
+    if isinstance(failure, dict):
+        if isinstance(failure.get("activityFailureInfo"), dict):
+            return "ACTIVITY_FAILURE"
+        if fragments:
+            return "UNCLASSIFIED"
+    return "HISTORY_UNAVAILABLE"
+
+
+def classify_temporal_history(history: Any) -> str:
+    """Accept Temporal CLI's JSON event-history envelope, not arbitrary payloads."""
+    events = history.get("events") if isinstance(history, dict) else None
+    if not isinstance(events, list) or len(events) > 20_000:
+        return "HISTORY_UNAVAILABLE"
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        attributes = item.get("workflowExecutionFailedEventAttributes")
+        if isinstance(attributes, dict):
+            return classify_temporal_failure(attributes.get("failure"))
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        attributes = item.get("workflowTaskFailedEventAttributes")
+        if isinstance(attributes, dict):
+            return classify_temporal_failure(
+                attributes.get("failure"), event_cause=str(attributes.get("cause", ""))[:128]
+            )
+    return "HISTORY_UNAVAILABLE"
+
+
+def temporal_failure_cause(
+    prefix: tuple[str, ...], common: tuple[str, ...], execution: Any
+) -> str:
+    """Best-effort bounded read-only inspection of one *closed* failed run."""
+    if not isinstance(execution, dict):
+        return "HISTORY_UNAVAILABLE"
+    wid, rid = execution.get("workflowId"), execution.get("runId")
+    if (
+        not isinstance(wid, str) or not isinstance(rid, str)
+        or not (0 < len(wid) <= 255) or not (0 < len(rid) <= 128)
+    ):
+        return "HISTORY_UNAVAILABLE"
+    try:
+        raw = command(
+            *prefix, "show", *common, "--workflow-id", wid, "--run-id", rid, timeout=8
+        )
+        if len(raw) > 2_000_000:
+            return "HISTORY_UNAVAILABLE"
+        return classify_temporal_history(json.loads(raw))
+    except (ProbeError, ValueError, TypeError):
+        return "HISTORY_UNAVAILABLE"
+
+
 def temporal_signal() -> Signal:
-    """Normal active work is healthy; repeated activity failures need attention."""
+    """Show bounded failure categories and useful next actions, never raw errors."""
     prefix = (
         "docker",
         "exec",
@@ -217,38 +333,82 @@ def temporal_signal() -> Signal:
             "101",
         )
     )
-    if not isinstance(failed, list):
-        raise ValueError("Failed workflow inventory incomplete")
+    if not isinstance(failed, list) or len(failed) > 100:
+        raise ProbeError("Temporal failed workflow inventory is incomplete (limit 100).")
+    failed_types: dict[str, int] = {}
+    for item in failed:
+        if not isinstance(item, dict):
+            raise ProbeError("Temporal failed workflow inventory contains invalid records.")
+        kind = item.get("type") or item.get("workflowType")
+        name = kind.get("name") if isinstance(kind, dict) else None
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name):
+            name = "unidentified"
+        failed_types[name] = failed_types.get(name, 0) + 1
+
     rows = json.loads(
         command(*prefix, "list", *common, "--query", 'ExecutionStatus="Running"', "--limit", "101")
     )
     if not isinstance(rows, list) or len(rows) > 100:
-        raise ValueError("Workflow inventory incomplete")
+        raise ProbeError("Temporal running workflow inventory is incomplete (limit 100).")
     pending = 0
     failing = 0
+    pending_causes: list[str] = []
     for row in rows:
         execution = row["execution"]
         wid, rid = execution["workflowId"], execution["runId"]
         if not isinstance(wid, str) or not isinstance(rid, str) or len(wid) > 255:
-            raise ValueError("Workflow identity invalid")
+            raise ProbeError("Temporal running workflow identity is invalid.")
         data = json.loads(
             command(*prefix, "describe", *common, "--workflow-id", wid, "--run-id", rid)
         )
         if data["workflowExecutionInfo"]["execution"] != execution:
-            raise ValueError("Workflow identity changed")
+            raise ProbeError("Temporal workflow identity changed during inspection.")
         activities = data.get("pendingActivities") or []
         pending += len(activities)
-        failing += sum(
-            bool(a.get("lastFailure")) and int(a.get("attempt", 0)) >= 3 for a in activities
-        )
+        for activity in activities:
+            if activity.get("lastFailure") and int(activity.get("attempt", 0)) >= 3:
+                failing += 1
+                pending_causes.append(classify_temporal_failure(activity["lastFailure"]))
+
     if failing or failed:
+        kinds = sorted(failed_types.items(), key=lambda pair: (-pair[1], pair[0]))
+        summary = ", ".join(f"{kind} ({count})" for kind, count in kinds[:4])
+        if len(kinds) > 4:
+            summary += f", {sum(count for _, count in kinds[4:])} other"
+
+        # Never inspect all failing histories on the five-minute monitoring tick.
+        # Most recent listed executions supply a small diagnostic sample; errors
+        # inspecting one execution must not hide the failed-run count.
+        sampled = min(3, len(failed))
+        causes = list(pending_causes)
+        causes.extend(
+            temporal_failure_cause(prefix, common, item.get("execution"))
+            for item in failed[:sampled]
+        )
+        cause_counts: dict[str, int] = {}
+        for cause in causes:
+            cause_counts[cause] = cause_counts.get(cause, 0) + 1
+        cause_summary = ", ".join(
+            f"{kind} ({count})"
+            for kind, count in sorted(
+                cause_counts.items(), key=lambda pair: (-pair[1], pair[0])
+            )[:4]
+        )
+        actions = []
+        for cause in causes:
+            action = TEMPORAL_ACTIONS.get(cause, TEMPORAL_ACTIONS["UNCLASSIFIED"])
+            if action not in actions:
+                actions.append(action)
         return Signal(
             "temporal",
             "Background workflows",
             "warning",
-            f"{len(failed)} recently failed workflows; "
-            f"{failing} activities have repeated failures.",
-            "Inspect workflow history and repair the failing dependency.",
+            f"{len(failed)} failed executions in the past hour; "
+            f"{failing} pending activities with repeated failures."
+            + (f" Types: {summary}." if summary else "")
+            + (f" Diagnosed causes ({sampled} sampled closed runs): {cause_summary}."
+               if cause_summary else ""),
+            " ".join(actions[:2]) + " Never replay a possibly accepted operation blindly.",
         )
     return Signal(
         "temporal",
@@ -557,11 +717,66 @@ def event(db: sqlite3.Connection, ident: int, now: float, message: str) -> None:
     db.execute("INSERT INTO events(incident, at, message) VALUES (?, ?, ?)", (ident, now, message))
 
 
+def stabilize_temporal_signal(
+    db: sqlite3.Connection, signal: Signal, row: sqlite3.Row | None, now: float
+) -> Signal:
+    """Keep an incident active while a rolling failed-run window merely goes quiet.
+
+    Do not call an elapsed lookback a verified recovery. Require six hours of
+    continuously monitored quiet before retiring an alert; interrupted monitoring
+    restarts that quiet window.
+    """
+    if signal.key != "temporal":
+        return signal
+    if signal.status != "healthy" or row is None:
+        db.execute("DELETE FROM state WHERE key='temporal_quiet_since'")
+        return signal
+    previous = db.execute("SELECT value FROM state WHERE key='checked_at'").fetchone()
+    quiet = db.execute("SELECT value FROM state WHERE key='temporal_quiet_since'").fetchone()
+    try:
+        prior_check = float(previous[0]) if previous else 0
+        since = float(quiet[0]) if quiet else now
+    except (TypeError, ValueError, OverflowError):
+        prior_check, since = 0, now
+    if not 0 <= now - prior_check <= TEMPORAL_MAX_GAP_SECONDS or now < since:
+        since = now
+    db.execute(
+        "INSERT OR REPLACE INTO state VALUES ('temporal_quiet_since', ?)", (str(since),)
+    )
+    if now - since < TEMPORAL_QUIET_SECONDS:
+        return Signal(
+            "temporal",
+            "Background workflows",
+            "warning",
+            "No failed executions in the past hour; observing a six-hour quiet period. "
+            "Earlier failed executions remain in Temporal history.",
+            "Inspect the earlier failed executions; an expired lookback is not a successful retry.",
+        )
+    return signal
+
+
 def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None:
+    observed: list[Signal] = []
     for signal in signals:
         row = db.execute(
             "SELECT * FROM incidents WHERE key=? AND resolved IS NULL", (signal.key,)
         ).fetchone()
+        new_failure_after_quiet = (
+            signal.key == "temporal"
+            and signal.status == "warning"
+            and row is not None
+            and db.execute(
+                "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
+            ).fetchone() is not None
+        )
+        signal = stabilize_temporal_signal(db, signal, row, now)
+        observed.append(signal)
+        if new_failure_after_quiet:
+            event(
+                db, row["id"], now,
+                "Background workflows: new failures detected after a quiet period. "
+                + signal.detail + " " + signal.action,
+            )
         if signal.status == "healthy":
             if row:
                 if (
@@ -571,10 +786,16 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                 ):
                     continue
                 db.execute(
-                    "UPDATE incidents SET resolved=?, updated=?, bot='verified' WHERE id=?",
-                    (now, now, row["id"]),
+                    "UPDATE incidents SET resolved=?, updated=?, bot=? WHERE id=?",
+                    (now, now, "quieted" if signal.key == "temporal" else "verified", row["id"]),
                 )
-                event(db, row["id"], now, signal.label + ": recovery verified by a fresh check.")
+                message = (
+                    "Background workflows: six hours without observed failures; "
+                    "previously failed executions are retained for investigation."
+                    if signal.key == "temporal"
+                    else signal.label + ": recovery verified by a fresh check."
+                )
+                event(db, row["id"], now, message)
             continue
         if row is None:
             ident = db.execute(
@@ -601,7 +822,7 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                 db.execute("UPDATE incidents SET bot='queued' WHERE id=?", (row["id"],))
     db.execute(
         "INSERT OR REPLACE INTO state VALUES ('signals', ?)",
-        (json.dumps([asdict(s) for s in signals]),),
+        (json.dumps([asdict(s) for s in observed]),),
     )
     db.execute("INSERT OR REPLACE INTO state VALUES ('checked_at', ?)", (str(now),))
     db.commit()

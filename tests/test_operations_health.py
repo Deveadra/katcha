@@ -252,6 +252,203 @@ def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monke
     assert "SECRET" not in warning.detail
 
 
+
+def test_temporal_failure_types_are_bounded_and_no_private_errors_leak(monkeypatch):
+    rows = [
+        {"type": {"name": "SourceIngestWorkflow"}, "execution": {"workflowId": "private-A"}},
+        {"type": {"name": "SourceIngestWorkflow"}, "error": "SECRET"},
+        {"type": {"name": "private:SECRET"}, "failure": {"message": "SECRET"}},
+    ]
+
+    def command(*args, **kwargs):
+        if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+            return json.dumps(rows)
+        return "[]"
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal()
+    assert signal.status == "warning"
+    assert "3 failed executions" in signal.detail
+    assert "SourceIngestWorkflow (2)" in signal.detail
+    assert "unidentified (1)" in signal.detail
+    assert "SECRET" not in signal.detail
+    assert "private-A" not in signal.detail
+
+    rows[:] = [{"type": {"name": "DiscoveryWorkflow"}}] * 101
+    with pytest.raises(ops.ProbeError, match="incomplete"):
+        ops.temporal_signal()
+
+
+@pytest.mark.parametrize(
+    "message,code,action_fragment",
+    [
+        ("OSError: [Errno 28] No space left on device", "DISK_FULL", "volume space"),
+        ("Provider returned HTTP 429 Too Many Requests", "RATE_LIMIT", "provider quota"),
+        ("upstream returned 401 unauthorized", "AUTHENTICATION", "credential"),
+        ("HTTP 403 Forbidden", "PERMISSION", "access policy"),
+        ("Connection refused by dependency", "NETWORK", "DNS"),
+        ("ModuleNotFoundError: package_x", "DEPENDENCY_MISSING", "dependencies"),
+        ("task timed out", "TIMEOUT", "capacity"),
+        ("details for person@example.com", "UNCLASSIFIED", "private Temporal"),
+    ],
+)
+def test_temporal_failure_codes_are_safe_and_actionable(message, code, action_fragment):
+    failure = {
+        "message": message,
+        "stackTrace": "SECRET_STACK",
+        "applicationFailureInfo": {"type": "SensitivePayload"},
+    }
+    assert ops.classify_temporal_failure(failure) == code
+    assert action_fragment in ops.TEMPORAL_ACTIONS[code]
+    assert message not in ops.TEMPORAL_ACTIONS[code]
+    assert "SECRET" not in ops.TEMPORAL_ACTIONS[code]
+
+
+def test_temporal_history_uses_terminal_event_and_nested_cause():
+    history = {"events": [
+        {"eventType": "EVENT_TYPE_WORKFLOW_TASK_FAILED",
+         "workflowTaskFailedEventAttributes": {
+             "failure": {"message": "old irrelevant failure"}}},
+        {"eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_FAILED",
+         "workflowExecutionFailedEventAttributes": {
+             "failure": {"message": "workflow failed",
+                         "cause": {"message": "HTTP 429: SECRET_KEY=123",
+                                   "applicationFailureInfo": {"type": "RateLimited"}}}}},
+    ]}
+    assert ops.classify_temporal_history(history) == "RATE_LIMIT"
+    assert ops.classify_temporal_history({"events": [
+        {"workflowTaskFailedEventAttributes": {
+            "cause": "WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR",
+            "failure": {"message": "SECRET"}}}
+    ]}) == "CODE_COMPATIBILITY"
+    assert ops.classify_temporal_history({"events": [
+        {"workflowExecutionFailedEventAttributes": {
+            "failure": {"timeoutFailureInfo": {"timeoutType": "START_TO_CLOSE"}}}}
+    ]}) == "ACTIVITY_TIMEOUT"
+    assert ops.classify_temporal_history({"events": []}) == "HISTORY_UNAVAILABLE"
+    assert ops.classify_temporal_history({"events": [None] * 20001}) == "HISTORY_UNAVAILABLE"
+
+
+def test_temporal_alert_includes_failure_codes_and_actions_without_secrets(monkeypatch):
+    failed = [
+        {"type": {"name": "SourceIngestWorkflow"},
+         "execution": {"workflowId": "sensitive-123", "runId": "run-a"}},
+        {"type": {"name": "SourceIngestWorkflow"},
+         "execution": {"workflowId": "sensitive-456", "runId": "run-b"}},
+        {"type": {"name": "DiscoveryWorkflow"},
+         "execution": {"workflowId": "sensitive-789", "runId": "run-c"}},
+        {"type": {"name": "DiscoveryWorkflow"},
+         "execution": {"workflowId": "sensitive-999", "runId": "run-d"}},
+    ]
+    show_ids = []
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return json.dumps(failed)
+            return "[]"
+        if "show" in args:
+            assert kwargs["timeout"] == 8
+            show_ids.append(args[args.index("--workflow-id") + 1])
+            return json.dumps({"events": [
+                {"workflowExecutionFailedEventAttributes": {
+                    "failure": {"message": "HTTP 429 SECRET_API_KEY=123"}}}
+            ]})
+        raise AssertionError("Unexpected command")
+
+    monkeypatch.setattr(ops, "command", command)
+    warning = ops.temporal_signal()
+    assert warning.status == "warning"
+    assert "4 failed executions" in warning.detail
+    assert "SourceIngestWorkflow (2)" in warning.detail
+    assert "RATE_LIMIT (3)" in warning.detail
+    assert "3 sampled closed runs" in warning.detail
+    assert "provider quota" in warning.action
+    assert len(show_ids) == 3
+    assert "sensitive-" not in warning.detail + warning.action
+    assert "SECRET_API_KEY" not in warning.detail + warning.action
+
+
+def test_temporal_history_probe_failure_preserves_failed_count(monkeypatch):
+    failed = [{"type": {"name": "AcquisitionWorkflow"},
+               "execution": {"workflowId": "secret-workflow", "runId": "run"}}]
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return json.dumps(failed)
+            return "[]"
+        if "show" in args:
+            raise ops.ProbeError("temporal exceeded its diagnostic time limit.")
+        raise AssertionError("Unexpected command")
+
+    monkeypatch.setattr(ops, "command", command)
+    warning = ops.temporal_signal()
+    assert warning.status == "warning"
+    assert "1 failed executions" in warning.detail
+    assert "HISTORY_UNAVAILABLE" in warning.detail
+    assert "Inspect the exact failed execution" in warning.action
+    assert "secret-workflow" not in warning.detail + warning.action
+
+
+
+def test_temporal_rolling_window_expiry_is_not_verified_recovery(ledger):
+    failed = ops.Signal("temporal", "Background workflows", "warning", "1 failed", "Investigate")
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "0 failed recently")
+
+    ops.reconcile(ledger, [failed], NOW)
+    for step in range(1, 73):
+        ops.reconcile(ledger, [quiet], NOW + step * 300)
+    incident = ledger.execute("SELECT * FROM incidents WHERE key='temporal'").fetchone()
+    assert incident["resolved"] is None
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    snapshot_signals = json.loads(
+        ledger.execute("SELECT value FROM state WHERE key='signals'").fetchone()[0]
+    )
+    assert snapshot_signals[0]["status"] == "warning"
+    assert "quiet period" in snapshot_signals[0]["detail"]
+
+    ops.reconcile(ledger, [quiet], NOW + 73 * 300)
+    incident = ledger.execute("SELECT * FROM incidents WHERE key='temporal'").fetchone()
+    assert incident["resolved"] == NOW + 73 * 300
+    assert incident["bot"] == "quieted"
+    messages = [
+        row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")
+    ]
+    assert len(messages) == 2
+    assert "six hours without observed failures" in messages[-1]
+    assert not any("recovery verified" in message for message in messages)
+
+
+def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
+    failed = ops.Signal("temporal", "Background workflows", "warning", "failed")
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "no recent failures")
+    ops.reconcile(ledger, [failed], NOW)
+    ops.reconcile(ledger, [quiet], NOW + 300)
+    ops.reconcile(ledger, [quiet], NOW + 7 * 3600)
+    assert ledger.execute("SELECT resolved FROM incidents").fetchone()[0] is None
+
+    ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 300)
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
+    ).fetchone() is None
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    # A repeated observation while the incident stays active cannot page again.
+    ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 301)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+
+    ops.reconcile(ledger, [quiet], NOW + 7 * 3600 + 600)
+    assert float(
+        ledger.execute("SELECT value FROM state WHERE key='temporal_quiet_since'")
+        .fetchone()[0]
+    ) == NOW + 7 * 3600 + 600
+    events = [row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")]
+    assert "new failures detected after a quiet period" in events[-1]
+    # A genuine new warning after another quiet observation produces a new event.
+    ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 900)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 3
+
+
 def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
     from katcha.ops import production_release_observer as observer
     from katcha.ops import release_eligibility

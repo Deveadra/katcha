@@ -17,7 +17,7 @@ release diagnostics refresh hourly; unchanged reviews do not repeat alerts.
 | --- | --- |
 | Backups | Hourly timer, latest service result, positive journal completion after protected R2 upload; overdue after two hours. Skipped jobs are not success. |
 | Restore tests | Weekly timer, latest service result, positive isolated three-database restore completion; overdue after eight days. Partial restores are not accepted. |
-| Background workflows | Bounded inventory, pending activity attempts and recently failed executions. Running schedulers alone are healthy; repeated activity failures raise attention. |
+| Background workflows | Bounded failed-execution inventory, safe workflow-type counts and **read-only terminal-history classifications** for up to three recent failed runs; also classifies repeated pending-activity errors. Emits codes such as `DISK_FULL`, `RATE_LIMIT`, `AUTHENTICATION`, `NETWORK`, `TIMEOUT`, `DEPENDENCY_MISSING`, `CODE_COMPATIBILITY` and a targeted follow-up. Never sends raw exceptions or IDs. A failed-run falling out of the one-hour query does not prove recovery; retain the incident through six continuously monitored quiet hours. A gap over 15 minutes resets the clock. |
 | Release cadence | Existing observer's bounded descendant comparison, even while main's CI is incomplete; warnings at 60 commits or 80 files, ahead of the 75/100 review thresholds and 250/299 hard limits. |
 | Next release | Exact candidate and migration presence. The bot invokes the existing deployer's read-only `--diagnose-release` and records review counts ahead of approval. |
 | Authorization and recovery | Existing deployment-control diagnostics and running API authority verification. An open host gate or enabled automatic deployment polling raises attention. Signed requests retain the existing protected approval/notifier path. |
@@ -28,6 +28,57 @@ Missing evidence is unknown, never healthy. Journal retention must cover the
 eight-day restore window. Missing historical completion logs require a fresh
 safety job. These observations do not replace backup integrity verification,
 disaster failover rehearsals, Temporal replay or signed release approval.
+
+## Diagnose a recurring Temporal alert
+
+The operations notification now includes a count of recent failed executions,
+a sanitized workflow-type summary, **diagnostic cause categories**, and specific
+next actions. The monitor reads the terminal Temporal event for up to three
+failed runs per observation and recognizes last-failure categories for pending
+activities after three attempts. It never forwards raw exception messages, stack
+traces, task inputs, workflow IDs, authentication material or full event history
+to Telegram or the public snapshot. `HISTORY_UNAVAILABLE` and `UNCLASSIFIED`
+mean there is insufficient evidence to determine the cause, not a successful run.
+The classifications are evidence-derived hints, not proof of an external dependency
+being repaired. To inspect all affected executions and full detailed errors on
+the primary, use these read-only commands. They neither rerun nor terminate work:
+
+```bash
+# On katcha-prod-primary-001, inspect failures from the preceding 24 hours.
+CUTOFF="$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+sudo docker exec katcha-production-temporal-1 temporal --output json workflow list \
+  --address temporal:7233 --namespace default \
+  --query "ExecutionStatus=\"Failed\" AND CloseTime > \"$CUTOFF\"" \
+  --limit 101 | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)
+if not isinstance(rows, list):
+    raise SystemExit("Temporal failed-run inventory is not a list")
+if len(rows) > 100:
+    raise SystemExit("Temporal inventory may be truncated; use narrower date windows")
+for row in rows:
+    execution = row.get("execution") or {}
+    kind = row.get("type") or row.get("workflowType") or {}
+    print("type:", kind.get("name", "unknown"),
+          "workflow_id:", execution.get("workflowId"),
+          "run_id:", execution.get("runId"),
+          "closed_at:", row.get("closeTime", "unknown"))
+'
+```
+
+For any returned execution, retrieve its **actual failure event** with the
+existing Temporal CLI and correlate the same time window with
+`sudo docker logs --since 24h --tail 500 katcha-production-worker-1`,
+`katcha-production-intelligence-worker-1`, and other applicable registered
+workers. An empty failed list may mean a time-window mismatch or purged history,
+not a repaired dependency. Do not paste raw history, full exceptions, worker
+environment, or credential-bearing logs into public issues. Redact URLs and
+tokens before sharing diagnostic excerpts. Use the workflow ID/run ID from the
+listing; do not guess or manually retry potentially non-idempotent jobs.
+
+The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
+no new failure was observed under continuous monitoring; it is not proof that
+earlier failed work reran, resumed, or reached its business outcome.
 
 ## Bounded remediation bot
 
