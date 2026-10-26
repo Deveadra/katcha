@@ -19,7 +19,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from katcha.editorial.retrieval import public_addresses
 
-
 # These caps bound one ephemeral browser session, not a durable Temporal goal.
 # Future per-goal budgets must be enforced by the goal control plane as well.
 MAX_BROWSER_NAVIGATIONS = 64
