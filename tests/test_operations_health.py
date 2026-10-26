@@ -176,6 +176,7 @@ def test_notification_outbox_retries_and_only_marks_confirmed_delivery(ledger, m
     ops.notify(ledger, NOW + 2)
     assert len(calls) == 2
     assert ops.HEALTH_URL in calls[-1]
+    assert "operations?incident=1#operations-health" in calls[-1]
     assert "private-token" not in calls[-1]
     assert ledger.execute("SELECT delivered FROM events").fetchone()[0] == 1
 
