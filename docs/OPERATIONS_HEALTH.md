@@ -146,6 +146,12 @@ sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20
 sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20 --private-ids
 ```
 
+Telegram notification events with a numbered incident now include an
+`/operations?incident=<id>#operations-health` link. Activate the reviewed
+incident-link UI from PR #543 before relying on this destination for direct
+inspection. It shows only the authenticated, sanitized and bounded snapshot,
+not the private execution evidence.
+
 Do not post `--private-ids` output publicly. Without a deployment/monitor
 installation and live CLI acceptance, the existence of this source code is not
 proof production evidence is being collected. A successful workflow retry
