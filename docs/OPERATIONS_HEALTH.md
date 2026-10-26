@@ -21,7 +21,7 @@ release diagnostics refresh hourly; unchanged reviews do not repeat alerts.
 | Release cadence | Existing observer's bounded descendant comparison, even while main's CI is incomplete; warnings at 60 commits or 80 files, ahead of the 75/100 review thresholds and 250/299 hard limits. |
 | Next release | Exact candidate and migration presence. The bot invokes the existing deployer's read-only `--diagnose-release` and records review counts ahead of approval. |
 | Authorization and recovery | Existing deployment-control diagnostics and running API authority verification. An open host gate or enabled automatic deployment polling raises attention. Signed requests retain the existing protected approval/notifier path. |
-| Infrastructure | Required production containers, local API readiness and persistent storage; warn below 20% free, critical below 10%. |
+| Infrastructure | Required production containers and API readiness. Independently check root (`/`) and production data (`/srv/katcha`) for free bytes (<20% warning, <10% critical) and free inodes (<15% warning, <5% critical), with unknown rather than healthy when a probe fails. Read bounded Docker Compose container OOM, stopped-state and cumulative restart metadata without exposing Docker configuration/environment. Historical restart counts are informational, not automatically incident-worthy. |
 | Notifications | Existing protected Telegram configuration and durable delivery state. No second update consumer is started. |
 
 Missing evidence is unknown, never healthy. Journal retention must cover the
@@ -76,9 +76,92 @@ environment, or credential-bearing logs into public issues. Redact URLs and
 tokens before sharing diagnostic excerpts. Use the workflow ID/run ID from the
 listing; do not guess or manually retry potentially non-idempotent jobs.
 
+Stalled-work detection is intentionally conservative: an activity still
+pending **at least four hours** after its Temporal `scheduledTime` raises an
+attention warning with count and oldest age. This is not a claim of failure:
+long-running media processing can be legitimate. The monitor does not call a
+long-lived scheduler stalled simply because its workflow start time is old.
+Unknown/malformed activity timestamps are not converted to a guessed age.
+Inspect the relevant activity's schedule-to-close policy, last heartbeat,
+task queue worker polling and downstream media progress before considering a
+retry or cancellation.
+
+Newly diagnosed Temporal failure categories are fingerprinted from **safe
+workflow type names and allowlisted cause codes**, not raw execution IDs, error
+strings or volatile failure counts. An active incident raises a new notification
+only if a different category combination persists for two consecutive monitor
+observations. This avoids an alert for every five-minute count change while
+still notifying for a materially changed failure pattern. The fingerprint is
+a diagnostic category hash, not a unique execution identity; individual
+failure attribution and private evidence review require a separate workflow
+evidence inspector.
+
 The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
 no new failure was observed under continuous monitoring; it is not proof that
 earlier failed work reran, resumed, or reached its business outcome.
+
+## Host pressure first-response
+
+The root filesystem and data volume are separate health signals. A healthy
+`/srv/katcha` volume does not imply the root filesystem has room for
+Docker layers or service logs. Both byte and inode capacity are checked.
+
+For an alert, inspect read-only evidence before any cleanup:
+
+```bash
+df -h / /srv/katcha
+df -i / /srv/katcha
+sudo docker system df
+sudo docker ps -a --filter label=com.docker.compose.project=katcha-production
+```
+
+Docker metadata can identify OOM-killed and stopped containers, plus their
+**cumulative** restart counts. A nonzero restart count alone does not prove
+recent instability. Do not run `docker system prune`, delete images or logs,
+or remove volumes as automatic remediation. Check Docker storage growth and
+the specific container journal first, and preserve release/backup evidence.
+
+## Root-private Temporal execution evidence
+
+Each observation records at most 100 failed execution identities seen by Temporal
+in the root-only `ledger.sqlite3`. At most three recent execution histories per
+tick are inspected for a cause classification; others are explicitly
+`HISTORY_NOT_SAMPLED`. Records are keyed idempotently by a digest of workflow
+ID and run ID, with first and last observed timestamps. This preserves the
+identity of failed work after it leaves the one-hour monitoring window. Records
+older than 14 days are pruned, with a hard maximum of 2,000 retained rows.
+This affects only the diagnostic ledger, **not** Temporal histories, media,
+job records or backups.
+
+The evidence table stores exact workflow/run IDs **only** in the root-private
+ledger (file mode 0600); no raw exceptions, task payloads or histories are
+stored there. The existing public API and Telegram snapshot never mount or
+serialize this evidence table. The new read-only inspector defaults to hashed
+lookup IDs and category codes:
+
+```bash
+# On the primary, after review/merge of the exact accepted source:
+# Read only from the accepted main branch. This does not deploy the application.
+sudo git -C /opt/katcha fetch origin main
+sudo git -C /opt/katcha show origin/main:scripts/inspect-operations-temporal-evidence.py \
+  | sudo python3 - --limit 20
+
+# Only for a private operator investigation requiring exact Temporal IDs:
+sudo git -C /opt/katcha show origin/main:scripts/inspect-operations-temporal-evidence.py \
+  | sudo python3 - --limit 20 --private-ids
+```
+
+Telegram notification events with a numbered incident now include an
+`/operations?incident=<id>#operations-health` link. Activate the reviewed
+incident-link UI from PR #543 before relying on this destination for direct
+inspection. It shows only the authenticated, sanitized and bounded snapshot,
+not the private execution evidence.
+
+Do not post `--private-ids` output publicly. Without a deployment/monitor
+installation and live CLI acceptance, the existence of this source code is not
+proof production evidence is being collected. A successful workflow retry
+still requires separate business-output verification; this table only
+preserves failures and diagnostic categories.
 
 ## Bounded remediation bot
 
