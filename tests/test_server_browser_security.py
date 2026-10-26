@@ -294,3 +294,105 @@ async def test_stale_view_cannot_target_focused_controls_or_capture_new_page(act
     page.keyboard.insert_text.assert_not_awaited()
     page.keyboard.press.assert_not_awaited()
     page.screenshot.assert_not_awaited()
+
+
+async def test_connect_budget_exhaustion_fails_before_any_dns_or_upstream(monkeypatch):
+    monkeypatch.setattr(server_browser, "MAX_BROWSER_CONNECTS", 0)
+    opened = []
+
+    async def forbidden(*args, **kwargs):
+        opened.append(args)
+        raise AssertionError("No outgoing connection allowed")
+
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    reader, writer = asyncio.StreamReader(), Writer()
+    reader.feed_data(b"CONNECT fixture.example:443 HTTP/1.1\\r\\n\\r\\n")
+    reader.feed_eof()
+    proxy = server_browser.PublicProxy()
+    await proxy.handle(reader, writer)
+    assert proxy.exhausted is True
+    assert proxy.connect_attempts == 1
+    assert not opened
+    assert b"403 Forbidden" in writer.output
+
+
+@pytest.mark.parametrize(
+    ("exhausted", "code", "action", "uncertain"),
+    [
+        ("Browser research navigation limit reached",
+         "browser_navigation_budget_exhausted", "open", False),
+        ("Browser network request limit reached",
+         "browser_network_budget_exhausted", "click", True),
+        ("Browser screenshot exceeds the bounded output size",
+         "browser_screenshot_too_large", "screenshot", False),
+    ],
+)
+def test_browser_budget_diagnostics_are_typed(exhausted, code, action, uncertain):
+    result = server_browser.browser_failure(ValueError(exhausted), action)
+    assert result["code"] == code
+    assert result["outcome_uncertain"] is uncertain
+    assert exhausted not in result.values()
+
+
+@pytest.mark.parametrize("limiter", ["navigation", "network"])
+async def test_existing_session_refuses_exhausted_research(limiter):
+    pool = server_browser.BrowserPool()
+    key = ("actor", "channel", "goal")
+    proxy = SimpleNamespace(exhausted=limiter == "network", close=AsyncMock())
+    session = server_browser.Session(SimpleNamespace(close=AsyncMock()), proxy)
+    session.navigation_budget_exhausted = limiter == "navigation"
+    pool.sessions[key] = session
+    pool.browser = SimpleNamespace(is_connected=lambda: True)
+    with pytest.raises(ValueError, match="limit reached"):
+        await pool.execute(key, server_browser.BrowserAction(action="snapshot"))
+    # Exhaustion does not authorize a silent new session, but explicit close works.
+    result = await pool.execute(key, server_browser.BrowserAction(action="close"))
+    assert result["code"] == "session_closed"
+    assert key not in pool.sessions
+
+
+async def test_session_deadline_closes_without_replaying_browser_action(monkeypatch):
+    monkeypatch.setattr(server_browser, "MAX_BROWSER_SESSION_SECONDS", 1)
+    pool = server_browser.BrowserPool()
+    key = ("actor", "channel", "goal")
+    context, proxy = SimpleNamespace(close=AsyncMock()), SimpleNamespace(close=AsyncMock())
+    session = server_browser.Session(context, proxy)
+    session.created -= 10
+    pool.sessions[key] = session
+    pool.browser = SimpleNamespace(is_connected=lambda: True)
+    result = await pool.execute(key, server_browser.BrowserAction(action="snapshot"))
+    assert result["available"] is False
+    assert result["code"] == "browser_session_deadline_exceeded"
+    assert key not in pool.sessions
+    context.close.assert_awaited_once()
+    proxy.close.assert_awaited_once()
+
+
+async def test_screenshot_output_is_bounded(monkeypatch):
+    monkeypatch.setattr(server_browser, "MAX_BROWSER_SCREENSHOT_BYTES", 8)
+    pool = server_browser.BrowserPool()
+    key = ("actor", "channel", "goal")
+    screenshot = AsyncMock(return_value=b"large capture")
+    page = SimpleNamespace(is_closed=lambda: False, url="https://fixture.example/",
+                           screenshot=screenshot)
+    session = server_browser.Session(SimpleNamespace(), SimpleNamespace(), page=page)
+    pool.sessions[key] = session
+    pool.browser = SimpleNamespace(is_connected=lambda: True)
+    with pytest.raises(ValueError, match="bounded output size"):
+        await pool.execute(key, server_browser.BrowserAction(action="screenshot"))
+    screenshot.assert_awaited_once()
+
+
+async def test_snapshot_exposes_no_secret_bearing_budget_values():
+    page = SimpleNamespace(
+        frames=[], locator=lambda _: SimpleNamespace(
+            inner_text=AsyncMock(return_value="fixture page")),
+        url="https://fixture.example/path?token=private", title=AsyncMock(return_value="Fixture")
+    )
+    proxy = SimpleNamespace(connect_attempts=7, exhausted=False)
+    session = server_browser.Session(SimpleNamespace(pages=[page]), proxy, page=page)
+    session.navigations = 3
+    result = await server_browser.BrowserPool().snapshot(session)
+    assert result["research_budget"]["navigations_used"] == 3
+    assert result["research_budget"]["network_connects_used"] == 7
+    assert "token" not in str(result["research_budget"])
