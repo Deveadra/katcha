@@ -17,7 +17,7 @@ release diagnostics refresh hourly; unchanged reviews do not repeat alerts.
 | --- | --- |
 | Backups | Hourly timer, latest service result, positive journal completion after protected R2 upload; overdue after two hours. Skipped jobs are not success. |
 | Restore tests | Weekly timer, latest service result, positive isolated three-database restore completion; overdue after eight days. Partial restores are not accepted. |
-| Background workflows | Bounded inventory, pending activity attempts and recently failed executions. Reports safe workflow-type counts, not execution payloads. Running schedulers alone are healthy; repeated activity failures raise attention. A failed-run falling out of the one-hour query does **not** prove recovery: the incident stays open through six hours of continuously observed quiet, with no repeated alert for the same ongoing incident. A monitor gap longer than 15 minutes restarts the quiet clock. Quiet closure explicitly does not mean a failed execution was repaired. |
+| Background workflows | Bounded failed-execution inventory, safe workflow-type counts and **read-only terminal-history classifications** for up to three recent failed runs; also classifies repeated pending-activity errors. Emits codes such as `DISK_FULL`, `RATE_LIMIT`, `AUTHENTICATION`, `NETWORK`, `TIMEOUT`, `DEPENDENCY_MISSING`, `CODE_COMPATIBILITY` and a targeted follow-up. Never sends raw exceptions or IDs. A failed-run falling out of the one-hour query does not prove recovery; retain the incident through six continuously monitored quiet hours. A gap over 15 minutes resets the clock. |
 | Release cadence | Existing observer's bounded descendant comparison, even while main's CI is incomplete; warnings at 60 commits or 80 files, ahead of the 75/100 review thresholds and 250/299 hard limits. |
 | Next release | Exact candidate and migration presence. The bot invokes the existing deployer's read-only `--diagnose-release` and records review counts ahead of approval. |
 | Authorization and recovery | Existing deployment-control diagnostics and running API authority verification. An open host gate or enabled automatic deployment polling raises attention. Signed requests retain the existing protected approval/notifier path. |
@@ -31,9 +31,17 @@ disaster failover rehearsals, Temporal replay or signed release approval.
 
 ## Diagnose a recurring Temporal alert
 
-The operations notification gives **a count of recent failed executions**, not the
-terminal error from Temporal history. To investigate the actual failure on the
-primary, use these read-only commands. They neither rerun nor terminate work:
+The operations notification now includes a count of recent failed executions,
+a sanitized workflow-type summary, **diagnostic cause categories**, and specific
+next actions. The monitor reads the terminal Temporal event for up to three
+failed runs per observation and recognizes last-failure categories for pending
+activities after three attempts. It never forwards raw exception messages, stack
+traces, task inputs, workflow IDs, authentication material or full event history
+to Telegram or the public snapshot. `HISTORY_UNAVAILABLE` and `UNCLASSIFIED`
+mean there is insufficient evidence to determine the cause, not a successful run.
+The classifications are evidence-derived hints, not proof of an external dependency
+being repaired. To inspect all affected executions and full detailed errors on
+the primary, use these read-only commands. They neither rerun nor terminate work:
 
 ```bash
 # On katcha-prod-primary-001, inspect failures from the preceding 24 hours.
@@ -68,7 +76,7 @@ environment, or credential-bearing logs into public issues. Redact URLs and
 tokens before sharing diagnostic excerpts. Use the workflow ID/run ID from the
 listing; do not guess or manually retry potentially non-idempotent jobs.
 
-The monitor shows safe type summaries only. A six-hour quiet close means that
+The monitor shows classified cause summaries, not full error messages. A six-hour quiet close means that
 no new failure was observed under continuous monitoring; it is not proof that
 earlier failed work reran, resumed, or reached its business outcome.
 
