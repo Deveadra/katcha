@@ -26,12 +26,12 @@ from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
 from katcha.services.compilations import register_compilation_regeneration
-from katcha.services.productions import register_regeneration
 from katcha.services.operations_outcome_evidence import (
     OutcomeRecord,
     assess_publication_records,
     assess_render_records,
 )
+from katcha.services.productions import register_regeneration
 from katcha.services.publications import retry_publication
 from katcha.services.short_episode_reviews import register_short_episode_regeneration
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset
