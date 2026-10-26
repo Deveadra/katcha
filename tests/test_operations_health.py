@@ -275,7 +275,7 @@ def test_temporal_failure_types_are_bounded_and_no_private_errors_leak(monkeypat
     assert "private-A" not in signal.detail
 
     rows[:] = [{"type": {"name": "DiscoveryWorkflow"}}] * 101
-    with pytest.raises(ValueError, match="incomplete"):
+    with pytest.raises(ops.ProbeError, match="incomplete"):
         ops.temporal_signal()
 
 
@@ -432,15 +432,21 @@ def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
     assert ledger.execute(
         "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
     ).fetchone() is None
-    ops.reconcile(ledger, [quiet], NOW + 7 * 3600 + 600)
-    assert float(ledger.execute(
-        "SELECT value FROM state WHERE key='temporal_quiet_since'"
-    ).fetchone()[0]) == NOW + 7 * 3600 + 600
     assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    # A repeated observation while the incident stays active cannot page again.
+    ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 301)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+
+    ops.reconcile(ledger, [quiet], NOW + 7 * 3600 + 600)
+    assert float(
+        ledger.execute("SELECT value FROM state WHERE key='temporal_quiet_since'")
+        .fetchone()[0]
+    ) == NOW + 7 * 3600 + 600
     events = [row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")]
     assert "new failures detected after a quiet period" in events[-1]
+    # A genuine new warning after another quiet observation produces a new event.
     ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 900)
-    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 3
 
 
 def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
