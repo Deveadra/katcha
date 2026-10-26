@@ -538,6 +538,14 @@ async def execute(request: BrowserRequest, authorization: str = Header(default="
     try:
         return await asyncio.wait_for(pool.execute(request.scope, request.arguments), 45)
     except Exception as exc:
+        # A click or keypress may begin an asynchronous navigation and raise a
+        # generic Playwright timeout after the route/proxy has already blocked it.
+        # Preserve the actual exhausted-budget reason in operator diagnostics.
+        session = pool.sessions.get(tuple(request.scope))
+        if session is not None and session.navigation_budget_exhausted:
+            exc = ValueError("Browser research navigation limit reached")
+        elif session is not None and getattr(session.proxy, "exhausted", False):
+            exc = ValueError("Browser network request limit reached")
         return browser_failure(exc, request.arguments.action)
 
 
