@@ -55,6 +55,17 @@ def _save_result(goal_id, step_id, result, error=None):
     with session_scope() as session:
         goal = session.get(CommandGoal, goal_id)
         step = session.get(CommandGoalStep, step_id)
+        # Browser RPC failures are structured results, not successful observations.
+        # Preserve a safe code in the existing goal/step error channel so planning,
+        # diagnostics and the UI can distinguish a blocked tool from real evidence.
+        if (
+            error is None and isinstance(result, dict)
+            and result.get("available") is False
+            and step.decision.get("tool") in {
+                "browser_open_page", "browser_snapshot", "browser_action"
+            }
+        ):
+            error = str(result.get("code") or "browser_unavailable")[:120]
         step.result, step.error, step.status = result, error, "observed"
         if goal.status == "cancelled":
             return
