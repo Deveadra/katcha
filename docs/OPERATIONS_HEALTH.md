@@ -121,6 +121,37 @@ recent instability. Do not run `docker system prune`, delete images or logs,
 or remove volumes as automatic remediation. Check Docker storage growth and
 the specific container journal first, and preserve release/backup evidence.
 
+## Root-private Temporal execution evidence
+
+Each observation records at most 100 failed execution identities seen by Temporal
+in the root-only `ledger.sqlite3`. At most three recent execution histories per
+tick are inspected for a cause classification; others are explicitly
+`HISTORY_NOT_SAMPLED`. Records are keyed idempotently by a digest of workflow
+ID and run ID, with first and last observed timestamps. This preserves the
+identity of failed work after it leaves the one-hour monitoring window. Records
+older than 14 days are pruned, with a hard maximum of 2,000 retained rows.
+This affects only the diagnostic ledger, **not** Temporal histories, media,
+job records or backups.
+
+The evidence table stores exact workflow/run IDs **only** in the root-private
+ledger (file mode 0600); no raw exceptions, task payloads or histories are
+stored there. The existing public API and Telegram snapshot never mount or
+serialize this evidence table. The new read-only inspector defaults to hashed
+lookup IDs and category codes:
+
+```bash
+# After the accepted source has been installed on the operator's host.
+sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20
+# Only if you need Temporal CLI IDs during a private host investigation:
+sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20 --private-ids
+```
+
+Do not post `--private-ids` output publicly. Without a deployment/monitor
+installation and live CLI acceptance, the existence of this source code is not
+proof production evidence is being collected. A successful workflow retry
+still requires separate business-output verification; this table only
+preserves failures and diagnostic categories.
+
 ## Bounded remediation bot
 
 New incidents enter a persistent queue immediately. The bot prepares diagnostics
