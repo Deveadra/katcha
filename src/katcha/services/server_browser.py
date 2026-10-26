@@ -20,6 +20,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from katcha.editorial.retrieval import public_addresses
 
 
+# These caps bound one ephemeral browser session, not a durable Temporal goal.
+# Future per-goal budgets must be enforced by the goal control plane as well.
+MAX_BROWSER_NAVIGATIONS = 64
+MAX_BROWSER_CONNECTS = 512
+MAX_BROWSER_SESSION_SECONDS = 1800
+MAX_BROWSER_SCREENSHOT_BYTES = 2_000_000
+
+
 class BrowserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["open", "snapshot", "click", "fill", "press", "select", "scroll", "wait",
@@ -78,6 +86,18 @@ _BROWSER_PRECONDITIONS = {
     "Research source resolved to a non-public address": (
         "browser_destination_rejected", "The destination resolved to a non-public address."
     ),
+    "Browser research navigation limit reached": (
+        "browser_navigation_budget_exhausted",
+        "The server-browser session exhausted its navigation allowance."
+    ),
+    "Browser network request limit reached": (
+        "browser_network_budget_exhausted",
+        "The server-browser session exhausted its network request allowance."
+    ),
+    "Browser screenshot exceeds the bounded output size": (
+        "browser_screenshot_too_large",
+        "The screenshot exceeds the browser response size limit."
+    ),
 }
 
 
@@ -92,7 +112,10 @@ def browser_failure(exc: Exception, action: str) -> dict:
     identified = _BROWSER_PRECONDITIONS.get(str(exc)) if isinstance(exc, ValueError) else None
     if identified:
         code, message = identified
-        uncertain = False
+        # A blocked navigation after a click can still follow an on-page side effect.
+        uncertain = stage == "interaction" and code in {
+            "browser_navigation_budget_exhausted", "browser_network_budget_exhausted"
+        }
     elif isinstance(exc, TimeoutError):
         code = "browser_timeout"
         message = ("The browser timed out. Refresh the view to establish the outcome "
@@ -121,6 +144,8 @@ class PublicProxy:
         self.tasks = set()
         self.closed = False
         self.connections = asyncio.Semaphore(64)
+        self.connect_attempts = 0
+        self.exhausted = False
 
     async def start(self):
         self.server = await asyncio.start_server(self.handle, "127.0.0.1", 0, limit=8192)
@@ -154,6 +179,12 @@ class PublicProxy:
                 method, target, _ = headers.split(b"\r\n", 1)[0].decode("ascii").split()
                 if method != "CONNECT" or not target.endswith(":443"):
                     raise ValueError("Only HTTPS is supported")
+                # The CONNECT proxy is the enforcement point for all proxied
+                # subresource, redirect and WebSocket TLS connections.
+                self.connect_attempts += 1
+                if self.connect_attempts > MAX_BROWSER_CONNECTS:
+                    self.exhausted = True
+                    raise ValueError("Browser network request limit reached")
                 host, addresses = await asyncio.to_thread(public_addresses, "https://" + target)
                 remote, upstream = await asyncio.wait_for(
                     self.connect(addresses[0]), 10)
@@ -192,6 +223,9 @@ class Session:
     proxy: PublicProxy
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     touched: float = field(default_factory=time.monotonic)
+    created: float = field(default_factory=time.monotonic)
+    navigations: int = 0
+    navigation_budget_exhausted: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     page: object = None
     refs: dict = field(default_factory=dict)
@@ -221,7 +255,10 @@ class BrowserPool:
             await asyncio.sleep(30)
             async with self.lock:
                 for key, session in list(self.sessions.items()):
-                    if not session.lock.locked() and time.monotonic() - session.touched > 900:
+                    if not session.lock.locked() and (
+                        time.monotonic() - session.touched > 900
+                        or time.monotonic() - session.created >= MAX_BROWSER_SESSION_SECONDS
+                    ):
                         await self.close_session(key)
 
     async def stop(self):
@@ -275,6 +312,13 @@ class BrowserPool:
                     # Invalidate conservatively for every navigation, including child frames.
                     if request.is_navigation_request():
                         session.snapshot_id = None
+                        # Count all document navigations, including popups and
+                        # iframes. Click-driven navigations cannot bypass the cap.
+                        session.navigations += 1
+                        if session.navigations > MAX_BROWSER_NAVIGATIONS:
+                            session.navigation_budget_exhausted = True
+                            await request_route.abort()
+                            return
                     if urlsplit(request_route.request.url).scheme != "https":
                         await request_route.abort()
                     else:
@@ -293,6 +337,10 @@ class BrowserPool:
                 raise
 
     async def snapshot(self, session):
+        if session.navigation_budget_exhausted:
+            raise ValueError("Browser research navigation limit reached")
+        if getattr(session.proxy, "exhausted", False):
+            raise ValueError("Browser network request limit reached")
         page = session.page
         for handle in session.refs.values():
             with suppress(Exception):
@@ -334,6 +382,17 @@ class BrowserPool:
             "observed_at": datetime.now(UTC).isoformat(),
             "active_tab": session.context.pages.index(page),
             "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "research_budget": {
+                "navigations_used": session.navigations,
+                "navigations_remaining": max(0, MAX_BROWSER_NAVIGATIONS - session.navigations),
+                "network_connects_used": getattr(session.proxy, "connect_attempts", 0),
+                "network_connects_remaining": max(
+                    0, MAX_BROWSER_CONNECTS - getattr(session.proxy, "connect_attempts", 0)
+                ),
+                "session_seconds_remaining": max(
+                    0, int(MAX_BROWSER_SESSION_SECONDS - (time.monotonic() - session.created))
+                ),
+            },
             "untrusted_content": True, "scene_verified": False,
         }
 
@@ -352,6 +411,16 @@ class BrowserPool:
                 async with self.lock:
                     await self.close_session(tuple(scope))
                 return {"available": False, "code": "session_closed", "message": "Browser closed."}
+            if time.monotonic() - session.created >= MAX_BROWSER_SESSION_SECONDS:
+                async with self.lock:
+                    await self.close_session(tuple(scope))
+                return {"available": False, "code": "browser_session_deadline_exceeded",
+                        "message": "The bounded server-browser session expired. "
+                                   "Inspect saved evidence before beginning a new session."}
+            if session.navigation_budget_exhausted:
+                raise ValueError("Browser research navigation limit reached")
+            if getattr(session.proxy, "exhausted", False):
+                raise ValueError("Browser network request limit reached")
             page = session.page
             if page.is_closed():
                 pages = session.context.pages
@@ -371,7 +440,14 @@ class BrowserPool:
                 session.snapshot_id = None
             if action.action == "open":
                 await asyncio.to_thread(public_addresses, action.url)
-                await page.goto(action.url, wait_until="domcontentloaded")
+                try:
+                    await page.goto(action.url, wait_until="domcontentloaded")
+                except Exception:
+                    if session.navigation_budget_exhausted:
+                        raise ValueError("Browser research navigation limit reached") from None
+                    if getattr(session.proxy, "exhausted", False):
+                        raise ValueError("Browser network request limit reached") from None
+                    raise
             elif action.action == "mouse_click":
                 await page.mouse.click(action.x, action.y)
             elif action.action == "drag":
@@ -407,7 +483,14 @@ class BrowserPool:
             elif action.action == "wait":
                 await page.wait_for_timeout(action.wait_ms)
             elif action.action == "back":
-                await page.go_back(wait_until="domcontentloaded")
+                try:
+                    await page.go_back(wait_until="domcontentloaded")
+                except Exception:
+                    if session.navigation_budget_exhausted:
+                        raise ValueError("Browser research navigation limit reached") from None
+                    if getattr(session.proxy, "exhausted", False):
+                        raise ValueError("Browser network request limit reached") from None
+                    raise
             elif action.action in {"switch_tab", "close_tab"}:
                 pages = session.context.pages
                 if action.tab >= len(pages):
@@ -419,8 +502,11 @@ class BrowserPool:
                 else:
                     session.page = pages[action.tab]
             elif action.action == "screenshot":
-                return {"available": True, "image": base64.b64encode(
-                    await page.screenshot(type="png")).decode()}
+                capture = await page.screenshot(type="png")
+                if len(capture) > MAX_BROWSER_SCREENSHOT_BYTES:
+                    raise ValueError("Browser screenshot exceeds the bounded output size")
+                return {"available": True, "image": base64.b64encode(capture).decode(),
+                        "screenshot_bytes": len(capture)}
             if len(session.context.pages) > 8:
                 for extra in session.context.pages[8:]:
                     await extra.close()
