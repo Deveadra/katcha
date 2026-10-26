@@ -162,3 +162,19 @@ async def test_real_private_navigation_rejected_and_stale_refs_do_not_act(real_p
         await pool.execute(scope, browser.BrowserAction(action="type", text="wrong page"))
     with pytest.raises(ValueError, match="non-public"):
         await pool.execute(scope, browser.BrowserAction(action="open", url="https://127.0.0.1/"))
+
+
+async def test_real_chromium_cannot_exceed_navigation_budget(monkeypatch, real_pool):
+    pool, _ = real_pool
+    monkeypatch.setattr(browser, "MAX_BROWSER_NAVIGATIONS", 1)
+    key = ("actor", "channel", "bounded-goal")
+    first = await pool.execute(
+        key, browser.BrowserAction(action="open", url="https://fixture.test/")
+    )
+    assert first["research_budget"]["navigations_used"] == 1
+    assert first["research_budget"]["navigations_remaining"] == 0
+    with pytest.raises(ValueError, match="navigation limit reached"):
+        await pool.execute(
+            key, browser.BrowserAction(action="open", url="https://fixture.test/next")
+        )
+    assert pool.sessions[key].navigation_budget_exhausted is True
