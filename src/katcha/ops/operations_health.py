@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -57,6 +58,7 @@ class Signal:
     detail: str
     action: str = ""
     completed_at: float | None = None
+    fingerprint: str = ""
 
 
 class ProbeError(RuntimeError):
@@ -308,6 +310,22 @@ def temporal_failure_cause(
         return "HISTORY_UNAVAILABLE"
 
 
+def temporal_cause_fingerprint(
+    failure_types: dict[str, int], causes: list[str], *, long_pending: bool
+) -> str:
+    """Stable ID for a group of safe type/cause categories, excluding raw errors."""
+    safe_types = sorted(
+        name for name in failure_types
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name)
+    )
+    safe_causes = sorted(set(c for c in causes if c in TEMPORAL_ACTIONS))
+    data = json.dumps(
+        {"types": safe_types, "causes": safe_causes, "long_pending": long_pending},
+        sort_keys=True,
+    )
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
+
+
 PENDING_ACTIVITY_ATTENTION_SECONDS = 4 * 3600
 
 
@@ -444,6 +462,9 @@ def temporal_signal(*, now: float | None = None) -> Signal:
                    "long pending does not prove a dead worker."
                    if long_pending else "")
                 + " Never replay a possibly accepted operation blindly."
+            ),
+            fingerprint=temporal_cause_fingerprint(
+                failed_types, causes, long_pending=bool(long_pending)
             ),
         )
     return Signal(
@@ -864,6 +885,48 @@ def stabilize_temporal_signal(
     return signal
 
 
+def track_temporal_cause_changes(
+    db: sqlite3.Connection, signal: Signal, row: sqlite3.Row | None,
+    now: float, *, quiet_restart: bool
+) -> None:
+    """Page only after a category change persists across two observations."""
+    if signal.key != "temporal" or signal.status != "warning":
+        return
+    if not re.fullmatch(r"[0-9a-f]{24}", signal.fingerprint):
+        return
+    saved = db.execute(
+        "SELECT value FROM state WHERE key='temporal_cause_signature'"
+    ).fetchone()
+    old = saved[0] if saved else None
+    pending = db.execute(
+        "SELECT value FROM state WHERE key='temporal_pending_signature'"
+    ).fetchone()
+    if old is None or row is None or quiet_restart:
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_cause_signature', ?)",
+            (signal.fingerprint,),
+        )
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    elif signal.fingerprint == old:
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    elif pending and pending[0] == signal.fingerprint:
+        event(
+            db, row["id"], now,
+            "Background workflows: a sustained change in failure types/causes "
+            "was observed. " + signal.detail + " " + signal.action,
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_cause_signature', ?)",
+            (signal.fingerprint,),
+        )
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    else:
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_pending_signature', ?)",
+            (signal.fingerprint,),
+        )
+
+
 def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None:
     observed: list[Signal] = []
     for signal in signals:
@@ -877,6 +940,9 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
             and db.execute(
                 "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
             ).fetchone() is not None
+        )
+        track_temporal_cause_changes(
+            db, signal, row, now, quiet_restart=new_failure_after_quiet
         )
         signal = stabilize_temporal_signal(db, signal, row, now)
         observed.append(signal)
@@ -905,6 +971,9 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                     else signal.label + ": recovery verified by a fresh check."
                 )
                 event(db, row["id"], now, message)
+                if signal.key == "temporal":
+                    db.execute("DELETE FROM state WHERE key='temporal_cause_signature'")
+                    db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
             continue
         if row is None:
             ident = db.execute(
