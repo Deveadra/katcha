@@ -430,6 +430,35 @@ def test_outcome_evidence_requires_correct_channel_access(data, monkeypatch) -> 
     ).status_code == 200
 
 
+def test_named_principal_outcome_evidence_requires_read_scope() -> None:
+    scope = {
+        "type": "http", "http_version": "1.1", "method": "GET",
+        "scheme": "http",
+        "path": "/v1/operations/work/production/11111111-1111-4111-8111-111111111111/outcome-evidence",
+        "raw_path": b"/v1/operations/work/production/11111111-1111-4111-8111-111111111111/outcome-evidence",
+        "query_string": b"", "headers": [],
+        "client": ("test", 1), "server": ("test", 80),
+    }
+    allowed = Request(scope)
+    allowed.state.control_principal_name = "channel-reader"
+    allowed.state.control_scopes = {"channels:read"}
+    auth._require_named_principal_route_access(allowed)
+
+    forbidden = Request(scope)
+    forbidden.state.control_principal_name = "channel-reader"
+    forbidden.state.control_scopes = {"trends:read"}
+    with pytest.raises(HTTPException) as error:
+        auth._require_named_principal_route_access(forbidden)
+    assert error.value.status_code == 403
+
+    unsafe = Request({**scope, "method": "POST"})
+    unsafe.state.control_principal_name = "channel-reader"
+    unsafe.state.control_scopes = {"channels:read"}
+    with pytest.raises(HTTPException) as denied:
+        auth._require_named_principal_route_access(unsafe)
+    assert denied.value.status_code == 403
+
+
 def test_operations_overview_returns_actionable_channel_state(data) -> None:
     client = TestClient(app)
     response = client.get(
