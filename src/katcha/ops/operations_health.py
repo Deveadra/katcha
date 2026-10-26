@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -57,6 +58,7 @@ class Signal:
     detail: str
     action: str = ""
     completed_at: float | None = None
+    fingerprint: str = ""
 
 
 class ProbeError(RuntimeError):
@@ -308,7 +310,43 @@ def temporal_failure_cause(
         return "HISTORY_UNAVAILABLE"
 
 
-def temporal_signal() -> Signal:
+def temporal_cause_fingerprint(
+    failure_types: dict[str, int], causes: list[str], *, long_pending: bool
+) -> str:
+    """Stable ID for a group of safe type/cause categories, excluding raw errors."""
+    safe_types = sorted(
+        name for name in failure_types
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name)
+    )
+    safe_causes = sorted(set(c for c in causes if c in TEMPORAL_ACTIONS))
+    data = json.dumps(
+        {"types": safe_types, "causes": safe_causes, "long_pending": long_pending},
+        sort_keys=True,
+    )
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
+
+
+PENDING_ACTIVITY_ATTENTION_SECONDS = 4 * 3600
+
+
+def pending_activity_age(activity: Any, now: float) -> float | None:
+    """Bounded read of Temporal's original scheduledTime, not untrusted messages."""
+    if not isinstance(activity, dict):
+        return None
+    raw = activity.get("scheduledTime")
+    if not isinstance(raw, str) or len(raw) > 64:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return None
+        age = now - stamp.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+    return age if 0 <= age <= 366 * 86400 else None
+
+
+def temporal_signal(*, now: float | None = None, evidence_sink: Any = None) -> Signal:
     """Show bounded failure categories and useful next actions, never raw errors."""
     prefix = (
         "docker",
@@ -320,6 +358,7 @@ def temporal_signal() -> Signal:
         "workflow",
     )
     common = ("--address", "temporal:7233", "--namespace", "default")
+    now = time.time() if now is None else now
     failed = json.loads(
         command(
             *prefix,
@@ -327,7 +366,7 @@ def temporal_signal() -> Signal:
             *common,
             "--query",
             'ExecutionStatus="Failed" AND CloseTime > "'
-            + datetime.fromtimestamp(time.time() - 3600, UTC).isoformat()
+            + datetime.fromtimestamp(now - 3600, UTC).isoformat()
             + '"',
             "--limit",
             "101",
@@ -352,6 +391,8 @@ def temporal_signal() -> Signal:
         raise ProbeError("Temporal running workflow inventory is incomplete (limit 100).")
     pending = 0
     failing = 0
+    long_pending = 0
+    oldest_pending = 0.0
     pending_causes: list[str] = []
     for row in rows:
         execution = row["execution"]
@@ -369,8 +410,12 @@ def temporal_signal() -> Signal:
             if activity.get("lastFailure") and int(activity.get("attempt", 0)) >= 3:
                 failing += 1
                 pending_causes.append(classify_temporal_failure(activity["lastFailure"]))
+            age = pending_activity_age(activity, now)
+            if age is not None and age >= PENDING_ACTIVITY_ATTENTION_SECONDS:
+                long_pending += 1
+                oldest_pending = max(oldest_pending, age)
 
-    if failing or failed:
+    if failing or failed or long_pending:
         kinds = sorted(failed_types.items(), key=lambda pair: (-pair[1], pair[0]))
         summary = ", ".join(f"{kind} ({count})" for kind, count in kinds[:4])
         if len(kinds) > 4:
@@ -380,11 +425,22 @@ def temporal_signal() -> Signal:
         # Most recent listed executions supply a small diagnostic sample; errors
         # inspecting one execution must not hide the failed-run count.
         sampled = min(3, len(failed))
-        causes = list(pending_causes)
-        causes.extend(
+        closed_causes = [
             temporal_failure_cause(prefix, common, item.get("execution"))
             for item in failed[:sampled]
-        )
+        ]
+        causes = [*pending_causes, *closed_causes]
+        capture_failed = False
+        if evidence_sink is not None:
+            for index, item in enumerate(failed):
+                try:
+                    evidence_sink(
+                        item,
+                        closed_causes[index] if index < sampled else "HISTORY_NOT_SAMPLED",
+                    )
+                except Exception:
+                    # A failed ledger write must not hide the underlying failures.
+                    capture_failed = True
         cause_counts: dict[str, int] = {}
         for cause in causes:
             cause_counts[cause] = cause_counts.get(cause, 0) + 1
@@ -405,10 +461,23 @@ def temporal_signal() -> Signal:
             "warning",
             f"{len(failed)} failed executions in the past hour; "
             f"{failing} pending activities with repeated failures."
+            + (f" {long_pending} activities pending at least 4 hours "
+               f"(oldest {oldest_pending / 3600:.1f} hours)."
+               if long_pending else "")
             + (f" Types: {summary}." if summary else "")
             + (f" Diagnosed causes ({sampled} sampled closed runs): {cause_summary}."
-               if cause_summary else ""),
-            " ".join(actions[:2]) + " Never replay a possibly accepted operation blindly.",
+               if cause_summary else "")
+            + (" Private evidence capture unavailable." if capture_failed else ""),
+            (
+                " ".join(actions[:2])
+                + (" Review activity schedule/heartbeat and worker task queue; "
+                   "long pending does not prove a dead worker."
+                   if long_pending else "")
+                + " Never replay a possibly accepted operation blindly."
+            ),
+            fingerprint=temporal_cause_fingerprint(
+                failed_types, causes, long_pending=bool(long_pending)
+            ),
         )
     return Signal(
         "temporal",
@@ -546,7 +615,82 @@ def deployment_signals() -> list[Signal]:
     return result
 
 
-def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
+def filesystem_signal(path: str, key: str, label: str) -> Signal:
+    """Monitor capacity and inodes without traversing or deleting host data."""
+    usage = shutil.disk_usage(path)
+    meta = os.statvfs(path)
+    if usage.total <= 0 or meta.f_blocks <= 0:
+        raise ProbeError("Filesystem capacity could not be measured.")
+    bytes_free = 100.0 * usage.free / usage.total
+    # Some filesystems do not report inode accounting. Mark it unknown rather
+    # than interpreting zero counters as a full disk.
+    inodes_free = (
+        100.0 * meta.f_favail / meta.f_files if meta.f_files > 0 else None
+    )
+    if inodes_free is not None and not 0 <= inodes_free <= 100:
+        raise ProbeError("Filesystem inode measurement is invalid.")
+    critical = bytes_free < 10 or (inodes_free is not None and inodes_free < 5)
+    warning = bytes_free < 20 or (inodes_free is not None and inodes_free < 15)
+    status = "critical" if critical else "warning" if warning else "healthy"
+    detail = f"{bytes_free:.1f}% bytes free on {label}."
+    detail += (
+        f" {inodes_free:.1f}% inodes free."
+        if inodes_free is not None else " Inode availability not reported."
+    )
+    action = (
+        "Inspect filesystem and Docker storage growth; do not prune volumes, "
+        "images, backups or logs automatically."
+        if status != "healthy" else ""
+    )
+    return Signal(key, label, status, detail, action)
+
+
+def production_container_pressure() -> Signal:
+    """Read bounded Compose-container restart/OOM metadata, never environments."""
+    raw = command(
+        "docker", "ps", "-a",
+        "--filter", "label=com.docker.compose.project=katcha-production",
+        "--format", "{{.Names}}",
+    )
+    names = raw.splitlines()
+    if not names or len(names) > 32 or len(set(names)) != len(names):
+        raise ProbeError("Production container inspection inventory is unavailable.")
+    if any(not re.fullmatch(r"katcha-production-[a-z0-9-]+-[0-9]+", n) for n in names):
+        raise ProbeError("Production container inspection inventory is invalid.")
+    # Safe, allowlisted Go-template fields. .State.Error, .Config, .LogPath
+    # and arbitrary Docker inspect JSON must never reach the snapshot.
+    records = command(
+        "docker", "inspect", "--format",
+        "{{.RestartCount}}|{{.State.OOMKilled}}|{{.State.Status}}",
+        *names,
+    ).splitlines()
+    if len(records) != len(names):
+        raise ProbeError("Production container inspection result is incomplete.")
+    ooms, stopped, historical_restarts = 0, 0, 0
+    for record in records:
+        match = re.fullmatch(r"([0-9]{1,9})\|(true|false)\|([a-z]+)", record)
+        if match is None:
+            raise ProbeError("Production container inspection result is invalid.")
+        restarts, oom, state = match.groups()
+        historical_restarts += int(restarts)
+        ooms += oom == "true"
+        stopped += state not in {"running"}
+    if ooms or stopped:
+        return Signal(
+            "containers",
+            "Production container failures",
+            "critical" if ooms else "warning",
+            f"{ooms} containers flagged OOM-killed; {stopped} not running. "
+            f"{historical_restarts} cumulative Docker restarts (not a recent rate).",
+            "Inspect cgroup pressure and affected service logs before restarting containers.",
+        )
+    return Signal(
+        "containers", "Production container failures", "healthy",
+        f"{len(names)} containers running; {historical_restarts} cumulative Docker restarts.",
+    )
+
+
+def collect(now: float, *, release_probe: Any = None, evidence_sink: Any = None) -> list[Signal]:
     signals: list[Signal] = []
 
     def probe(key: str, label: str, fn: Any) -> None:
@@ -571,7 +715,10 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
             "Protected backups" if kind == "backup" else "Isolated restore tests",
             lambda kind=kind: safety_signal(kind, now),
         )
-    probe("temporal", "Background workflows", temporal_signal)
+    probe(
+        "temporal", "Background workflows",
+        lambda: temporal_signal(now=now, evidence_sink=evidence_sink),
+    )
     probe("drift", "Release cadence", release_probe or release_signals)
     probe("deployment", "Deployment and recovery controls", deployment_signals)
 
@@ -632,17 +779,15 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
         )
 
     probe("runtime", "Production services", runtime)
-    disk = shutil.disk_usage("/srv/katcha")
-    free = 100 * disk.free / disk.total
-    signals.append(
-        Signal(
-            "storage",
-            "Persistent storage",
-            "critical" if free < 10 else "warning" if free < 20 else "healthy",
-            f"{free:.1f}% free on the production data volume.",
-            "Review storage growth; preserve backups and application data." if free < 20 else "",
-        )
+    probe(
+        "root_storage", "Root filesystem",
+        lambda: filesystem_signal("/", "root_storage", "Root filesystem"),
     )
+    probe(
+        "storage", "Persistent storage",
+        lambda: filesystem_signal("/srv/katcha", "storage", "Persistent storage"),
+    )
+    probe("containers", "Production container failures", production_container_pressure)
 
     def notification() -> Signal:
         notifier = installed_notifier()
@@ -686,6 +831,54 @@ def collect(now: float, *, release_probe: Any = None) -> list[Signal]:
     return signals
 
 
+def record_temporal_execution(
+    db: sqlite3.Connection, item: Any, code: str, now: float
+) -> None:
+    """Record execution identity only in the root-owned 0600 operations ledger."""
+    if not isinstance(item, dict) or not isinstance(item.get("execution"), dict):
+        raise ProbeError("Temporal evidence identity is invalid.")
+    execution = item["execution"]
+    wid, rid = execution.get("workflowId"), execution.get("runId")
+    if (
+        not isinstance(wid, str) or not isinstance(rid, str)
+        or not 0 < len(wid) <= 255 or not 0 < len(rid) <= 128
+    ):
+        raise ProbeError("Temporal evidence identity is invalid.")
+    kind = item.get("type") or item.get("workflowType")
+    name = kind.get("name") if isinstance(kind, dict) else None
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name):
+        name = "unidentified"
+    code = code if code in TEMPORAL_ACTIONS or code == "HISTORY_NOT_SAMPLED" else "UNCLASSIFIED"
+    identity = json.dumps([wid, rid], separators=(",", ":"))
+    key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    db.execute(
+        """
+        INSERT INTO temporal_execution_evidence
+          (fingerprint, workflow_id, run_id, workflow_type, cause_code, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fingerprint) DO UPDATE SET
+          last_seen=excluded.last_seen,
+          cause_code=CASE WHEN excluded.cause_code='HISTORY_NOT_SAMPLED'
+            THEN temporal_execution_evidence.cause_code ELSE excluded.cause_code END
+        """,
+        (key, wid, rid, name, code, now, now),
+    )
+
+
+def prune_temporal_evidence(db: sqlite3.Connection, now: float) -> None:
+    """Bound private evidence without affecting Temporal history or job state."""
+    db.execute(
+        "DELETE FROM temporal_execution_evidence WHERE last_seen < ?",
+        (now - 14 * 86400,),
+    )
+    db.execute(
+        "DELETE FROM temporal_execution_evidence WHERE fingerprint NOT IN "
+        "(SELECT fingerprint FROM temporal_execution_evidence "
+        "ORDER BY last_seen DESC, fingerprint DESC LIMIT 2000)"
+    )
+    db.commit()
+
+
 def connect(root: Path) -> sqlite3.Connection:
     root.mkdir(mode=0o755, parents=True, exist_ok=True)
     path = root / "ledger.sqlite3"
@@ -709,6 +902,17 @@ def connect(root: Path) -> sqlite3.Connection:
             message TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS release_reviews (sha TEXT PRIMARY KEY, at REAL, data TEXT);
+        CREATE TABLE IF NOT EXISTS temporal_execution_evidence (
+            fingerprint TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            workflow_type TEXT NOT NULL,
+            cause_code TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS temporal_evidence_last_seen
+            ON temporal_execution_evidence(last_seen);
     """)
     return db
 
@@ -755,6 +959,48 @@ def stabilize_temporal_signal(
     return signal
 
 
+def track_temporal_cause_changes(
+    db: sqlite3.Connection, signal: Signal, row: sqlite3.Row | None,
+    now: float, *, quiet_restart: bool
+) -> None:
+    """Page only after a category change persists across two observations."""
+    if signal.key != "temporal" or signal.status != "warning":
+        return
+    if not re.fullmatch(r"[0-9a-f]{24}", signal.fingerprint):
+        return
+    saved = db.execute(
+        "SELECT value FROM state WHERE key='temporal_cause_signature'"
+    ).fetchone()
+    old = saved[0] if saved else None
+    pending = db.execute(
+        "SELECT value FROM state WHERE key='temporal_pending_signature'"
+    ).fetchone()
+    if old is None or row is None or quiet_restart:
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_cause_signature', ?)",
+            (signal.fingerprint,),
+        )
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    elif signal.fingerprint == old:
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    elif pending and pending[0] == signal.fingerprint:
+        event(
+            db, row["id"], now,
+            "Background workflows: a sustained change in failure types/causes "
+            "was observed. " + signal.detail + " " + signal.action,
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_cause_signature', ?)",
+            (signal.fingerprint,),
+        )
+        db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
+    else:
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('temporal_pending_signature', ?)",
+            (signal.fingerprint,),
+        )
+
+
 def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None:
     observed: list[Signal] = []
     for signal in signals:
@@ -768,6 +1014,9 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
             and db.execute(
                 "SELECT 1 FROM state WHERE key='temporal_quiet_since'"
             ).fetchone() is not None
+        )
+        track_temporal_cause_changes(
+            db, signal, row, now, quiet_restart=new_failure_after_quiet
         )
         signal = stabilize_temporal_signal(db, signal, row, now)
         observed.append(signal)
@@ -796,6 +1045,9 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                     else signal.label + ": recovery verified by a fresh check."
                 )
                 event(db, row["id"], now, message)
+                if signal.key == "temporal":
+                    db.execute("DELETE FROM state WHERE key='temporal_cause_signature'")
+                    db.execute("DELETE FROM state WHERE key='temporal_pending_signature'")
             continue
         if row is None:
             ident = db.execute(
@@ -1021,6 +1273,11 @@ def notify(db: sqlite3.Connection, now: float) -> None:
         included = []
         for row in rows:
             line = "Event " + str(row["id"]) + ": " + row["message"] + "\n"
+            if isinstance(row["incident"], int) and row["incident"] > 0:
+                line += (
+                    "Review: https://app.katcha.stream/operations?incident="
+                    + str(row["incident"]) + "#operations-health\n"
+                )
             if len(message) + len(line) > 3500:
                 break
             message += line
@@ -1104,8 +1361,17 @@ def main() -> int:
                     )
                 DEADLINE = time.monotonic() + 120
                 reconcile(
-                    db, collect(now, release_probe=lambda: cached_release_signals(db, now)), now
+                    db,
+                    collect(
+                        now,
+                        release_probe=lambda: cached_release_signals(db, now),
+                        evidence_sink=lambda item, code: record_temporal_execution(
+                            db, item, code, now
+                        ),
+                    ),
+                    now,
                 )
+                prune_temporal_evidence(db, now)
                 snapshot(db, ROOT)
                 DEADLINE = time.monotonic() + 45
                 if not args.observe_only:

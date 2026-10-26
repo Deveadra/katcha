@@ -176,6 +176,7 @@ def test_notification_outbox_retries_and_only_marks_confirmed_delivery(ledger, m
     ops.notify(ledger, NOW + 2)
     assert len(calls) == 2
     assert ops.HEALTH_URL in calls[-1]
+    assert "operations?incident=1#operations-health" in calls[-1]
     assert "private-token" not in calls[-1]
     assert ledger.execute("SELECT delivered FROM events").fetchone()[0] == 1
 
@@ -231,6 +232,106 @@ def test_active_jobs_do_not_substitute_for_evidence(monkeypatch, tmp_path):
     assert ops.safety_signal("backup", NOW).status == "unknown"
 
 
+@pytest.mark.parametrize(
+    "bytes_free,inodes_free,status",
+    [
+        (1, 60, "critical"),
+        (15, 90, "warning"),
+        (80, 3, "critical"),
+        (80, 10, "warning"),
+        (80, 90, "healthy"),
+    ],
+)
+def test_host_filesystem_checks_bytes_and_inodes(
+    monkeypatch, bytes_free, inodes_free, status
+):
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=100, free=bytes_free),
+    )
+    monkeypatch.setattr(
+        ops.os, "statvfs",
+        lambda path: SimpleNamespace(f_blocks=100, f_files=100, f_favail=inodes_free),
+    )
+    result = ops.filesystem_signal("/", "root_storage", "Root filesystem")
+    assert result.status == status
+    assert "Root filesystem" in result.detail
+    assert f"{inodes_free:.1f}% inodes free" in result.detail
+    assert "SECRET" not in result.detail
+
+
+def test_unreported_inodes_and_missing_capacity_fail_safe(monkeypatch):
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=100, free=90),
+    )
+    monkeypatch.setattr(
+        ops.os, "statvfs",
+        lambda path: SimpleNamespace(f_blocks=100, f_files=0, f_favail=0),
+    )
+    row = ops.filesystem_signal("/", "root_storage", "Root filesystem")
+    assert row.status == "healthy"
+    assert "not reported" in row.detail
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=0, free=0),
+    )
+    with pytest.raises(ops.ProbeError, match="could not be measured"):
+        ops.filesystem_signal("/", "root_storage", "Root filesystem")
+
+
+def test_docker_container_oom_is_actionable_without_host_private_paths(monkeypatch):
+    names = ["katcha-production-worker-1", "katcha-production-renderer-1"]
+    seen = []
+
+    def fake_command(*args, **kwargs):
+        seen.append(args)
+        if args[:2] == ("docker", "ps"):
+            return "\n".join(names)
+        if args[:2] == ("docker", "inspect"):
+            assert args[-2:] == tuple(names)
+            assert ".Config" not in " ".join(args)
+            return "7|true|exited\n0|false|running"
+        raise AssertionError("unexpected Docker command")
+
+    monkeypatch.setattr(ops, "command", fake_command)
+    row = ops.production_container_pressure()
+    assert row.status == "critical"
+    assert "1 containers flagged OOM-killed" in row.detail
+    assert "7 cumulative Docker restarts" in row.detail
+    assert "worker-1" not in row.detail
+    assert seen[-1][2] == "--format"
+
+
+def test_docker_metadata_restarts_are_not_automatically_incidents(monkeypatch):
+    def fake_command(*args, **kwargs):
+        return (
+            "katcha-production-api-1" if args[1] == "ps"
+            else "15|false|running"
+        )
+    monkeypatch.setattr(ops, "command", fake_command)
+    row = ops.production_container_pressure()
+    assert row.status == "healthy"
+    assert "15 cumulative" in row.detail
+
+
+@pytest.mark.parametrize(
+    "names,result",
+    [
+        ("katcha-production-api-1\nnot-allowed", "2|false|running\n0|false|running"),
+        ("katcha-production-api-1", "error SECRET"),
+        ("katcha-production-api-1", ""),
+    ],
+)
+def test_docker_metadata_invalid_or_incomplete_is_unknown(monkeypatch, names, result):
+    monkeypatch.setattr(
+        ops, "command",
+        lambda *args, **kwargs: names if args[1] == "ps" else result,
+    )
+    with pytest.raises(ops.ProbeError):
+        ops.production_container_pressure()
+
+
 def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monkeypatch):
     execution = {"workflowId": "scheduler", "runId": "run-1"}
     activities = []
@@ -251,6 +352,64 @@ def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monke
     assert warning.status == "warning"
     assert "SECRET" not in warning.detail
 
+
+
+def test_very_old_running_scheduler_without_pending_activity_is_not_stalled(monkeypatch):
+    execution = {"workflowId": "schedule-a", "runId": "run-01"}
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return "[]"
+            return json.dumps([{"execution": execution}])
+        return json.dumps({
+            "workflowExecutionInfo": {
+                "execution": execution,
+                "startTime": "2025-01-01T00:00:00Z",
+            },
+            "pendingActivities": [],
+        })
+
+    monkeypatch.setattr(ops, "command", command)
+    assert ops.temporal_signal(now=NOW).status == "healthy"
+
+
+def test_long_pending_activity_is_attention_not_proof_of_failure(monkeypatch):
+    from datetime import UTC, datetime
+
+    execution = {"workflowId": "private-workflow", "runId": "private-run"}
+    at = datetime.fromtimestamp(NOW - 5 * 3600, UTC).isoformat()
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return "[]"
+            return json.dumps([{"execution": execution}])
+        return json.dumps({
+            "workflowExecutionInfo": {"execution": execution},
+            "pendingActivities": [
+                {"activityId": "private", "scheduledTime": at, "attempt": 1},
+                {"activityId": "new", "scheduledTime": datetime.fromtimestamp(
+                    NOW - 60, UTC
+                ).isoformat(), "attempt": 1},
+            ],
+        })
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal(now=NOW)
+    assert signal.status == "warning"
+    assert "1 activities pending at least 4 hours" in signal.detail
+    assert "oldest 5.0 hours" in signal.detail
+    assert "does not prove a dead worker" in signal.action
+    assert "private" not in signal.detail + signal.action
+
+
+@pytest.mark.parametrize(
+    "scheduled",
+    ["PRIVATE_SECRET", "2000-01-01T00:00:00Z", "2025-01-01", None, 17200],
+)
+def test_pending_activity_unknown_timestamp_does_not_invent_age(scheduled):
+    assert ops.pending_activity_age({"scheduledTime": scheduled}, NOW) is None
 
 
 def test_temporal_failure_types_are_bounded_and_no_private_errors_leak(monkeypatch):
@@ -447,6 +606,184 @@ def test_temporal_new_failure_or_monitor_gap_restarts_quiet_clock(ledger):
     # A genuine new warning after another quiet observation produces a new event.
     ops.reconcile(ledger, [failed], NOW + 7 * 3600 + 900)
     assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 3
+
+
+def test_private_temporal_evidence_preserves_identity_without_public_leak(ledger, tmp_path):
+    item = {
+        "type": {"name": "SourceIngestWorkflow"},
+        "execution": {"workflowId": "SECRET-workflow", "runId": "PRIVATE-run"},
+        "failure": {"message": "PRIVATE token=ABC"},
+    }
+    ops.record_temporal_execution(ledger, item, "RATE_LIMIT", NOW)
+    ops.record_temporal_execution(ledger, item, "HISTORY_NOT_SAMPLED", NOW + 300)
+    records = ledger.execute(
+        "SELECT * FROM temporal_execution_evidence"
+    ).fetchall()
+    assert len(records) == 1
+    assert records[0]["workflow_id"] == "SECRET-workflow"
+    assert records[0]["run_id"] == "PRIVATE-run"
+    assert records[0]["cause_code"] == "RATE_LIMIT"
+    assert records[0]["first_seen"] == NOW
+    assert records[0]["last_seen"] == NOW + 300
+    assert len(records[0]["fingerprint"]) == 64
+
+    ops.reconcile(ledger, [ops.Signal("temporal", "Temporal", "warning", "Failure")], NOW)
+    public = json.dumps(ops.snapshot(ledger, tmp_path))
+    assert "SECRET-workflow" not in public
+    assert "PRIVATE-run" not in public
+    assert "token=ABC" not in public
+
+
+def test_private_temporal_evidence_prunes_old_and_bounds_retention(ledger):
+    sample = {
+        "type": {"name": "DiscoveryWorkflow"},
+        "execution": {"workflowId": "old", "runId": "old-run"},
+    }
+    ops.record_temporal_execution(ledger, sample, "TIMEOUT", NOW - 15 * 86400)
+    for index in range(2005):
+        sample["execution"] = {"workflowId": f"job-{index}", "runId": f"run-{index}"}
+        ops.record_temporal_execution(ledger, sample, "HISTORY_NOT_SAMPLED", NOW + index)
+    ops.prune_temporal_evidence(ledger, NOW + 2006)
+    records = ledger.execute(
+        "SELECT count(*) FROM temporal_execution_evidence"
+    ).fetchone()[0]
+    assert records == 2000
+    assert ledger.execute(
+        "SELECT 1 FROM temporal_execution_evidence WHERE workflow_id='old'"
+    ).fetchone() is None
+
+
+def test_evidence_inspector_redacts_private_ids_by_default():
+    import runpy
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts/inspect-operations-temporal-evidence.py"
+    module = runpy.run_path(str(script))
+    row = {
+        "fingerprint": "a" * 64,
+        "workflow_id": "SECRET-workflow",
+        "run_id": "PRIVATE-run",
+        "workflow_type": "SourceIngestWorkflow",
+        "cause_code": "RATE_LIMIT",
+        "first_seen": NOW,
+        "last_seen": NOW + 60,
+    }
+    safe = module["summarize"]([row], include_private_ids=False)
+    private = module["summarize"]([row], include_private_ids=True)
+    assert "SECRET-workflow" not in json.dumps(safe)
+    assert "PRIVATE-run" not in json.dumps(safe)
+    assert private[0]["workflow_id"] == "SECRET-workflow"
+    assert private[0]["run_id"] == "PRIVATE-run"
+    assert safe[0]["cause_code"] == "RATE_LIMIT"
+
+
+def test_private_temporal_evidence_rejects_invalid_workflow_id(ledger):
+    with pytest.raises(ops.ProbeError, match="identity"):
+        ops.record_temporal_execution(
+            ledger, {"execution": {"workflowId": "", "runId": "valid"}},
+            "UNCLASSIFIED", NOW,
+        )
+    assert ledger.execute(
+        "SELECT count(*) FROM temporal_execution_evidence"
+    ).fetchone()[0] == 0
+
+
+def test_temporal_monitor_captures_all_failed_ids_and_samples_three_histories(monkeypatch):
+    samples = []
+    rows = [
+        {"type": {"name": "DownloadWorkflow"}, "execution": {
+            "workflowId": f"private-{i}", "runId": f"run-{i}",
+        }} for i in range(5)
+    ]
+
+    def command(*args, **kwargs):
+        if "list" in args:
+            if any('ExecutionStatus="Failed"' in str(arg) for arg in args):
+                return json.dumps(rows)
+            return "[]"
+        if "show" in args:
+            return json.dumps({"events": [{
+                "workflowExecutionFailedEventAttributes": {
+                    "failure": {"message": "No space left on device PRIVATE"}
+                }
+            }]})
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(ops, "command", command)
+    signal = ops.temporal_signal(
+        now=NOW, evidence_sink=lambda item, code: samples.append((
+            item["execution"]["workflowId"], code
+        )),
+    )
+    assert signal.status == "warning"
+    assert len(samples) == 5
+    assert [code for _, code in samples[:3]] == ["DISK_FULL"] * 3
+    assert [code for _, code in samples[3:]] == ["HISTORY_NOT_SAMPLED"] * 2
+    assert "PRIVATE" not in signal.detail
+
+
+def test_temporal_cause_signature_ignores_counts_and_does_not_contain_secrets():
+    first = ops.temporal_cause_fingerprint(
+        {"SourceIngestWorkflow": 2, "DiscoveryWorkflow": 1},
+        ["RATE_LIMIT", "AUTHENTICATION"],
+        long_pending=False,
+    )
+    second = ops.temporal_cause_fingerprint(
+        {"DiscoveryWorkflow": 99, "SourceIngestWorkflow": 10},
+        ["AUTHENTICATION", "RATE_LIMIT", "RATE_LIMIT"],
+        long_pending=False,
+    )
+    assert first == second
+    assert len(first) == 24
+    assert ops.temporal_cause_fingerprint(
+        {"SourceIngestWorkflow": 2}, ["DISK_FULL"], long_pending=False
+    ) != first
+    assert "SourceIngest" not in first
+
+
+def test_temporal_cause_change_pages_only_after_two_stable_observations(ledger):
+    def temporal(fp, description="1 failed"):
+        return ops.Signal(
+            "temporal", "Background workflows", "warning",
+            description, "Check dependency.", fingerprint=fp,
+        )
+
+    original = "a" * 24
+    changed = "b" * 24
+    ops.reconcile(ledger, [temporal(original)], NOW)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 300)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(original)], NOW + 600)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 900)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+    ops.reconcile(ledger, [temporal(changed)], NOW + 1200)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    events = [
+        row[0] for row in ledger.execute("SELECT message FROM events ORDER BY id")
+    ]
+    assert "sustained change in failure types/causes" in events[-1]
+    ops.reconcile(ledger, [temporal(changed)], NOW + 1500)
+    assert ledger.execute("SELECT count(*) FROM events").fetchone()[0] == 2
+    assert "SECRET" not in " ".join(events)
+
+
+def test_temporal_signature_resets_when_quiet_incident_resolves(ledger):
+    fp = "c" * 24
+    failed = ops.Signal(
+        "temporal", "Background workflows", "warning", "failed", fingerprint=fp,
+    )
+    quiet = ops.Signal("temporal", "Background workflows", "healthy", "zero new failures")
+    ops.reconcile(ledger, [failed], NOW)
+    for n in range(1, 75):
+        ops.reconcile(ledger, [quiet], NOW + n * 300)
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_cause_signature'"
+    ).fetchone() is None
+    assert ledger.execute(
+        "SELECT 1 FROM state WHERE key='temporal_pending_signature'"
+    ).fetchone() is None
 
 
 def test_drift_warns_before_review_threshold_even_if_ci_not_eligible(monkeypatch, tmp_path):
