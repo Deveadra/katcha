@@ -231,6 +231,106 @@ def test_active_jobs_do_not_substitute_for_evidence(monkeypatch, tmp_path):
     assert ops.safety_signal("backup", NOW).status == "unknown"
 
 
+@pytest.mark.parametrize(
+    "bytes_free,inodes_free,status",
+    [
+        (1, 60, "critical"),
+        (15, 90, "warning"),
+        (80, 3, "critical"),
+        (80, 10, "warning"),
+        (80, 90, "healthy"),
+    ],
+)
+def test_host_filesystem_checks_bytes_and_inodes(
+    monkeypatch, bytes_free, inodes_free, status
+):
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=100, free=bytes_free),
+    )
+    monkeypatch.setattr(
+        ops.os, "statvfs",
+        lambda path: SimpleNamespace(f_blocks=100, f_files=100, f_favail=inodes_free),
+    )
+    result = ops.filesystem_signal("/", "root_storage", "Root filesystem")
+    assert result.status == status
+    assert "Root filesystem" in result.detail
+    assert f"{inodes_free:.1f}% inodes free" in result.detail
+    assert "SECRET" not in result.detail
+
+
+def test_unreported_inodes_and_missing_capacity_fail_safe(monkeypatch):
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=100, free=90),
+    )
+    monkeypatch.setattr(
+        ops.os, "statvfs",
+        lambda path: SimpleNamespace(f_blocks=100, f_files=0, f_favail=0),
+    )
+    row = ops.filesystem_signal("/", "root_storage", "Root filesystem")
+    assert row.status == "healthy"
+    assert "not reported" in row.detail
+    monkeypatch.setattr(
+        ops.shutil, "disk_usage",
+        lambda path: SimpleNamespace(total=0, free=0),
+    )
+    with pytest.raises(ops.ProbeError, match="could not be measured"):
+        ops.filesystem_signal("/", "root_storage", "Root filesystem")
+
+
+def test_docker_container_oom_is_actionable_without_host_private_paths(monkeypatch):
+    names = ["katcha-production-worker-1", "katcha-production-renderer-1"]
+    seen = []
+
+    def fake_command(*args, **kwargs):
+        seen.append(args)
+        if args[:2] == ("docker", "ps"):
+            return "\n".join(names)
+        if args[:2] == ("docker", "inspect"):
+            assert args[-2:] == tuple(names)
+            assert ".Config" not in " ".join(args)
+            return "7|true|exited\n0|false|running"
+        raise AssertionError("unexpected Docker command")
+
+    monkeypatch.setattr(ops, "command", fake_command)
+    row = ops.production_container_pressure()
+    assert row.status == "critical"
+    assert "1 containers flagged OOM-killed" in row.detail
+    assert "7 cumulative Docker restarts" in row.detail
+    assert "worker-1" not in row.detail
+    assert seen[-1][2] == "--format"
+
+
+def test_docker_metadata_restarts_are_not_automatically_incidents(monkeypatch):
+    def fake_command(*args, **kwargs):
+        return (
+            "katcha-production-api-1" if args[1] == "ps"
+            else "15|false|running"
+        )
+    monkeypatch.setattr(ops, "command", fake_command)
+    row = ops.production_container_pressure()
+    assert row.status == "healthy"
+    assert "15 cumulative" in row.detail
+
+
+@pytest.mark.parametrize(
+    "names,result",
+    [
+        ("katcha-production-api-1\nnot-allowed", "2|false|running\n0|false|running"),
+        ("katcha-production-api-1", "error SECRET"),
+        ("katcha-production-api-1", ""),
+    ],
+)
+def test_docker_metadata_invalid_or_incomplete_is_unknown(monkeypatch, names, result):
+    monkeypatch.setattr(
+        ops, "command",
+        lambda *args, **kwargs: names if args[1] == "ps" else result,
+    )
+    with pytest.raises(ops.ProbeError):
+        ops.production_container_pressure()
+
+
 def test_running_workflows_are_healthy_but_repeated_activity_failures_warn(monkeypatch):
     execution = {"workflowId": "scheduler", "runId": "run-1"}
     activities = []
