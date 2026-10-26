@@ -116,6 +116,14 @@ are unavailable; reports older than 15 minutes are stale. Viewing the page never
 launches host work. The UI shows the latest 100 history records; the private ledger
 retains full history.
 
+The Operations Health panel supports an authorized deep link
+`/operations?incident=<numeric-id>#operations-health`. It displays only the
+allowlisted summary and recent historical events from the existing snapshot,
+with all text escaped; it does not grant API access or load private Temporal
+history, Docker metadata, or the root ledger. If the incident is outside the
+bounded recent snapshot the page reports this rather than claiming it is
+resolved. The operator must still authenticate normally.
+
 The **Operations heartbeat watchdog** GitHub workflow checks the minimal public
 `/v1/health/operations` heartbeat every ten minutes. A dead host or stopped monitor
 creates a durable GitHub incident and triggers the existing Telegram path. Delivery
