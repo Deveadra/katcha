@@ -140,10 +140,15 @@ serialize this evidence table. The new read-only inspector defaults to hashed
 lookup IDs and category codes:
 
 ```bash
-# After the accepted source has been installed on the operator's host.
-sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20
-# Only if you need Temporal CLI IDs during a private host investigation:
-sudo python3 scripts/inspect-operations-temporal-evidence.py --limit 20 --private-ids
+# On the primary, after review/merge of the exact accepted source:
+# Read only from the accepted main branch. This does not deploy the application.
+sudo git -C /opt/katcha fetch origin main
+sudo git -C /opt/katcha show origin/main:scripts/inspect-operations-temporal-evidence.py \
+  | sudo python3 - --limit 20
+
+# Only for a private operator investigation requiring exact Temporal IDs:
+sudo git -C /opt/katcha show origin/main:scripts/inspect-operations-temporal-evidence.py \
+  | sudo python3 - --limit 20 --private-ids
 ```
 
 Telegram notification events with a numbered incident now include an
