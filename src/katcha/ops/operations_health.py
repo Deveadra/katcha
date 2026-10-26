@@ -32,6 +32,9 @@ DEPLOY_LOCK = Path("/run/lock/katcha-production-deployment.lock")
 HOST = "katcha-prod-primary-001"
 DEADLINE: float | None = None
 HEALTH_URL = "https://app.katcha.stream/operations#operations-health"
+# A sliding failed-execution lookback expiring is not evidence of recovery.
+TEMPORAL_QUIET_SECONDS = 6 * 3600
+TEMPORAL_MAX_GAP_SECONDS = 15 * 60
 SAFETY = {
     "backup": (
         "katcha-backup.service",
@@ -217,8 +220,19 @@ def temporal_signal() -> Signal:
             "101",
         )
     )
-    if not isinstance(failed, list):
+    if not isinstance(failed, list) or len(failed) > 100:
         raise ValueError("Failed workflow inventory incomplete")
+    # Summarize only bounded, code-shaped workflow type names. Workflow IDs,
+    # exception messages, payloads and stack traces may contain private data.
+    failed_types: dict[str, int] = {}
+    for item in failed:
+        if not isinstance(item, dict):
+            raise ValueError("Failed workflow inventory invalid")
+        kind = item.get("type") or item.get("workflowType")
+        name = kind.get("name") if isinstance(kind, dict) else None
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", name):
+            name = "unidentified"
+        failed_types[name] = failed_types.get(name, 0) + 1
     rows = json.loads(
         command(*prefix, "list", *common, "--query", 'ExecutionStatus="Running"', "--limit", "101")
     )
@@ -242,13 +256,18 @@ def temporal_signal() -> Signal:
             bool(a.get("lastFailure")) and int(a.get("attempt", 0)) >= 3 for a in activities
         )
     if failing or failed:
+        kinds = sorted(failed_types.items(), key=lambda pair: (-pair[1], pair[0]))
+        summary = ", ".join(f"{kind} ({count})" for kind, count in kinds[:4])
+        if len(kinds) > 4:
+            summary += f", {sum(count for _, count in kinds[4:])} other"
         return Signal(
             "temporal",
             "Background workflows",
             "warning",
-            f"{len(failed)} recently failed workflows; "
-            f"{failing} activities have repeated failures.",
-            "Inspect workflow history and repair the failing dependency.",
+            f"{len(failed)} failed executions in the past hour; "
+            f"{failing} pending activities with repeated failures."
+            + (f" Failed workflow types: {summary}." if summary else ""),
+            "Inspect the failed Temporal execution history and repair its cause before retrying.",
         )
     return Signal(
         "temporal",
@@ -557,11 +576,52 @@ def event(db: sqlite3.Connection, ident: int, now: float, message: str) -> None:
     db.execute("INSERT INTO events(incident, at, message) VALUES (?, ?, ?)", (ident, now, message))
 
 
+def stabilize_temporal_signal(
+    db: sqlite3.Connection, signal: Signal, row: sqlite3.Row | None, now: float
+) -> Signal:
+    """Keep an incident active while a rolling failed-run window merely goes quiet.
+
+    Do not call an elapsed lookback a verified recovery. Require six hours of
+    continuously monitored quiet before retiring an alert; interrupted monitoring
+    restarts that quiet window.
+    """
+    if signal.key != "temporal":
+        return signal
+    if signal.status != "healthy" or row is None:
+        db.execute("DELETE FROM state WHERE key='temporal_quiet_since'")
+        return signal
+    previous = db.execute("SELECT value FROM state WHERE key='checked_at'").fetchone()
+    quiet = db.execute("SELECT value FROM state WHERE key='temporal_quiet_since'").fetchone()
+    try:
+        prior_check = float(previous[0]) if previous else 0
+        since = float(quiet[0]) if quiet else now
+    except (TypeError, ValueError, OverflowError):
+        prior_check, since = 0, now
+    if not 0 <= now - prior_check <= TEMPORAL_MAX_GAP_SECONDS or not 0 <= now - since:
+        since = now
+    db.execute(
+        "INSERT OR REPLACE INTO state VALUES ('temporal_quiet_since', ?)", (str(since),)
+    )
+    if now - since < TEMPORAL_QUIET_SECONDS:
+        return Signal(
+            "temporal",
+            "Background workflows",
+            "warning",
+            "No failed executions in the past hour; observing a six-hour quiet period. "
+            "Earlier failed executions remain in Temporal history.",
+            "Inspect the earlier failed executions; an expired lookback is not a successful retry.",
+        )
+    return signal
+
+
 def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None:
+    observed: list[Signal] = []
     for signal in signals:
         row = db.execute(
             "SELECT * FROM incidents WHERE key=? AND resolved IS NULL", (signal.key,)
         ).fetchone()
+        signal = stabilize_temporal_signal(db, signal, row, now)
+        observed.append(signal)
         if signal.status == "healthy":
             if row:
                 if (
@@ -571,10 +631,16 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                 ):
                     continue
                 db.execute(
-                    "UPDATE incidents SET resolved=?, updated=?, bot='verified' WHERE id=?",
-                    (now, now, row["id"]),
+                    "UPDATE incidents SET resolved=?, updated=?, bot=? WHERE id=?",
+                    (now, now, "quieted" if signal.key == "temporal" else "verified", row["id"]),
                 )
-                event(db, row["id"], now, signal.label + ": recovery verified by a fresh check.")
+                message = (
+                    "Background workflows: six hours without observed failures; "
+                    "previously failed executions are retained for investigation."
+                    if signal.key == "temporal"
+                    else signal.label + ": recovery verified by a fresh check."
+                )
+                event(db, row["id"], now, message)
             continue
         if row is None:
             ident = db.execute(
@@ -601,7 +667,7 @@ def reconcile(db: sqlite3.Connection, signals: list[Signal], now: float) -> None
                 db.execute("UPDATE incidents SET bot='queued' WHERE id=?", (row["id"],))
     db.execute(
         "INSERT OR REPLACE INTO state VALUES ('signals', ?)",
-        (json.dumps([asdict(s) for s in signals]),),
+        (json.dumps([asdict(s) for s in observed]),),
     )
     db.execute("INSERT OR REPLACE INTO state VALUES ('checked_at', ?)", (str(now),))
     db.commit()
