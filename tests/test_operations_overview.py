@@ -431,11 +431,15 @@ def test_outcome_evidence_requires_correct_channel_access(data, monkeypatch) -> 
 
 
 def test_named_principal_outcome_evidence_requires_read_scope() -> None:
+    target = (
+        "/v1/operations/work/production/"
+        "11111111-1111-4111-8111-111111111111/outcome-evidence"
+    )
     scope = {
         "type": "http", "http_version": "1.1", "method": "GET",
         "scheme": "http",
-        "path": "/v1/operations/work/production/11111111-1111-4111-8111-111111111111/outcome-evidence",
-        "raw_path": b"/v1/operations/work/production/11111111-1111-4111-8111-111111111111/outcome-evidence",
+        "path": target,
+        "raw_path": target.encode("ascii"),
         "query_string": b"", "headers": [],
         "client": ("test", 1), "server": ("test", 80),
     }
