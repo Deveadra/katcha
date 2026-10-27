@@ -306,7 +306,7 @@ async def test_connect_budget_exhaustion_fails_before_any_dns_or_upstream(monkey
 
     monkeypatch.setattr(socket, "getaddrinfo", forbidden)
     reader, writer = asyncio.StreamReader(), Writer()
-    reader.feed_data(b"CONNECT fixture.example:443 HTTP/1.1\\r\\n\\r\\n")
+    reader.feed_data(b"CONNECT fixture.example:443 HTTP/1.1" + bytes((13, 10, 13, 10)))
     reader.feed_eof()
     proxy = server_browser.PublicProxy()
     await proxy.handle(reader, writer)
