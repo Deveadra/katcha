@@ -37,6 +37,11 @@ class MemoryStore:
     def get_bytes(self, key):
         return self.objects[key]
 
+    def iter_bytes(self, key, chunk_size=1024 * 1024):
+        data = self.objects[key]
+        for offset in range(0, len(data), chunk_size):
+            yield data[offset : offset + chunk_size]
+
     def put_file(self, path, key):
         self.objects[key] = path.read_bytes()
 
@@ -132,15 +137,38 @@ def test_chunk_replay_resume_and_identity_conflict(workspace):
 
 
 
-def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(workspace):
-    """Use the real Content API and finalization, not a fabricated upload receipt."""
-    from katcha.editorial.media_intake.scene_index import _source
+def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(
+    workspace, tmp_path
+):
+    """Real API upload -> canonical R2-style bytes -> Bin -> actual video decoding."""
+    from fractions import Fraction
+
+    from PIL import Image
+
+    from katcha.editorial.media_intake import scene_index
+    from katcha.editorial.media_intake.scene_schemas import SearchShotsRequest
     from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
     from katcha.services.editorial_media_bin import add_project_media_item
     from katcha.services.editorial_projects import create_project, save_draft
 
+    av = pytest.importorskip("av")
+    source_video = tmp_path / "real-encoded-trailer.mkv"
+    with av.open(str(source_video), "w") as container:
+        stream = container.add_stream("ffv1", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 64, 36, "yuv444p"
+        for number in range(20):
+            frame = av.VideoFrame.from_image(
+                Image.new("RGB", (64, 36), "red" if number < 10 else "blue")
+            )
+            frame.pts = number + 50
+            frame.time_base = Fraction(1, 10)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    data = source_video.read_bytes()
     channel, _, _ = workspace
-    data = b"fixture-video-bytes"
+
     with TestClient(app) as client:
         base = f"/v1/channels/{channel}/content"
         response = client.post(
@@ -149,7 +177,7 @@ def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(worksp
                 "request_key": "actual-content-to-editorial",
                 "input_kind": "file",
                 "title": "Owned source trailer",
-                "filename": "trailer.webm",
+                "filename": "trailer.mkv",
                 "size_bytes": len(data),
                 "fingerprint": "fixture",
                 "rights_confirmed": True,
@@ -204,13 +232,28 @@ def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(worksp
         kind="video",
         clip_id=clip_id,
     )
-    resolved = _source(channel, project.id, media.id)
+    store = MemoryStore()
+    resolved = scene_index._source(channel, project.id, media.id)
     assert resolved.clip_id == clip_id
     assert resolved.permission_evidence_refs == (
         f"upload:{original_source_id}",
         f"content:{content_id}",
     )
     assert media.rights_status == "not_assessed"
+
+    measured = scene_index.index_project_media(
+        channel, project.id, media.id, actor="fixture", store=store
+    )
+    assert measured["status"] == "completed"
+    assert len(measured["evidence"]["shots"]) == 2
+    assert len(
+        scene_index.search_project_shots(
+            channel,
+            project.id,
+            SearchShotsRequest(item_ids=[media.id], query="blue"),
+            store=store,
+        )
+    ) == 1
 
 
 def test_upload_validates_video_and_deduplicates_bytes(workspace, monkeypatch):
