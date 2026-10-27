@@ -163,6 +163,37 @@ proof production evidence is being collected. A successful workflow retry
 still requires separate business-output verification; this table only
 preserves failures and diagnostic categories.
 
+## Read-only outcome evidence (production and publication)
+
+The authenticated, channel-scoped endpoint
+`GET /v1/operations/work/{kind}/{id}/outcome-evidence` supports
+`kind=production`, `short_episode`, and `publication`. It reads existing
+durable database records and returns only a bounded assessment and fixed
+diagnostic codes, never object keys, video IDs, tokens, provider responses,
+arbitrary error text or raw workflow IDs. No retries, provider calls, media
+reads, publication, or spending occur.
+
+Assessment levels are intentionally distinct:
+
+- `unverified`: no usable completion receipt, or known failed/incomplete work
+- `recorded`: one durable record suggests completion but lacks corroboration
+- `corroborated`: a verified render-attempt receipt agrees with a matching
+  verified render asset, or a locally completed publication with an ID and
+  publication timestamp has a post-publication analytics observation
+- `inconsistent`: conflicting or contradictory durable records, requiring review
+
+Even `corroborated` is **database-only**. The response always sets
+`live_provider_checked=false` and `business_recovery_verified=false`.
+These flags must not become true until separate provider/object verification,
+lineage reconciliation and expected business-output checks are implemented.
+A publication marked `failed` with a recorded YouTube ID is explicitly
+inconsistent; blindly retrying may duplicate a live upload.
+
+This is a review aid, not a change to the existing recovery or publishing
+authorization controls. A real live accepted asset, current provider state,
+and successful business transition are mandatory before marking a failed
+incident as recovered.
+
 ## Bounded remediation bot
 
 New incidents enter a persistent queue immediately. The bot prepares diagnostics

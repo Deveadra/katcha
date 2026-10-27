@@ -422,6 +422,14 @@ def _require_named_principal_route_access(request: Request) -> None:
     if path == "/v1/operations/overview":
         require_control_scope(request, "channels:read")
         return
+    if method == "GET" and re.fullmatch(
+        r"/v1/operations/work/(?:production|short_episode|publication)/"
+        r"[0-9a-fA-F-]{36}/outcome-evidence",
+        path,
+    ):
+        # The handler independently verifies the exact resource's channel.
+        require_control_scope(request, "channels:read")
+        return
 
     if path.startswith("/v1/publications/") and path.endswith(
         ("/draft", "/release-plan", "/thumbnail", "/reconcile-release", "/start")

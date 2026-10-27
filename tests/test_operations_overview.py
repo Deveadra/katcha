@@ -323,6 +323,146 @@ def test_operations_routes_are_registered() -> None:
     assert "post" in paths["/v1/operations/work/{kind}/{source_id}/recover"]
 
 
+def test_outcome_evidence_routes_and_read_only_reporting(data) -> None:
+    client = TestClient(app)
+    paths = app.openapi()["paths"]
+    assert "/v1/operations/work/{kind}/{source_id}/outcome-evidence" in paths
+
+    active = client.get(f"/v1/operations/work/production/{data.active}/outcome-evidence")
+    assert active.status_code == 200
+    assert active.json()["assessment"] == "unverified"
+    assert "RENDER_ATTEMPT_MISSING" in active.json()["missing_codes"]
+    assert active.json()["live_provider_checked"] is False
+    assert active.json()["business_recovery_verified"] is False
+
+    failed = client.get(
+        f"/v1/operations/work/publication/{data.failed_publication}/outcome-evidence"
+    )
+    assert failed.status_code == 200
+    assert failed.json()["assessment"] == "unverified"
+    assert "PUBLICATION_NOT_COMPLETE" in failed.json()["missing_codes"]
+
+    published = client.get(f"/v1/operations/work/publication/{data.published}/outcome-evidence")
+    assert published.status_code == 200
+    assert published.json()["assessment"] == "corroborated"
+    assert "POST_PUBLICATION_ANALYTICS_RECORDED" in published.json()["evidence_codes"]
+    assert published.json()["live_provider_checked"] is False
+    assert published.json()["business_recovery_verified"] is False
+    assert "Database records only" in published.json()["limitation"]
+    assert client.get(
+        f"/v1/operations/work/production/{uuid.uuid4()}/outcome-evidence"
+    ).status_code == 404
+
+
+def test_render_outcome_requires_matching_verified_attempt_and_asset(data) -> None:
+    from katcha.production_models import ProductionAsset
+
+    now = datetime.now(UTC)
+    with data.factory.begin() as session:
+        attempt = session.query(RenderAttempt).filter(
+            RenderAttempt.production_id == data.attention
+        ).one()
+        attempt.status = "verified"
+        attempt.stage = "verified"
+        attempt.completed_at = now
+        attempt.verification = {"verified": True}
+        session.add(
+            ProductionAsset(
+                production_id=data.attention,
+                kind="render",
+                generation=1,
+                storage_key="renders/attention.mp4",
+                asset_metadata={"verified": True, "SECRET": "do not emit"},
+            )
+        )
+
+    client = TestClient(app)
+    path = f"/v1/operations/work/production/{data.attention}/outcome-evidence"
+    result = client.get(path)
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["assessment"] == "corroborated"
+    assert "RENDER_OUTPUT_KEYS_MATCH" in payload["evidence_codes"]
+    assert "RENDER_ATTEMPT_VERIFIED_RECORD" in payload["evidence_codes"]
+    assert payload["business_recovery_verified"] is False
+    assert "SECRET" not in result.text
+    assert "renders/attention.mp4" not in result.text
+
+    with data.factory.begin() as session:
+        row = session.query(ProductionAsset).filter(
+            ProductionAsset.production_id == data.attention
+        ).one()
+        row.storage_key = "renders/other.mp4"
+    mismatch = client.get(path)
+    assert mismatch.json()["assessment"] == "inconsistent"
+    assert "RENDER_OUTPUT_KEY_MISMATCH" in mismatch.json()["missing_codes"]
+
+
+def test_failed_publication_with_provider_id_is_ambiguous_not_complete(data) -> None:
+    with data.factory.begin() as session:
+        row = session.get(Publication, data.failed_publication)
+        row.youtube_video_id = "video-already-accepted"
+        row.published_at = datetime.now(UTC)
+    payload = TestClient(app).get(
+        f"/v1/operations/work/publication/{data.failed_publication}/outcome-evidence"
+    ).json()
+    assert payload["assessment"] == "inconsistent"
+    assert payload["business_recovery_verified"] is False
+    assert "PUBLICATION_NOT_COMPLETE" in payload["missing_codes"]
+
+
+def test_outcome_evidence_requires_correct_channel_access(data, monkeypatch) -> None:
+    def scope(_request, channel_id):
+        if channel_id != data.channel:
+            raise HTTPException(status_code=403, detail="channel forbidden")
+
+    monkeypatch.setattr(operations, "require_control_channel", scope)
+    with data.factory() as session:
+        other_id = session.query(Production.id).filter(
+            Production.channel_profile_id == data.other
+        ).scalar()
+    client = TestClient(app)
+    assert client.get(
+        f"/v1/operations/work/production/{other_id}/outcome-evidence"
+    ).status_code == 403
+    assert client.get(
+        f"/v1/operations/work/production/{data.active}/outcome-evidence"
+    ).status_code == 200
+
+
+def test_named_principal_outcome_evidence_requires_read_scope() -> None:
+    target = (
+        "/v1/operations/work/production/"
+        "11111111-1111-4111-8111-111111111111/outcome-evidence"
+    )
+    scope = {
+        "type": "http", "http_version": "1.1", "method": "GET",
+        "scheme": "http",
+        "path": target,
+        "raw_path": target.encode("ascii"),
+        "query_string": b"", "headers": [],
+        "client": ("test", 1), "server": ("test", 80),
+    }
+    allowed = Request(scope)
+    allowed.state.control_principal_name = "channel-reader"
+    allowed.state.control_scopes = {"channels:read"}
+    auth._require_named_principal_route_access(allowed)
+
+    forbidden = Request(scope)
+    forbidden.state.control_principal_name = "channel-reader"
+    forbidden.state.control_scopes = {"trends:read"}
+    with pytest.raises(HTTPException) as error:
+        auth._require_named_principal_route_access(forbidden)
+    assert error.value.status_code == 403
+
+    unsafe = Request({**scope, "method": "POST"})
+    unsafe.state.control_principal_name = "channel-reader"
+    unsafe.state.control_scopes = {"channels:read"}
+    with pytest.raises(HTTPException) as denied:
+        auth._require_named_principal_route_access(unsafe)
+    assert denied.value.status_code == 403
+
+
 def test_operations_overview_returns_actionable_channel_state(data) -> None:
     client = TestClient(app)
     response = client.get(

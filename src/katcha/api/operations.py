@@ -26,6 +26,11 @@ from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
 from katcha.services.compilations import register_compilation_regeneration
+from katcha.services.operations_outcome_evidence import (
+    OutcomeRecord,
+    assess_publication_records,
+    assess_render_records,
+)
 from katcha.services.productions import register_regeneration
 from katcha.services.publications import retry_publication
 from katcha.services.short_episode_reviews import register_short_episode_regeneration
@@ -105,6 +110,22 @@ class OperationsWorkItem(BaseModel):
     href: str
     recovery_action: Literal["resume", "restart"] | None = None
     recovery_label: str | None = None
+
+
+class OperationsOutcomeEvidence(BaseModel):
+    """Read-only record consistency. Does not verify provider/object existence."""
+
+    kind: Literal["production", "short_episode", "publication"]
+    source_id: uuid.UUID
+    assessment: Literal["unverified", "recorded", "corroborated", "inconsistent"]
+    evidence_codes: list[str]
+    missing_codes: list[str]
+    live_provider_checked: bool = False
+    business_recovery_verified: bool = False
+    limitation: str = (
+        "Database records only: Temporal completion, storage object existence, "
+        "live provider state, and safe replay have not been verified."
+    )
 
 
 class RecoverWorkRequest(BaseModel):
@@ -415,6 +436,102 @@ def _event_href(
     if event.aggregate_type == "channel_profile":
         return f"/channels?channel={channel_profile_id}"
     return None
+
+
+def _outcome_response(
+    kind: Literal["production", "short_episode", "publication"],
+    source_id: uuid.UUID,
+    evidence: OutcomeRecord,
+) -> OperationsOutcomeEvidence:
+    return OperationsOutcomeEvidence(
+        kind=kind,
+        source_id=source_id,
+        assessment=evidence.assessment,
+        evidence_codes=list(evidence.evidence_codes),
+        missing_codes=list(evidence.missing_codes),
+    )
+
+
+@router.get(
+    "/work/{kind}/{source_id}/outcome-evidence",
+    response_model=OperationsOutcomeEvidence,
+)
+def inspect_work_outcome(
+    kind: Literal["production", "short_episode", "publication"],
+    source_id: uuid.UUID,
+    http_request: Request,
+) -> OperationsOutcomeEvidence:
+    """Assess existing durable receipts without launching providers or mutations."""
+    with session_scope() as session:
+        if kind == "publication":
+            publication = session.get(Publication, source_id)
+            if publication is None:
+                raise HTTPException(status_code=404, detail="publication not found")
+            profile = session.scalar(
+                select(ChannelProfile).where(
+                    ChannelProfile.youtube_connection_id == publication.youtube_connection_id
+                )
+            )
+            if profile is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="publication channel ownership cannot be verified",
+                )
+            require_control_channel(http_request, profile.id)
+            last_sample = session.scalar(
+                select(PublicationAnalyticsSnapshot)
+                .where(PublicationAnalyticsSnapshot.publication_id == source_id)
+                .order_by(PublicationAnalyticsSnapshot.sampled_at.desc())
+                .limit(1)
+            )
+            return _outcome_response(
+                kind, source_id, assess_publication_records(publication, last_sample)
+            )
+
+        if kind == "production":
+            source = session.get(Production, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail="production not found")
+            if source.channel_profile_id is None:
+                raise HTTPException(
+                    status_code=409, detail="production channel ownership cannot be verified"
+                )
+            require_control_channel(http_request, source.channel_profile_id)
+            attempt_clause = RenderAttempt.production_id == source_id
+            asset = session.scalar(
+                select(ProductionAsset)
+                .where(
+                    ProductionAsset.production_id == source_id,
+                    ProductionAsset.kind == "render",
+                )
+                .order_by(ProductionAsset.generation.desc(), ProductionAsset.created_at.desc())
+                .limit(1)
+            )
+        else:
+            source = session.get(ShortEpisode, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail="short episode not found")
+            require_control_channel(http_request, source.channel_profile_id)
+            attempt_clause = RenderAttempt.short_episode_id == source_id
+            asset = session.scalar(
+                select(ShortEpisodeAsset)
+                .where(
+                    ShortEpisodeAsset.short_episode_id == source_id,
+                    ShortEpisodeAsset.kind == "render",
+                )
+                .order_by(ShortEpisodeAsset.generation.desc(), ShortEpisodeAsset.created_at.desc())
+                .limit(1)
+            )
+
+        attempt = session.scalar(
+            select(RenderAttempt)
+            .where(attempt_clause)
+            .order_by(RenderAttempt.attempt_number.desc(), RenderAttempt.created_at.desc())
+            .limit(1)
+        )
+        return _outcome_response(
+            kind, source_id, assess_render_records(source, attempt, asset)
+        )
 
 
 @router.post(
