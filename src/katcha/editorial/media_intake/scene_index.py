@@ -18,9 +18,9 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
+from katcha.content_models import ContentItem
 from katcha.db import session_scope
 from katcha.editorial.media_intake.scene_schemas import SceneIndexV1, SearchShotsRequest
-from katcha.content_models import ContentItem
 from katcha.editorial.media_intake.scene_worker import MAX_RESULT_BYTES
 from katcha.editorial_models import AcquisitionReceipt, MediaAssetValidation
 from katcha.integrations.storage import ObjectStore
