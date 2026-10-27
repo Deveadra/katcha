@@ -206,7 +206,10 @@ def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(
         CreateEditorialProject.model_validate(
             {
                 "idempotency_key": "actual-content-project",
-                "brief": {"prompt": "Inspect canonical trailer", "source_urls": []},
+                "brief": {
+                    "prompt": "Inspect canonical trailer",
+                    "source_urls": ["https://example.test/fixture"],
+                },
             }
         ),
         actor="fixture",
