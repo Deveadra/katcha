@@ -77,7 +77,7 @@ async def test_connect_pins_public_literal_and_closes_tunnel(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **kw: dns_answer("93.184.216.34"))
     monkeypatch.setattr(asyncio, "open_connection", connect)
     reader, writer = asyncio.StreamReader(), Writer()
-    reader.feed_data(b"CONNECT fixture.example:443 HTTP/1.1\r\n\r\n")
+    reader.feed_data(b"CONNECT fixture.example:443 HTTP/1.1" + bytes((13, 10, 13, 10)))
     reader.feed_eof()
     proxy = server_browser.PublicProxy()
     await proxy.handle(reader, writer)
