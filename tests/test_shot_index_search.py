@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from katcha import db
+from katcha.content_models import ContentItem
 from katcha.editorial.media_intake import scene_index, scene_worker
 from katcha.editorial.media_intake.scene_schemas import SearchShotsRequest
 from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
@@ -281,6 +282,136 @@ def test_upload_permission_removed_blocks_existing_index(indexed_context):
         session.get(SourceItem, source).source_metadata = {"channel_profile_id": str(channel)}
     with pytest.raises(ValueError, match="permission"):
         scene_index.get_project_scene_index(channel, project, item, store=store)
+
+
+
+def _record_content_upload(indexed_context):
+    """Mimic the persisted result of Content.finish_upload, not an asserted URL."""
+    channel, _, _, _, clip_id, source_id, store = indexed_context
+    content_id = uuid.uuid4()
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        source.platform = "local_file"
+        source.source_url = f"katcha-file://{content_id}"
+        source.canonical_url = source.source_url
+        source.source_metadata = {
+            "channel_profile_id": str(channel),
+            "content_item_id": str(content_id),
+        }
+        session.add(
+            ContentItem(
+                id=content_id,
+                channel_profile_id=channel,
+                request_key=f"content-{content_id}",
+                input_kind="file",
+                title="Owned golden trailer",
+                status="ready",
+                source_id=source_id,
+                clip_id=clip_id,
+                filename="trailer.mkv",
+                size_bytes=len(store.data),
+                upload_offset=len(store.data),
+                details={
+                    "rights_confirmed": True,
+                    "rights_confirmed_by": "fixture-operator",
+                    "verified_sha256": hashlib.sha256(store.data).hexdigest(),
+                },
+            )
+        )
+    return content_id
+
+
+def test_content_uploaded_real_clip_path_is_indexable_without_new_blob(indexed_context):
+    content_id = _record_content_upload(indexed_context)
+    result = build(indexed_context)
+    assert result["status"] == "completed"
+    assert result["receipt"]["permission_evidence_refs"] == [
+        f"upload:{indexed_context[5]}",
+        f"content:{content_id}",
+    ]
+    channel, _, project, item, _, _, store = indexed_context
+    assert len(
+        scene_index.search_project_shots(
+            channel, project, SearchShotsRequest(item_ids=[item], query="blue"), store=store
+        )
+    ) == 1
+    with db.session_scope() as session:
+        media = session.get(ProjectMediaItem, item)
+        assert media.rights_status == "not_assessed"
+        assert media.status == "acquired"
+        assert len(list(session.scalars(select(Clip)))) == 1
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "wrong_channel",
+        "source_channel",
+        "content_link",
+        "missing_permission",
+        "missing_actor",
+        "wrong_checksum",
+        "incomplete_upload",
+        "wrong_size",
+        "not_ready",
+        "source_failed",
+        "orphan_source",
+    ],
+)
+def test_unverified_content_upload_never_grants_index_permission(indexed_context, tamper):
+    content_id = _record_content_upload(indexed_context)
+    channel, other, project, item, clip_id, source_id, store = indexed_context
+    with db.session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        receipt = session.get(ContentItem, content_id)
+        details = dict(receipt.details)
+        metadata = dict(source.source_metadata)
+        if tamper == "wrong_channel":
+            receipt.channel_profile_id = other
+        elif tamper == "source_channel":
+            metadata["channel_profile_id"] = str(other)
+        elif tamper == "content_link":
+            metadata["content_item_id"] = str(uuid.uuid4())
+        elif tamper == "missing_permission":
+            details["rights_confirmed"] = False
+        elif tamper == "missing_actor":
+            details["rights_confirmed_by"] = ""
+        elif tamper == "wrong_checksum":
+            details["verified_sha256"] = "0" * 64
+        elif tamper == "incomplete_upload":
+            receipt.upload_offset = 0
+        elif tamper == "wrong_size":
+            receipt.size_bytes = len(store.data) - 1
+        elif tamper == "not_ready":
+            receipt.status = "uploading"
+        elif tamper == "source_failed":
+            source.status = "failed"
+        elif tamper == "orphan_source":
+            receipt.source_id = uuid.uuid4()
+        source.source_metadata = metadata
+        receipt.details = details
+    with pytest.raises(ValueError, match="permission"):
+        scene_index.index_project_media(channel, project, item, actor="fixture", store=store)
+    assert store.calls == 0
+
+
+def test_revoked_content_receipt_blocks_previously_measured_footage(indexed_context):
+    content_id = _record_content_upload(indexed_context)
+    build(indexed_context)
+    channel, _, project, item, _, _, store = indexed_context
+    before = store.calls
+    with db.session_scope() as session:
+        receipt = session.get(ContentItem, content_id)
+        details = dict(receipt.details)
+        details["rights_confirmed"] = False
+        receipt.details = details
+    with pytest.raises(ValueError, match="permission"):
+        scene_index.get_project_scene_index(channel, project, item, store=store)
+    with pytest.raises(ValueError, match="permission"):
+        scene_index.search_project_shots(
+            channel, project, SearchShotsRequest(item_ids=[item], query="red"), store=store
+        )
+    assert store.calls == before
 
 
 def test_size_budget_uses_actual_stream_and_cleans_files(indexed_context, monkeypatch, tmp_path):
