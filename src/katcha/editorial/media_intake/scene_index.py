@@ -180,7 +180,9 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
                     "content_id": str(content_receipts[source.id].id),
                     "source_id": str(source.id),
                     "verified_sha256": content_receipts[source.id].details["verified_sha256"],
-                    "rights_confirmed_by": content_receipts[source.id].details["rights_confirmed_by"],
+                    "rights_confirmed_by": (
+                        content_receipts[source.id].details["rights_confirmed_by"]
+                    ),
                 }
                 for source in sorted(owned, key=lambda row: str(row.id))
                 if source.id in content_receipts
