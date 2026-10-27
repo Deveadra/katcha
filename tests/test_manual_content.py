@@ -131,6 +131,88 @@ def test_chunk_replay_resume_and_identity_conflict(workspace):
         assert session.scalar(select(ContentItem)).upload_offset == 11
 
 
+
+def test_actual_content_upload_can_be_attached_and_inspected_in_editorial(workspace):
+    """Use the real Content API and finalization, not a fabricated upload receipt."""
+    from katcha.editorial.media_intake.scene_index import _source
+    from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
+    from katcha.services.editorial_media_bin import add_project_media_item
+    from katcha.services.editorial_projects import create_project, save_draft
+
+    channel, _, _ = workspace
+    data = b"fixture-video-bytes"
+    with TestClient(app) as client:
+        base = f"/v1/channels/{channel}/content"
+        response = client.post(
+            base,
+            json={
+                "request_key": "actual-content-to-editorial",
+                "input_kind": "file",
+                "title": "Owned source trailer",
+                "filename": "trailer.webm",
+                "size_bytes": len(data),
+                "fingerprint": "fixture",
+                "rights_confirmed": True,
+            },
+        )
+        assert response.status_code == 201, response.text
+        content_id = response.json()["id"]
+        response = client.put(f"{base}/{content_id}/chunks?offset=0", content=data)
+        assert response.status_code == 200, response.text
+        completed = client.post(f"{base}/{content_id}/complete")
+        assert completed.status_code == 200, completed.text
+        clip_id = uuid.UUID(completed.json()["clip_id"])
+
+    with db.session_scope() as session:
+        clip = session.get(Clip, clip_id)
+        original = session.get(ContentItem, uuid.UUID(content_id))
+        source = session.get(SourceItem, original.source_id)
+        assert MemoryStore.objects[clip.storage_key] == data
+        assert original.details["verified_sha256"] == clip.sha256
+        assert original.details["rights_confirmed_by"]
+        assert source.platform == "local_file"
+        original_source_id = source.id
+
+    project = create_project(
+        channel,
+        CreateEditorialProject.model_validate(
+            {
+                "idempotency_key": "actual-content-project",
+                "brief": {"prompt": "Inspect canonical trailer"},
+            }
+        ),
+        actor="fixture",
+    )
+    revision = save_draft(
+        channel,
+        project.id,
+        SaveEditorialDraft.model_validate(
+            {
+                "expected_revision": 0,
+                "idempotency_key": "actual-content-revision",
+                "draft": {"version": "editorial-draft-v1", "script": []},
+            }
+        ),
+        actor="fixture",
+    )
+    media = add_project_media_item(
+        channel,
+        project.id,
+        revision.revision,
+        request_key="actual-content-clip",
+        actor="fixture",
+        kind="video",
+        clip_id=clip_id,
+    )
+    resolved = _source(channel, project.id, media.id)
+    assert resolved.clip_id == clip_id
+    assert resolved.permission_evidence_refs == (
+        f"upload:{original_source_id}",
+        f"content:{content_id}",
+    )
+    assert media.rights_status == "not_assessed"
+
+
 def test_upload_validates_video_and_deduplicates_bytes(workspace, monkeypatch):
     channel, _, _ = workspace
     row = intake(channel)
