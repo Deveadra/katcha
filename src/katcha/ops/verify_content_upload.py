@@ -255,9 +255,47 @@ def _require_production_store(store: ObjectStore) -> None:
         raise VerificationBlocked("not_configured_for_production_r2")
 
 
+def _pyav_probe(path: Path) -> dict[str, object]:
+    """Decode one actual video frame when the external ffprobe binary is unavailable."""
+    import av
+
+    with av.open(str(path), mode="r") as container:
+        video = next((stream for stream in container.streams if stream.type == "video"), None)
+        if video is None:
+            raise ValueError("no video stream")
+        frame = next(container.decode(video=video.index), None)
+        if frame is None:
+            raise ValueError("no decodable video frame")
+        duration = (
+            float(container.duration / av.time_base)
+            if container.duration is not None
+            else (
+                float(video.duration * video.time_base)
+                if video.duration is not None and video.time_base is not None
+                else 0.0
+            )
+        )
+        return {
+            "format": {"duration": duration},
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": frame.width,
+                    "height": frame.height,
+                }
+            ],
+        }
+
+
 def _probe(path: Path, expected: ContentEvidence) -> dict[str, object]:
     try:
-        report = ffprobe(path)
+        try:
+            report = ffprobe(path)
+        except FileNotFoundError:
+            # The CI Python runner and some minimal installations have PyAV but
+            # lack the ffprobe executable. Only that specific absence triggers
+            # the bounded decode fallback; corrupt media still fails closed.
+            report = _pyav_probe(path)
         videos = [
             stream
             for stream in (report.get("streams") or [])
