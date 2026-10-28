@@ -194,6 +194,41 @@ authorization controls. A real live accepted asset, current provider state,
 and successful business transition are mandatory before marking a failed
 incident as recovered.
 
+## Channel output throughput
+
+The channel-authorized, read-only
+`GET /v1/operations/output-metrics?channel_profile_id=<uuid>&hours=48`
+summarizes 1–168 hours of existing durable records. It reports new render
+attempt records, attempts currently marked verified or dead-lettered, recorded
+published videos, failed publication records, analytics snapshot collection,
+and production/short-episode records that have not updated for at least 24
+hours while in a processing state.
+
+**Measurement definitions matter:**
+
+- Render status counts are the **current statuses of attempts created in the
+  selected window**, not immutable event counts and not proof their object
+  keys still exist in storage.
+- Published video counts require a locally recorded `published` state,
+  YouTube video ID and publication time in the window. They do not prove the
+  current visibility or state of that video on YouTube.
+- Analytics snapshots are receipt counts, **not revenue or view totals**.
+  Multiple samples can cover overlapping periods, so summing their revenue
+  would be misleading.
+- A stale record is an *attention candidate*, not automatically a dead worker.
+  Review the actual Temporal activity and source/media state before retrying.
+  Deliberate script/voice/editorial review holds are excluded.
+- `youtube_connection_configured` shows whether a channel even has a linked
+  connection; zero publication counts on an unconfigured channel do not imply
+  its publishing pipeline is healthy.
+- Remote object verification and live YouTube validation are explicitly
+  `null` because this endpoint never calls providers. Zero observed records
+  is not evidence of a healthy empty pipeline.
+
+The endpoint performs no changes and requires control authorization for the
+specific channel. It is designed to supply measurable inputs to future
+pipeline-health and monetization reporting without inventing throughput.
+
 ## Bounded remediation bot
 
 New incidents enter a persistent queue immediately. The bot prepares diagnostics

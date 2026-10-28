@@ -430,16 +430,79 @@ def test_outcome_evidence_requires_correct_channel_access(data, monkeypatch) -> 
     ).status_code == 200
 
 
-def test_named_principal_outcome_evidence_requires_read_scope() -> None:
-    target = (
-        "/v1/operations/work/production/"
-        "11111111-1111-4111-8111-111111111111/outcome-evidence"
+def test_output_metrics_are_bounded_channel_scoped_and_source_labeled(data) -> None:
+    client = TestClient(app)
+    route = f"/v1/operations/output-metrics?channel_profile_id={data.channel}&hours=48"
+    response = client.get(route)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["render_attempt_records"] == 1
+    assert result["render_attempts_marked_verified"] == 0
+    assert result["render_attempts_dead_lettered"] == 1
+    assert result["recorded_published_videos"] == 1
+    assert result["failed_publication_records"] == 1
+    assert result["analytics_snapshots_collected"] == 1
+    assert result["youtube_connection_configured"] is True
+    assert result["stale_production_candidates"] == 0
+    assert result["stale_short_episode_candidates"] == 0
+    assert result["live_youtube_videos_verified"] is None
+    assert result["remote_media_objects_verified"] is None
+    assert result["measurement_basis"] == "durable_database_records_only"
+    assert "video-1" not in response.text
+    assert "publish-complete" not in response.text
+
+    with data.factory.begin() as session:
+        session.get(Production, data.active).updated_at = datetime.now(UTC) - timedelta(hours=30)
+    stale = client.get(route).json()
+    assert stale["stale_production_candidates"] == 1
+
+    # A script waiting on editorial review is not equivalent to a stalled worker.
+    with data.factory.begin() as session:
+        session.get(Production, data.active).status = "scripted"
+    held = client.get(route).json()
+    assert held["stale_production_candidates"] == 0
+
+    assert client.get(
+        f"/v1/operations/output-metrics?channel_profile_id={data.channel}&hours=0"
+    ).status_code == 422
+    assert client.get(
+        f"/v1/operations/output-metrics?channel_profile_id={data.channel}&hours=169"
+    ).status_code == 422
+    assert client.get(
+        f"/v1/operations/output-metrics?channel_profile_id={uuid.uuid4()}&hours=24"
+    ).status_code == 404
+
+
+def test_output_metrics_cannot_read_another_channel(data, monkeypatch) -> None:
+    def restricted(_request, channel_id):
+        if channel_id != data.channel:
+            raise HTTPException(status_code=403, detail="channel forbidden")
+
+    monkeypatch.setattr(operations, "require_control_channel", restricted)
+    client = TestClient(app)
+    assert client.get(
+        f"/v1/operations/output-metrics?channel_profile_id={data.other}"
+    ).status_code == 403
+    success = client.get(
+        f"/v1/operations/output-metrics?channel_profile_id={data.channel}"
     )
+    assert success.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/operations/output-metrics",
+        (
+            "/v1/operations/work/production/"
+            "11111111-1111-4111-8111-111111111111/outcome-evidence"
+        ),
+    ],
+)
+def test_named_principal_output_diagnostics_scope(path) -> None:
     scope = {
         "type": "http", "http_version": "1.1", "method": "GET",
-        "scheme": "http",
-        "path": target,
-        "raw_path": target.encode("ascii"),
+        "scheme": "http", "path": path, "raw_path": path.encode("ascii"),
         "query_string": b"", "headers": [],
         "client": ("test", 1), "server": ("test", 80),
     }
@@ -448,19 +511,19 @@ def test_named_principal_outcome_evidence_requires_read_scope() -> None:
     allowed.state.control_scopes = {"channels:read"}
     auth._require_named_principal_route_access(allowed)
 
-    forbidden = Request(scope)
-    forbidden.state.control_principal_name = "channel-reader"
-    forbidden.state.control_scopes = {"trends:read"}
+    blocked = Request(scope)
+    blocked.state.control_principal_name = "channel-reader"
+    blocked.state.control_scopes = {"trends:read"}
     with pytest.raises(HTTPException) as error:
-        auth._require_named_principal_route_access(forbidden)
+        auth._require_named_principal_route_access(blocked)
     assert error.value.status_code == 403
 
-    unsafe = Request({**scope, "method": "POST"})
-    unsafe.state.control_principal_name = "channel-reader"
-    unsafe.state.control_scopes = {"channels:read"}
-    with pytest.raises(HTTPException) as denied:
-        auth._require_named_principal_route_access(unsafe)
-    assert denied.value.status_code == 403
+    forbidden_method = Request({**scope, "method": "POST"})
+    forbidden_method.state.control_principal_name = "channel-reader"
+    forbidden_method.state.control_scopes = {"channels:read"}
+    with pytest.raises(HTTPException) as error:
+        auth._require_named_principal_route_access(forbidden_method)
+    assert error.value.status_code == 403
 
 
 def test_operations_overview_returns_actionable_channel_state(data) -> None:

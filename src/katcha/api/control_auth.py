@@ -422,6 +422,10 @@ def _require_named_principal_route_access(request: Request) -> None:
     if path == "/v1/operations/overview":
         require_control_scope(request, "channels:read")
         return
+    if method == "GET" and path == "/v1/operations/output-metrics":
+        # The handler checks the exact channel before running metric queries.
+        require_control_scope(request, "channels:read")
+        return
     if method == "GET" and re.fullmatch(
         r"/v1/operations/work/(?:production|short_episode|publication)/"
         r"[0-9a-fA-F-]{36}/outcome-evidence",
