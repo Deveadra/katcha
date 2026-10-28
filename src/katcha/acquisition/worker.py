@@ -166,12 +166,25 @@ class Worker:
 
     def run_job(self, journal: Journal):
         path = f"{self.root(journal.state['channel'])}/{journal.state['job_id']}"
-        current = self.request("GET", path)
+        try:
+            current = self.request("GET", path)
+        except LeaseLost:
+            self._close_human(journal)
+            raise
         if current["status"] == "waiting_human" or (
             current["status"] == "leased" and journal.state["phase"] == "human_resuming"
         ):
             # Waiting on a person must not reserve scarce media-processing capacity.
-            return self._recover_human(journal, path, current)
+            try:
+                return self._recover_human(journal, path, current)
+            except LeaseLost:
+                # Revoked scope/permission must also stop the live browser and its
+                # background requests, not merely reject the next operator click.
+                self._close_human(journal)
+                raise
+        if current["status"] in {"failed", "cancelled", "completed", "awaiting_validation"}:
+            # Closing a cancelled browser must not wait for another media job's lock.
+            return self._run_job(journal, current=current)
         try:
             with resource_slot(
                 self.resource_lock_path,

@@ -326,3 +326,25 @@ def test_runtime_unavailable_never_advertises_recovery(recovery):
     failures = [p for _, path, p in control.requests if path.endswith("/fail")]
     assert len(calls) == 1 and "recovery_available" not in failures[0]
     assert journal.state["phase"] == "done"
+
+
+@pytest.mark.parametrize("denied", ["status", "poll"])
+def test_revoked_control_closes_browser_without_discarding_job(recovery, denied):
+    worker, journal, browser, control, calls = recovery
+    worker.run_job(journal)
+    open_session(worker, journal, browser, control)
+    original = worker.request
+
+    def revoked(method, path, payload=None):
+        if (denied == "status" and method == "GET") or (
+            denied == "poll" and path.endswith("/human/poll")
+        ):
+            raise module.LeaseLost("Control request refused (403)")
+        return original(method, path, payload)
+
+    worker.request = revoked
+    with pytest.raises(module.LeaseLost):
+        worker.run_job(journal)
+    assert browser.closed and not browser.session
+    assert journal.state["phase"] == "waiting_human"
+    assert len(calls) == 1
