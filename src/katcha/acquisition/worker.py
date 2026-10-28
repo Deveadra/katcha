@@ -166,14 +166,16 @@ class Worker:
 
     def run_job(self, journal: Journal):
         path = f"{self.root(journal.state['channel'])}/{journal.state['job_id']}"
-        try:
-            current = self.request("GET", path)
-        except LeaseLost:
-            self._close_human(journal)
-            raise
-        if current["status"] == "waiting_human" or (
-            current["status"] == "leased" and journal.state["phase"] == "human_resuming"
-        ):
+        if journal.state["phase"] in {"waiting_human", "human_resuming"}:
+            try:
+                current = self.request("GET", path)
+            except LeaseLost:
+                self._close_human(journal)
+                raise
+            if current["status"] in {"failed", "cancelled", "completed", "recovery_required"}:
+                self._close_human(journal)
+                journal.update(phase="done", server_status=current["status"])
+                return
             # Waiting on a person must not reserve scarce media-processing capacity.
             try:
                 return self._recover_human(journal, path, current)
@@ -182,15 +184,14 @@ class Worker:
                 # background requests, not merely reject the next operator click.
                 self._close_human(journal)
                 raise
-        if current["status"] in {"failed", "cancelled", "completed", "awaiting_validation"}:
-            # Closing a cancelled browser must not wait for another media job's lock.
-            return self._run_job(journal, current=current)
         try:
             with resource_slot(
                 self.resource_lock_path,
                 ticket=f"acquisition:{journal.state['channel']}:{journal.state['job_id']}",
             ):
-                return self._run_job(journal, current=current)
+                # Admission comes before status/claim calls for ordinary jobs.
+                # Human-paused jobs take the separate lock-free polling path above.
+                return self._run_job(journal)
         except ResourceBusy:
             # Admission precedes claim/heartbeat: the job stays durably queued.
             log.info("Media resource busy; acquisition remains queued")
