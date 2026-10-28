@@ -34,6 +34,7 @@ from katcha.api.control_auth import (
 from katcha.config import get_settings
 from katcha.services import acquisition_handoff as handoff
 from katcha.services import acquisition_jobs as jobs
+from katcha.services import acquisition_recovery as recovery
 
 router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/acquisition-jobs", tags=["acquisition"]
@@ -275,9 +276,6 @@ def _human_enabled():
 def _private(response: Response):
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-
-
-from katcha.services import acquisition_recovery as recovery  # noqa: E402
 
 
 @router.get("/{job_id}/human")
