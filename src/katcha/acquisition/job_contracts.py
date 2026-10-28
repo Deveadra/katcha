@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 JobStatus = Literal[
     "queued",
+    "waiting_human",
     "leased",
     "awaiting_validation",
     "failed",
@@ -73,6 +74,7 @@ class PartView(Message):
 
 
 class FailJob(LeaseMessage):
+    recovery_available: bool = False
     code: Literal[
         "authentication_required",
         "access_denied",

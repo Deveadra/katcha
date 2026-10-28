@@ -411,18 +411,41 @@ def fail_job(
     worker: str,
     message: FailJob,
 ) -> AcquisitionJob:
+    from katcha.services import acquisition_recovery as recovery
+
     uncertain = message.code in {"transport_error", "session_lost", "outcome_unknown"}
     status = "recovery_required" if uncertain else "failed"
     with session_scope() as session:
         row = _job(session, channel_id, job_id)
+        # Repeated HTTP delivery preserves the original decision even if the
+        # feature configuration changed after the worker first reported failure.
         if (
-            row.status == status
+            row.status in {status, "waiting_human"}
             and row.failure_code == message.code
             and row.worker_principal == worker
             and row.claim_id == message.claim_id
             and row.generation == message.generation
         ):
             return row
+        if (
+            message.code == "authentication_required"
+            and message.recovery_available
+            and recovery.configured()
+        ):
+            from sqlalchemy import func
+
+            from katcha.acquisition_job_models import AcquisitionChallenge
+
+            rounds = session.scalar(
+                select(func.count())
+                .select_from(AcquisitionChallenge)
+                .where(
+                    AcquisitionChallenge.job_id == row.id,
+                )
+            )
+            if rounds < recovery.MAX_ROUNDS:
+                _permission(session, _receipt(session, channel_id, row.receipt_id))
+                status = "waiting_human"
         row = _change(
             session,
             channel_id,
@@ -433,8 +456,13 @@ def fail_job(
             failure_code=message.code,
             lease_expires_at=None,
         )
-        _close_receipt(session, row, status="unknown" if uncertain else "failed", code=message.code)
-        _event(session, row, "failed", worker)
+        if status == "waiting_human":
+            recovery.begin(session, row)
+        else:
+            _close_receipt(
+                session, row, status="unknown" if uncertain else "failed", code=message.code
+            )
+        _event(session, row, "waiting_human" if status == "waiting_human" else "failed", worker)
         return row
 
 
@@ -447,13 +475,14 @@ def cancel_job(
         row = _job(session, channel_id, job_id)
         if row.status == "cancelled":
             return row
-        uncertain = row.status != "queued"
+        uncertain = row.status not in {"queued", "waiting_human"}
+        was_waiting = row.status == "waiting_human"
         row = _change(
             session,
             channel_id,
             job_id,
             AcquisitionJob.status == row.status,
-            AcquisitionJob.status.in_(["queued", "leased", "awaiting_validation"]),
+            AcquisitionJob.status.in_(["queued", "leased", "awaiting_validation", "waiting_human"]),
             AcquisitionJob.generation == row.generation,
             status="cancelled",
             phase="cancelled",
@@ -462,6 +491,10 @@ def cancel_job(
             lease_expires_at=None,
         )
         _close_receipt(session, row, status="unknown" if uncertain else "failed", code="cancelled")
+        if was_waiting:
+            from katcha.services.acquisition_recovery import close_challenges
+
+            close_challenges(session, row)
         _event(session, row, "cancelled", actor)
         return row
 

@@ -465,6 +465,7 @@ class Settings(BaseSettings):
     longform_default_target_seconds: int = Field(default=720, ge=180, le=3600)
     longform_max_target_seconds: int = Field(default=1800, ge=300, le=7200)
 
+    acquisition_human_recovery_enabled: bool = False
     credential_encryption_key: str | None = None
     youtube_client_id: str | None = None
     youtube_client_secret: str | None = None
