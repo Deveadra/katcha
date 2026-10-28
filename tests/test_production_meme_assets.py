@@ -17,7 +17,17 @@ from katcha.production_models import Production, ProductionAsset
 from katcha.rendering.blueprint_manifest import build_blueprint_render_manifest
 from katcha.rendering.manifest import channel_01_brand_v1
 from katcha.services import production_meme_assets as memes
-from katcha.services.productions import register_short_production
+from katcha.services.productions import register_short_production as _register_short_production
+
+
+def register_short_production(*args, **kwargs):
+    """Existing cases exercise frozen v1 drafts independently of latest selection."""
+    production = _register_short_production(*args, **kwargs)
+    with db.session_scope() as session:
+        saved = session.get(Production, production.id)
+        saved.edit_blueprint_snapshot = meme_v1().model_dump(mode="json")
+    return production
+
 
 research_db = runtime.research_db
 
@@ -335,3 +345,96 @@ def test_access_denied_is_not_retried_or_bypassed(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         memes._fetch("https://example.com/blocked")
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("fail_visuals", [False, True])
+def test_grounded_remix_requires_downloaded_beats_before_completion(
+    research_db, monkeypatch, fail_visuals
+):
+    from katcha.editing.blueprints import meme_v2
+    from katcha.services.production_meme_plan import MemeBeat, MemePlan
+
+    channel, _ = runtime.channel()
+    production = _register_short_production(
+        make_clip(channel, duration=158), channel_profile_id=channel, edit_blueprint_key="meme"
+    )
+    with db.session_scope() as session:
+        saved = session.get(Production, production.id)
+        saved.edit_blueprint_snapshot = meme_v2().model_dump(mode="json")
+    plan = MemePlan(
+        beats=[
+            MemeBeat(
+                frame_index=i,
+                visible_evidence="Synthetic visible frame",
+                kind=kind,
+                search_query=f"Reaction search {i}",
+                caption=f"Caption {i}",
+                duration_seconds=4,
+            )
+            for i, kind in enumerate(["image", "audio", "image", "video"])
+        ]
+    )
+    evidence = {"frame_times": [4, 25, 46, 66], "plan": plan.model_dump(mode="json")}
+    monkeypatch.setattr(memes, "plan_memes", lambda *args: (plan, evidence))
+    store = Store()
+    monkeypatch.setattr(memes, "ObjectStore", lambda: store)
+    monkeypatch.setattr(memes, "assert_mutation_authority", lambda *args: None)
+    monkeypatch.setattr(
+        memes,
+        "WebScoutDiscoveryAdapter",
+        lambda: SimpleNamespace(
+            discover=lambda *args: DiscoveryBatch(
+                items=(
+                    DiscoveredCandidate(
+                        source_url="https://example.com/reaction", title="Fixture reaction"
+                    ),
+                )
+            )
+        ),
+    )
+
+    def download(url, medium, seconds):
+        if fail_visuals and medium != "audio":
+            raise ValueError("Unavailable asset https://example.com/private?token=secret")
+        return medium.encode(), f"{medium}/fixture", seconds, url
+
+    monkeypatch.setattr(memes, "download_meme", download)
+    if fail_visuals:
+        with pytest.raises(ValueError):
+            memes.prepare_production_memes(str(production.id))
+    else:
+        assert memes.prepare_production_memes(str(production.id))["assets"] == 4
+    with db.session_scope() as session:
+        receipt = session.get(ProductionAsset, uuid.uuid5(production.id, "meme-search:1"))
+        assert receipt.asset_metadata["status"] == ("failed" if fail_visuals else "completed")
+        assert receipt.asset_metadata["planning"] == evidence
+        assert "secret" not in json.dumps(receipt.asset_metadata)
+        saved = session.get(Production, production.id)
+        if not fail_visuals:
+            events = memes.meme_events_for_production(session, saved, store)
+            assert [event.start_seconds for event in events] == [4, 25, 46, 66]
+            assert all(event.caption for event in events)
+
+
+def test_binary_sound_download_decodes_actual_audio(monkeypatch):
+    import wave
+
+    raw = io.BytesIO()
+    with wave.open(raw, "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(8000)
+        stream.writeframes(b"\x00\x00" * 8000)
+    monkeypatch.setattr(
+        memes, "_fetch", lambda url: (raw.getvalue(), "application/octet-stream", url)
+    )
+    data, mime, seconds, _ = memes.download_meme("https://example.com/sound", "audio", 2)
+    assert mime == "audio/wav" and seconds == 1
+    with wave.open(io.BytesIO(data)) as result:
+        assert result.getnframes() == 44100
+
+
+def test_video_candidates_include_animated_gif_without_treating_stills_as_video():
+    parser = memes._MediaLinks()
+    parser.feed('<a href="reaction.gif">GIF</a><a href="poster.png">Poster</a>')
+    assert parser.candidates("video") == ["reaction.gif"]
