@@ -1,36 +1,39 @@
-# Katcha: manual production deployment (repeatable operator checklist)
+# Katcha: manual production deployment (operator runbook)
 
-[Operations Health](OPERATIONS_HEALTH.md) continuously checks safety jobs,
-release drift and authorization controls, sends alerts, and prepares bounded
-remediation before this checklist. The final checks below remain authoritative.
+**Purpose:** Deploy **one explicitly reviewed immutable release** to the existing OCI production primary. This is **manual**, not continuous deployment. First complete, verified release: **2026-10-28** (receipt below).
 
-**Scope:** reviewed, CI-published release to the *existing* OCI A1 primary
-(`katcha-prod-primary-001`). This is a **manual, one-request deployment**, not
-continuous deployment. Do not enable the deployment timer. The only application
-change is the **explicitly approved exact release SHA**. The existing signed
-GitHub request, root-owned host deployer, strict schema/Temporal checks, and
-backup/restore gates remain authoritative.
+**The five-stage path:** **Select → Review → Authorize → Deploy once → Verify and close.**
 
-For initial Cloudflare/GitHub Environment and signing-key setup, use
-[the full deployment runbook](PRODUCTION_DEPLOYMENT_RUNBOOK.md), Sections 2–3.
-**Do not create a new signing key for a repeat deployment.** This checklist
-assumes the Environment secret and the same root-owned OCI signing key already
-exist. A successful GitHub request is **not** proof of production deployment.
+> **Safety:** A successful GitHub Action authorizes a *signed request*, not a deployed application. Never bypass a `BLOCKED` result, assume `REVIEW_REQUIRED` means approval, force a migration, prune Docker volumes, reset production Git, or run Compose outside the systemd supervisor.
 
-## Which machine?
+## Know which computer you are on
 
-| Label | Shell prompt | Execute |
+| Place | Prompt/example | Run |
 | --- | --- | --- |
-| **WSL** | `tycarroll@Chronos:~/src/katcha$` | `gh`, local Git, Bastion connection, GitHub settings |
-| **OCI** | `ubuntu@katcha-prod-primary-001:~$` | `sudo git -C /opt/katcha`, deployer, systemd, local health |
-| **GitHub** | Web browser | Actions → Production deployment and protected Environment approval |
+| **WSL (Chronos)** | `tycarroll@Chronos:~/src/katcha$` | `git` / `gh`, Bastion connection, GitHub gate |
+| **OCI production** | `ubuntu@katcha-prod-primary-001:~$` | `sudo`, systemd, Docker, database and deployer |
+| **GitHub browser** | Actions → Production deployment | Protected Environment approval |
 
-The commands in different shell sections are **not interchangeable**. Keep a
-separate WSL terminal open while connected to OCI.
+Your Windows PC's disk does **not** host Katcha. On OCI, Docker/containerd use the **system disk** (`/`), while durable data is mounted separately at `/srv/katcha`. Free space on one does not make up for a full disk on the other.
 
-## 0. Choose a *single* approved release SHA (WSL + GitHub)
+**Do not repeat one-time setup for a routine release.** For missing GitHub Environment, signing key, OCI account/Bastion, or deployer, use the [infrastructure/setup runbook](PRODUCTION_DEPLOYMENT_RUNBOOK.md) and [OCI operator access](OCI_OPERATOR_ACCESS.md). Never regenerate an existing signing key just to complete a deployment.
 
-From **WSL**:
+## Operator worksheet (record, do not paste secrets)
+
+| Item | Record |
+| --- | --- |
+| Target exact 40-character application SHA | |
+| Current production SHA | |
+| Matching push-to-main CI ID / seven-image publication ID | |
+| Database revision, migration files, approved migration policy | |
+| Temporal count/IDs/types, pending checks, approved workflow policy | |
+| Most recent backup and isolated three-database restore times (UTC) | |
+| OCI system-disk free space and projected image staging | |
+| GitHub signed request ID/time; expiry | |
+| Protected OCI `result.json` path, deployed SHA and Temporal recovery | |
+| Authenticated browser smoke test and known issues | |
+
+## 1. Select an immutable release (WSL)
 
 ```bash
 cd ~/src/katcha
@@ -38,20 +41,20 @@ git fetch origin main
 git rev-parse origin/main
 ```
 
-The output is only a **candidate**. Open
-[GitHub Actions](https://github.com/Deveadra/katcha/actions) and identify a
-commit that has (a) successful **push-to-main CI** and (b) successful
-**Publish runtime images** for that **same exact 40-character SHA**, including
-all seven published images. Do not use `:main` tags or a PR-only commit.
-You may select an earlier immutable SHA still on accepted `main` ancestry if
-newer merges have not finished image publication.
+Write down the complete SHA. In [Actions](https://github.com/Deveadra/katcha/actions), check **two successful workflows for that exact SHA**: (a) `CI` with event **push** to `main`, and (b) `Publish runtime images` with **seven successful image jobs** and anonymous pull validation. A passing PR build or `:main` image tag is not enough. From WSL, list matching runs if helpful:
 
-Save this SHA in your operator notes and use it **unchanged** on OCI and in
-the GitHub workflow form. This runbook deliberately does not guess a SHA.
+```bash
+TARGET_SHA='PASTE_EXACT_40_CHARACTER_SHA'
+gh run list --repo Deveadra/katcha --commit "$TARGET_SHA" --limit 30
+```
 
-**STOP** if CI/images are missing, failed, or ambiguous.
+An *older*, fully CI-published commit still on accepted `main` ancestry may be selected when newer merges have not finished building. **Lock the SHA in the worksheet.** New `main` merges do **not** silently change this attempt's target. If the **production host** advances to a different release, stop and repeat production-relative checks.
 
-## 1. Connect to OCI (WSL)
+**STOP:** Without successful matching push CI and published images, do not request deployment. Repair the failed workflow and reselect a verified SHA.
+
+## 2. Review the host and release (no application changes)
+
+### 2A. Reach OCI from WSL
 
 ```bash
 cd ~/src/katcha
@@ -59,13 +62,9 @@ bash scripts/katcha-oci-admin.sh status
 bash scripts/katcha-oci-admin.sh connect
 ```
 
-If status requires browser authentication, run
-`bash scripts/katcha-oci-admin.sh reauth` in WSL and retry `connect`.
-If Bastion reports a changed IP allowlist, follow
-[OCI operator access](OCI_OPERATOR_ACCESS.md) rather than weakening SSH
-host-key checking.
+If asked to authenticate, run `bash scripts/katcha-oci-admin.sh reauth` and retry. Resolve IP allowlist/Bastion trouble through [OCI operator access](OCI_OPERATOR_ACCESS.md), not relaxed SSH host-key checks.
 
-Then, still in **WSL**:
+From **WSL**, open the host:
 
 ```bash
 ssh -F /dev/null -4 \
@@ -75,12 +74,9 @@ ssh -F /dev/null -4 \
   -p 22022 ubuntu@127.0.0.1
 ```
 
-**STOP** unless your new shell prompt identifies
-`ubuntu@katcha-prod-primary-001`. Do not execute OCI commands on WSL.
+**STOP** unless the new shell really is `ubuntu@katcha-prod-primary-001`. Keep WSL available separately; shell variables are not shared between WSL and OCI.
 
-## 2. Verify production and refresh *only* root-owned deployment tools (OCI)
-
-These checks do **not** update production containers or database:
+### 2B. Host safety and storage (OCI, read-only)
 
 ```bash
 hostname
@@ -89,393 +85,240 @@ sudo git -C /opt/katcha rev-parse HEAD
 sudo git -C /opt/katcha status --porcelain
 sudo systemctl is-active katcha
 sudo systemctl is-enabled katcha-production-deploy-poll.timer || true
-sudo test -e /etc/katcha/production-deploy.enabled && \
-  echo "STOP: deployment permission already present" || \
-  echo "Host deployment permission absent"
-sudo stat -c 'Key owner=%U mode=%a bytes=%s' \
+sudo test ! -e /etc/katcha/production-deploy.enabled &&
+  echo 'Host deployment gate OFF' || echo 'STOP: Host gate present'
+sudo stat -c 'Signing key owner=%U mode=%a bytes=%s' \
   /etc/katcha/production-deploy.key
 mountpoint /srv/katcha
+df -h / /srv/katcha
+sudo docker info --format 'DockerRootDir={{.DockerRootDir}}'
 ```
 
-Expect: correct hostname/user, clean Git status (no output), service
-`active`, timer `disabled`, **permission file absent**, signing key owned
-by root and mode `600` (65 bytes), and durable mount present. If any of
-these differ, **STOP**; do not repair a dirty checkout with reset/rebase.
+**PASS:** Correct host/user, clean checkout (no output from `status --porcelain`), Katcha `active`, deploy poll timer `disabled`, host permission file **absent**, signing key root-owned with mode `600` and 65 bytes (never print contents), durable mount present, and adequate disk headroom.
 
-After the **current accepted-main CI** passed, update the reviewed root-owned
-deployer using the checked-in installer *without* advancing `/opt/katcha`
-or restarting any containers. Use the exact, isolated subshell:
+**Disk warning:** The first verified deployment consumed approximately **7.8 GB** staging images; it ended with **3.2 GB free (94% used)**. For a similarly sized *unstaged* release, aim for **at least 13 GB free on `/`** before pulling, leaving roughly 5 GB afterward. This is an **operator guideline, not a built-in deployer threshold**. Measure the expected shared layers when possible; target 10–20% free after staging. If headroom is inadequate, fix it **before** signing.
+
+To investigate OCI disk usage without changing anything:
+
+```bash
+sudo du -xhd1 /var/lib/containerd /var/lib/docker 2>/dev/null | sort -h
+sudo docker ps --format 'table {{.Names}}\t{{.Image}}'
+sudo docker system df -v
+```
+
+For an old, **noncurrent, noncandidate, nonrollback** image, verify no container references its *exact reference* (`sudo docker ps -aq --filter "ancestor=IMAGE_REFERENCE"`) and remove only that reviewed reference with `sudo docker image rm IMAGE_REFERENCE`. Docker may share layers; the reclaim amount is not guaranteed. **Never** `docker system prune`, `docker volume prune`, delete containerd files by hand, or delete database/Temporal volumes. A pre-existing host gate is also a **STOP**: inspect prior requests, close it safely, and repeat readiness before authorizing anything.
+
+### 2C. Verify the exact release (OCI, read-only)
+
+**Set the target again on OCI**, using the same SHA recorded on WSL:
+
+```bash
+TARGET_SHA='PASTE_SAME_EXACT_40_CHARACTER_SHA'
+(
+  set -o pipefail
+  sudo /usr/local/sbin/katcha-production-deploy \
+    --diagnose-release "$TARGET_SHA" | python3 -m json.tool
+)
+sudo python3 \
+  /usr/local/lib/katcha-production-deploy/release_eligibility.py \
+  "$TARGET_SHA"
+```
+
+| Result | Meaning |
+| --- | --- |
+| `PASS` | That named technical check passed. |
+| `ELIGIBLE_FOR_PREDEPLOY_REVIEW` | Exact-SHA CI, images, ancestry accepted; **not** operator authorization. |
+| `REVIEW_REQUIRED` | Normal for backups, Temporal and GitHub protected approval. Inspect `checks[]` and `next_actions[]`, decide below. |
+| `BLOCKED` | **STOP.** Follow the named reason and remediation, then repeat the exact-SHA doctor. |
+
+The `installed_tool_version.source_sha` may differ from the application `TARGET_SHA`; it identifies root-owned **deployer tooling**. The legacy diagnostic field `migration` can show a supported baseline; use `database_start_revision` / `release_plan.database_revision` for the *actual* live schema.
+
+**Migration policy:** If `schema_change=false` and `migration_files=[]`, choose **`migration_policy=refuse`**. When `0066_acquisition_handoff` is already applied and verified, do **not** apply it again. For a proposed migration, inspect the exact diff/blob and live database, evaluate compatibility and forward repair, and separately authorize only the proposed reviewed policy. If schema or migration identity differs, **STOP**. No manual Alembic stamp, schema downgrade or forced rollback.
+
+**Temporal policy:** Default **`running_workflows=refuse`** blocks deployment when workflows remain running. Review actual IDs/types and pending work using:
 
 ```bash
 (
-  set -euo pipefail
-  test "$(hostname)" = "katcha-prod-primary-001"
-  test -z "$(sudo git -C /opt/katcha status --porcelain)"
-  sudo git -C /opt/katcha fetch origin main
-  TOOL_SHA="$(sudo git -C /opt/katcha rev-parse origin/main)"
-  TEMP="$(mktemp --suffix=.sh)"
-  trap 'rm -f "$TEMP"' EXIT
-  sudo git -C /opt/katcha show \
-    "$TOOL_SHA:deploy/scripts/install-production-deployer.sh" > "$TEMP"
-  test -s "$TEMP"
-  bash -n "$TEMP"
-  sudo bash "$TEMP" --install
+  set -o pipefail
+  sudo docker exec katcha-production-temporal-1 \
+    temporal --output json workflow list \
+    --address temporal:7233 --namespace default \
+    --query 'ExecutionStatus="Running"' --limit 101 |
+    python3 -m json.tool
 )
 ```
 
-Expect `DEPLOYER_INSTALLED source_sha=... enablement=OFF runtime_untouched=true`.
-`source_sha` identifies **reviewed deployment tools**, not necessarily the
-application release you selected in Step 0.
+Approve **`approved-resume`** *only* after confirming workflow identities, pending-state checks and candidate replay/idempotency compatibility. The Oct 28 deployment had **six** recurring scheduler workflows, but future deployments may differ. For first single-host activation the executor only permits scheduler types (`AutomaticResearchWorkflow`, `TopicWatchScheduleWorkflow`, `ChannelIntelligenceScheduleWorkflow`), requires no in-flight tasks/children/activities, and rechecks the exact inventory before cutover. **Never terminate workflows to bypass a rejection.**
 
-Check the installer left deployment off:
+**Backup/restore:** Verify dated positive evidence and whether more recent attempts failed:
 
 ```bash
-sudo /usr/local/sbin/katcha-production-deploy-poll
-sudo systemctl is-enabled katcha-production-deploy-poll.timer || true
-sudo systemctl is-active katcha
+sudo systemctl show katcha-backup.service katcha-restore-test.service \
+  -p Id -p ActiveState -p Result -p ExecMainStatus --no-pager
+sudo journalctl -u katcha-backup.service --since '36 hours ago' \
+  --no-pager -o short-iso |
+  grep -E 'Katcha PostgreSQL backup completed:|Failed|failed' | tail -n 12
+sudo journalctl -u katcha-restore-test.service --since '10 days ago' \
+  --no-pager -o short-iso |
+  grep -E 'Katcha disaster restore test passed for 3 databases|Failed|failed' |
+  tail -n 12
+sudo systemctl is-enabled katcha-restore-test.timer
 ```
 
-Expected `{"status":"DISABLED"}`, `disabled`, `active`. **STOP** otherwise.
+The restore timer is **weekly**: an empty 48-hour journal isn't proof of failure. Confirm the latest isolated restore passed for **three databases**, the backup completion marker, enabled timer, and no later failure. See [Disaster Recovery Backups](DISASTER_RECOVERY_BACKUPS.md). Historic journal evidence does not replace the executor's **fresh backup and isolated restore checks before stopping production**. If evidence is missing/stale/failed, **STOP** and investigate; don't restore over production.
 
-## 3. Perform exact-release read-only preflight (OCI)
+**Decision gate:** Complete the worksheet, document any migration policy other than `refuse`, independently approve `approved-resume` if needed, verify capacity and a recovery operator, and confirm leadership/fencing readiness. Only then proceed.
 
-Copy the selected full SHA from Step 0 into the first line. **Do not replace
-it with a newly moved `main` without repeating the release checks.**
+**Deployer installation is NOT a routine step.** If `--diagnose-release` is unavailable because tools are outdated, use the [one-time tool installation procedure](PRODUCTION_DEPLOYMENT_RUNBOOK.md) *after review*, and redo all checks. The current installer fetches **live `origin/main` internally**; freeze new merges, verify its installed `source_sha` and do not assume it is pinned to your `TARGET_SHA`. Future engineering should make this explicitly SHA-pinned.
 
-```bash
-TARGET_SHA='PASTE_APPROVED_EXACT_40_CHARACTER_SHA'
-[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-  echo "STOP: use an exact approved 40-character lowercase SHA"
-  false
-}
-sudo /usr/local/sbin/katcha-production-deploy --diagnose-release "$TARGET_SHA"
-```
+## 3. Authorize ONE signed request (WSL and GitHub)
 
-**This is the default first stop for troubleshooting.** The root-owned
-deployment doctor is read-only: it does not open either deployment gate,
-request a GitHub deployment, restart services, write migration state, inspect
-signing-key material, or change running Temporal workflows. Its JSON has:
-- `checks[]`: a named `PASS`, `BLOCKED`, `UNKNOWN` or `REVIEW_REQUIRED`
-  result for target SHA, host, signed-request metadata, local gate, timer,
-  installed tool version, host readiness, candidate comparison and release;
-- `next_actions[]`: the exact failed or review-dependent checks to address;
-- `release_plan`: the existing reviewed migration and Temporal proposal **only
-  if** all planning checks completed. This is never deployment authorization.
-
-A `REVIEW_REQUIRED` summary is expected with active Temporal workflows or
-an additive migration. A `BLOCKED` report exits code 2. If tooling is older
-and `--diagnose-release` is unrecognized, refresh **only** root-owned tooling
-using Step 2, then rerun the same command. To obtain the original raw
-preflight objects for comparison, the existing read-only commands remain:
+With Stage 2 approved, and an OCI SSH session ready, on **WSL**:
 
 ```bash
-sudo /usr/local/sbin/katcha-production-deploy --readiness
-sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET_SHA"
-```
-
-If planning instead prints `host operation did not succeed: python3`,
-the installed independent release verifier exited nonzero and the older host
-deployer discarded its specific reason. This is **not** proof of a broken
-Python installation. Inspect that installed, root-owned verifier directly:
-
-```bash
-sudo python3 /usr/local/lib/katcha-production-deploy/release_eligibility.py "$TARGET_SHA"
-```
-
-A `{"status":"BLOCKED","reason":"..."}` response identifies which CI,
-image-job, GitHub evidence or release ancestry check failed. **Do not**
-override a blocked result or infer deployment approval from workflow-level
-success. Compare the individual exact-SHA CI and seven image jobs, plus
-anonymous image-pull verification. If the installed verifier is outdated,
-refresh deployment tooling only through Step 2's reviewed installer procedure;
-do not update production application files or migration state to repair
-diagnostics. A fixed deployer includes the exact sanitized verifier rejection
-in `--plan-release` output.
-
-Expected planner output:
-
-- `status: REVIEW_REQUIRED`, **not** `BLOCKED`;
-- `target_sha` is exactly the selected SHA, with
-  `deployment_authorized: false`;
-- starting database revision matches the inspected PostgreSQL catalog;
-- `candidate_migration_policy` is compatible with the *actual* schema;
-- `temporal_pending_activity_check: PASSED` and a reviewed active-workflow
-  count;
-- commit/file delta within limits (at most 250 commits and fewer than
-  300 changed files).
-
-For the **previously observed** `0065_acquisition_jobs` production database
-and a release adding **only** `0066_acquisition_handoff.py`, the intended
-candidate policy is `approve-additive-through-0066`. This **does not**
-automatically approve applying the migration. A later/no-migration release
-needs its own planner result. Do not manually stamp Alembic or use a broader
-policy to bypass a `BLOCKED` result.
-
-Six Temporal workflows were previously running. `approved-resume` requires
-an explicit review of their identity, pending activity state, restart behavior
-and idempotence; `refuse` is the default and will block a running-workflow
-cutover. **STOP** until that decision is recorded and the release's worker
-compatibility is understood.
-
-Also verify recent R2 backups, the isolated three-database restore-test
-evidence, leadership/fencing authority, host capacity, and a maintenance
-window with a recovery operator. The executor will repeat fresh backups/
-restore validation and re-inventory workflows **before** stopping production;
-it aborts on changed state. An additive 0066 rollout is **forward-only**
-after schema change, not a routine old-image rollback.
-
-## 4. Authorize one signed release (WSL + GitHub browser)
-
-On **WSL** (not OCI), after Step 3 and the release/Temporal review:
-
-```bash
+cd ~/src/katcha
 gh auth status
 gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED \
   --repo Deveadra/katcha --body true
-gh variable list --repo Deveadra/katcha
 bash scripts/check-production-deployment-github.sh
 ```
 
-The read-only preflight must print `GITHUB_DEPLOY_AUTH_SCOPE_OK`. It verifies:
+Expect `GITHUB_DEPLOY_AUTH_SCOPE_OK` (repo gate true; no duplicate `katcha-production` Environment gate; protected `KATCHA_PRODUCTION_DEPLOY_HMAC_KEY` secret present *by name*). The helper cannot confirm secret/key equivalence. If it fails, inspect its specific message. Do not regenerate keys or expose contents. A duplicate Environment variable must be investigated separately, not confused with the repository-level gate.
 
-- The **repository Actions variable**
-  `KATCHA_PRODUCTION_DEPLOY_ENABLED` is `true`.
-- No duplicate **`katcha-production` Environment variable** with that
-  same name exists. An Environment-scoped duplicate can contradict the
-  repository gate once the protected job starts. Inspect both scopes with
-  `gh variable list --repo Deveadra/katcha` and
-  `gh variable list --repo Deveadra/katcha --env katcha-production`.
-  After independently confirming the duplicate, remove **only that
-  Environment-level variable**, never the authoritative repository variable.
-- The protected `katcha-production` Environment lists the
-  `KATCHA_PRODUCTION_DEPLOY_HMAC_KEY` secret **by name**. Secret content
-  cannot be retrieved by GitHub; name presence does not verify its format or
-  equivalence to the root-only OCI key. Do not regenerate or print either key.
-
-**This opens the GitHub request gate**, not the OCI deployment gate.
-Keep the repository gate `true` until `authorize-request` succeeds and
-logs `Production deployment request published`. Turning it off before
-approval completes is a deliberate authorization denial. Do not interpret
-`DEPLOY_KEY: ***` in the logs as proof that the HMAC matches the OCI key.
-
-In **GitHub browser** open
-[Actions → Production deployment](https://github.com/Deveadra/katcha/actions/workflows/production-deployment.yml),
-choose **Run workflow**, and fill in:
+Open [**Actions → Production deployment**](https://github.com/Deveadra/katcha/actions/workflows/production-deployment.yml) → **Run workflow**:
 
 | Input | Value |
 | --- | --- |
-| Workflow branch | `main` |
-| `release_sha` | Exact SHA from Step 0 / 3 |
-| `running_workflows` | `refuse`, unless reviewed `approved-resume` is expressly authorized |
-| `migration_policy` | Exactly the reviewed planner policy, e.g. `approve-additive-through-0066` for verified 0065 → 0066 |
+| Branch | `main` |
+| `release_sha` | Locked exact 40-character SHA |
+| `running_workflows` | `refuse` or explicitly reviewed `approved-resume` |
+| `migration_policy` | `refuse` if no schema change; else separately approved reviewed policy |
 | `confirmation` | `DEPLOY KATCHA PRODUCTION` |
 
-Approve the protected `katcha-production` Environment when GitHub prompts.
-Verify `preflight` and `authorize-request` jobs **succeeded** and the
-`Production deployment request published: id=... sha=...` message matches
-the selected SHA. Approval creates a **20-minute signed request**, not a
-deployed release. If authorization fails, read its distinct error:
-`GITHUB_DEPLOY_GATE_DISABLED` points to variable scope/early disable;
-`GITHUB_DEPLOY_SIGNING_SECRET_INVALID` points to absent/malformed secret
-in the protected Environment. Neither is a Bastion/OCI SSH failure.
-Do not loosen signing checks or expose credentials to debug either.
+Submit; when GitHub asks to review the protected `katcha-production` Environment, click **Review deployments → Approve and deploy**. Wait until both `preflight` and `authorize-request` succeed. Open `authorize-request` logs and find the **exact target**:
 
-**Immediately close the GitHub request gate after that request is signed**
-(WSL). The existing signed request remains valid until its original expiry:
+```text
+Production deployment request published: id=REQUEST_ID sha=YOUR_EXACT_SHA host=existing-oci-primary
+```
+
+**Record the request ID/time.** It is signed and valid for **20 minutes**, but **has not deployed anything yet**. A green run summary alone is not evidence that the request was published.
+
+**Immediately after publication, close the GitHub request gate (WSL):**
 
 ```bash
 gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED \
   --repo Deveadra/katcha --body false
-gh variable list --repo Deveadra/katcha
+gh variable get KATCHA_PRODUCTION_DEPLOY_ENABLED \
+  --repo Deveadra/katcha
 ```
 
-Confirm `false` and proceed to OCI promptly. An expired request requires a
-new approved dispatch, never relaxed validation. A future request requires a
-fresh, explicit temporary opt-in.
+Expect `false`. Do **not** close the gate before successful publication, or leave it `true` after a failed/abandoned request. On expiry, issue a newly protected request only after reviewing current state; never bypass timing/signature controls.
 
-## 5. Consume the request **once**, with no deployment timer (OCI)
+## 4. Consume the request exactly once (OCI)
 
-Back in **OCI**. This is the **actual, intentionally mutating deployment
-step**. Run it only after the above approval, backup/restore evidence,
-migration review and Temporal policy decision are complete.
+**This block deliberately changes production.** Only run after the protected approval, backup/Temporal/migration decisions, and closed GitHub gate. On **OCI**:
 
 ```bash
 (
   set -euo pipefail
   test "$(hostname)" = "katcha-prod-primary-001"
   sudo systemctl disable --now katcha-production-deploy-poll.timer
-  # Always remove the host opt-in after the one-shot command returns/errors.
   trap 'sudo rm -f /etc/katcha/production-deploy.enabled' EXIT
   printf '%s\n' 'KATCHA_PRODUCTION_DEPLOY_ENABLED=true' |
-    sudo sh -c 'umask 077; cat > /etc/katcha/production-deploy.enabled'
-  sudo stat -c 'Deploy gate owner=%U mode=%a' \
-    /etc/katcha/production-deploy.enabled
+    sudo sh -c \
+      'umask 077; cat > /etc/katcha/production-deploy.enabled'
   sudo /usr/local/sbin/katcha-production-deploy-poll
 )
 ```
 
-The fixed root-owned poller consumes at most **one** valid signed request.
-It independently verifies authorization, expiry, exact SHA and policies;
-the deployer then checks immutable images, schema, running workflows,
-R2/restore, fencing and service ownership before any cutover.
+The executor independently checks signed request, strict immutable images, schema, leadership/fencing, Temporal inventory and fresh backup/restore **before stopping the running app**. Do not interrupt, rerun a failed request or manually restart Compose. Expected console result:
 
-The **manual poller console** reports `{"status":"SUCCEEDED", ...}` when
-the fixed executor returns successfully. The separate root-private
-`/srv/katcha/deployments/<timestamp>-<sha>/result.json` audit then records
-`{"status":"DEPLOYED", ...}` for the exact SHA. Both must agree.
-`NO_VALID_PENDING_REQUEST`, `BLOCKED`, `FAILED_REVIEW_REQUIRED`, or
-`RECOVERY_REQUIRED` **are not successes**. The subshell removes the host
-permission on normal exit and command failure; check it separately in Step 6.
-Do not simply rerun a failed deployment request, restart Docker Compose,
-modify the epoch, or downgrade a migrated database.
+```json
+{"deployment_request_id": 1234567890, "sha": "YOUR_EXACT_SHA", "status": "SUCCEEDED"}
+```
 
-## 6. Verify release and shut off **both** gates (OCI, WSL, browser)
+`SUCCEEDED` must be corroborated by the protected `DEPLOYED` audit and live runtime in Stage 5.
 
-On **OCI**, with no change to the root service:
+## 5. Verify, close both gates and test the web app
+
+On **OCI**, set the *same* target SHA again if this is a new shell:
 
 ```bash
+TARGET_SHA='PASTE_SAME_EXACT_40_CHARACTER_SHA'
 sudo systemctl is-active katcha
 sudo git -C /opt/katcha rev-parse HEAD
 curl -fsS http://127.0.0.1:8000/v1/health/ready
 echo
 curl -fsS http://127.0.0.1:8000/v1/health/release
 echo
-sudo systemctl disable --now katcha-production-deploy-poll.timer
-sudo rm -f /etc/katcha/production-deploy.enabled
+sudo /usr/local/sbin/katcha-production-deploy --readiness
 sudo systemctl is-enabled katcha-production-deploy-poll.timer || true
-sudo test ! -e /etc/katcha/production-deploy.enabled && \
-  echo 'Host deployment gate OFF'
-sudo find /srv/katcha/deployments -type f -name result.json -print
+sudo test ! -e /etc/katcha/production-deploy.enabled &&
+  echo 'Host deployment gate OFF' || echo 'STOP: Host gate still present'
+TARGET_PREFIX="$(printf '%.12s' "$TARGET_SHA")"
+sudo find /srv/katcha/deployments -maxdepth 2 -type f \
+  -path "*-$TARGET_PREFIX/result.json" -print -exec cat {} \;
+df -h /
 ```
 
-The checkout SHA and local `/v1/health/release` response must match
-**the exact approved target**. Check the latest protected result receipt for
-`status: DEPLOYED`, postdeploy Temporal recovery counts, and the migration
-revision. To inspect only the reviewed deployment outcome, substitute the
-exact `result.json` path identified above:
+**All must agree:** Katcha `active`; Git checkout and local API `release_sha` = target; ready endpoint `status: ok`; database starting revision correct; Temporal pending-state `PASSED`; protected `result.json` says **`status: DEPLOYED`**, matching SHA and recorded `predeploy_running_workflows`, `postdeploy_running_workflows` and `predeploy_workflow_recovery` (`running`, `completed`, `continued_as_new`); timer `disabled`; host gate absent. The executor also checks the original workflow IDs during recovery. On **WSL**, verify GitHub variable is still `false` with the `gh variable get` command above.
 
-```bash
-sudo cat /srv/katcha/deployments/PASTE_EXACT_DEPLOYMENT_DIRECTORY/result.json
-```
+The read-only `--readiness` command may still return `REVIEW_REQUIRED` even after a successful deployment; interpret the named technical fields, not that summary as a failure.
 
-Do **not** use `cat` on signing keys, `production-env.before`, credentials,
-or request payloads.
+Finally open [app.katcha.stream](https://app.katcha.stream) through **authenticated Cloudflare Access**. Check Channel Studio, sources, queue, activity, review/player and channel data. A public curl redirect to Cloudflare login is normal. A loading web app is a *basic smoke test*, not proof every button works or that autonomous YouTube publishing succeeded. Note any playback stutter or broken feature separately. Record disk left after staging; if critical, schedule capacity remediation before the **next** release.
 
-In the normal **authenticated** browser, verify
-[app.katcha.stream](https://app.katcha.stream): Cloudflare Access login,
-Channel Studio, sources, queue, review player, and channel-scoped evidence.
-A bare public `curl` may receive an expected Cloudflare Access challenge;
-do not weaken Cloudflare Access to make the probe pass.
+## STOP decisions and safe remediation
 
-On **WSL**, close the GitHub gate:
-
-```bash
-gh variable set KATCHA_PRODUCTION_DEPLOY_ENABLED \
-  --repo Deveadra/katcha --body false
-gh variable list --repo Deveadra/katcha
-```
-
-Confirm `false`, the OCI timer `disabled`, and the OCI permission file
-absent. Archive the **approved target SHA, GitHub request ID, deployed receipt,
-schema revision, restored-backup proof and validated Temporal run IDs**.
-
-## 7. Failure or emergency stop (do not improvise a rollback)
-
-To **stop new requests** on OCI without interrupting `katcha.service`:
+**Emergency stop without shutting down Katcha:** On WSL set `KATCHA_PRODUCTION_DEPLOY_ENABLED=false`. On OCI:
 
 ```bash
 sudo systemctl disable --now katcha-production-deploy-poll.timer
 sudo rm -f /etc/katcha/production-deploy.enabled
-sudo journalctl -u katcha-production-deploy-poll.service -n 60 --no-pager
+sudo systemctl is-active katcha
+sudo git -C /opt/katcha rev-parse HEAD
+curl -fsS http://127.0.0.1:8000/v1/health/release || true
+echo
+sudo journalctl -u katcha.service -n 100 --no-pager
+sudo find /srv/katcha/deployments -maxdepth 2 -name result.json -print
 ```
 
-Also set the **GitHub repository variable to `false`** from WSL as in
-Step 6. When executed manually, the poller's primary result is in the
-terminal (not necessarily the systemd journal). Inspect protected receipts
-under `/srv/katcha/deployments` and the `katcha.service` journal without
-disclosing tokens or credentials.
+The manually invoked poller's primary output is in **your terminal**, not necessarily a systemd journal. Read only the relevant `result.json`. **Never** print signing keys, `production-env.before`, secrets or raw request payloads.
 
-For a migration-bearing rollout that records `RECOVERY_REQUIRED`, keep the
-durable PostgreSQL/Temporal/R2 state intact and use supervised forward repair.
-**Never** reset/rebase the production checkout, `docker compose up`
-concurrently with the attached supervisor, or restart old images against 0066.
+| Result / issue | What to do |
+| --- | --- |
+| GitHub `preflight` failed | Check exact SHA ancestry/CI/images, branch `main`, confirmation, and repository gate still `true` through publication. Fix and request fresh protected approval. |
+| `GITHUB_DEPLOY_GATE_DISABLED` | Check repository variable versus same-named Environment duplicate; no bypass. |
+| `GITHUB_DEPLOY_SIGNING_SECRET_INVALID` | Inspect Environment secret *metadata* and matching existing OCI key; do not regenerate blindly. |
+| `NO_VALID_PENDING_REQUEST` / 20-minute expiry | Leave OCI gate OFF; review timing and publish a **new** protected request if still safe. |
+| `BLOCKED` / `FAILED_REVIEW_REQUIRED` | Stop; inspect poller message, on-host doctor, service logs and protected receipt. Correct the named blocker, then redo exact-SHA preflight before a new request. |
+| `ROLLED_BACK` | Verify current app and DB; checkout might be detached. Do not reset/rebase manually; reconcile under supervision. |
+| `RECOVERY_REQUIRED` | **Never blindly retry/rollback.** Preserve PostgreSQL/Temporal/R2. Inspect actual schema and live service, then create a scenario-specific supervised *forward* repair. This conservative status does **not** prove migration ran. |
+| Full OCI system disk | Identify containerd layers and Docker image references. Preserve current, candidate, rollback and all persistent volumes. Remove only reviewed unused image references, never automatic prune. |
+| GitHub `SUCCEEDED` but browser bad | Prove `DEPLOYED` receipt + matching Git/API/DB/Temporal, then debug Cloudflare/app feature separately; no repeat deploy without evidence. |
 
-## Optional: avoid release drift while keeping deployment manual
+Recovery references: [database backup / isolated restore](DISASTER_RECOVERY_BACKUPS.md), [full deployment and credentials](PRODUCTION_DEPLOYMENT_RUNBOOK.md), [OCI Bastion](OCI_OPERATOR_ACCESS.md). **Those are not a tested scenario-specific forward-repair guide**. Escalate unknown recovery states instead of experimenting on the primary.
 
-**Only after the new observer source is deployed on OCI** and read-only
-observation is separately approved, install/enable its **independent** hourly
-timer using [PRODUCTION_RELEASE_OBSERVER.md](PRODUCTION_RELEASE_OBSERVER.md).
-It raises a review flag at **75 commits or 100 changed files** before the
-strict 250-commit / 299-file comparison ceiling. Its journald output does
-**not** deploy or send notifications by itself. The production **deployment**
-timer stays disabled.
+## Optional tooling and alerts (never deployment authorization)
 
+- GitHub `notify-review` currently uses repository Actions secrets `KATCHA_TELEGRAM_OCI_BOT_TOKEN` and `KATCHA_TELEGRAM_OCI_CHAT_ID` plus optional `KATCHA_TELEGRAM_THREAD_ID`. It only alerts about a real Environment review; its absence is not an authorization bypass. The protected HMAC secret remains separate.
+- The OCI `katcha-production-deploy-notify.timer` is a **separate optional notifier**, sourced from root-private `KATCHA_TELEGRAM_BOT_TOKEN` / `KATCHA_TELEGRAM_CHAT_ID`. It may be enabled independently; the **deploy-poll timer remains disabled**.
+- [Operations Health](OPERATIONS_HEALTH.md) and [release observation](PRODUCTION_RELEASE_OBSERVER.md) can warn about failures **when actually installed and enabled**; never assume monitoring is active without evidence.
+- **Remaining engineering gap:** `install-production-deployer.sh` fetches live `origin/main`; a documented SHA does not prevent an intervening merge changing its tool source. Restrict merges, inspect installer, verify reported `source_sha`, then redo doctor. Add a pinned-SHA install option separately.
 
-## Telegram notifications for review, completion, failure and expiry
+## First verified manual deployment: historical acceptance record (not future inputs)
 
-This is a **separate notification path**, not a deployment trigger. It does not
-alter GitHub Environment review, the signed request, the OCI deployment
-authorization, or the deliberately manual release steps above.
+| Evidence on 2026-10-28 | Confirmed result |
+| --- | --- |
+| Target application | `07aa62eb6223122ec264f71a724e47ec826da85f` |
+| Previous production | `a548135326f652a4dbb7e35d2acec8e9f1f431a6` |
+| [Push CI](https://github.com/Deveadra/katcha/actions/runs/40617931683) | Success |
+| [Runtime images](https://github.com/Deveadra/katcha/actions/runs/40618762728) | Success, seven builds |
+| [Protected authorization](https://github.com/Deveadra/katcha/actions/runs/40645819583) | Success, signed request `7379010051` |
+| On-host poller and protected audit | `SUCCEEDED`; `DEPLOYED` at `/srv/katcha/deployments/20261028T065324Z-07aa62eb6223/result.json` |
+| Post-deployment | Exact Git/API match, readiness healthy, `0066_acquisition_handoff` unchanged |
+| Temporal | 6 running before, 6 after; six recovered running |
+| Safety gates | GitHub `false`, host gate absent, poll timer `disabled` |
+| Browser | App accessible and generally functional; choppy playback still noted |
+| OCI capacity after staging | **3.2 GB free, 94% full**: follow-up required |
 
-### GitHub: prompt for protected review
-
-The existing `scripts/notify-telegram.sh` sends the review link from an
-unprotected `notify-review` job **only after** `preflight` passes and the
-GitHub API reports the `katcha-production` Environment waiting for review.
-
-In GitHub **repository Actions secrets**, configure the existing notification
-settings `KATCHA_TELEGRAM_BOT_TOKEN` and `KATCHA_TELEGRAM_CHAT_ID`. The
-optional repository variable `KATCHA_TELEGRAM_THREAD_ID` targets a Telegram
-topic. The protected Environment's deployment **signing** secret remains
-separate. Never move that signing secret to repository scope to send alerts.
-
-Run the existing `telegram-notification-test.yml` manually to verify
-the bot can deliver into your chat. The approval notification links to the
-specific `https://github.com/Deveadra/katcha/actions/runs/<run-id>` page.
-Open the link while authenticated to GitHub and use **Review deployments**.
-The Telegram message itself cannot approve deployments. Very fast approvals
-may occur before the notification job observes a pending review; it will not
-mislabel such a run as waiting.
-
-### OCI: independently notify from durable receipts
-
-The installer in Step 2 also installs a **separate** root-owned
-`katcha-production-deploy-notify.service` and
-`katcha-production-deploy-notify.timer`. It does not enable them.
-The notifier reuses `KATCHA_TELEGRAM_BOT_TOKEN` and
-`KATCHA_TELEGRAM_CHAT_ID` from the existing **root-private**
-`/etc/katcha/katcha.env`; optionally set
-`KATCHA_TELEGRAM_THREAD_ID` there. It never prints secret values.
-
-After merging this change, passing CI, and refreshing the host's
-root-owned tools using Step 2, on the **OCI host**:
-
-```bash
-sudo systemctl start katcha-production-deploy-notify.service
-sudo journalctl -u katcha-production-deploy-notify.service -n 20 --no-pager
-sudo systemctl enable --now katcha-production-deploy-notify.timer
-sudo systemctl is-enabled katcha-production-deploy-notify.timer
-sudo systemctl is-enabled katcha-production-deploy-poll.timer
-```
-
-Expect the notification timer `enabled`, but the **deployment** timer
-`disabled`. `NOTIFIER_NOT_CONFIGURED` means the OCI environment does not
-yet contain a valid Telegram token/chat ID. Resolve that in the root-private
-environment rather than publishing credentials or enabling deployment gates.
-
-Every three minutes, the notifier looks for root-private OCI request receipts
-and verifies the terminal executor result. It declares a **new rollout
-successful** only when the terminal receipt says `SUCCEEDED`, the executor
-attests `DEPLOYED`, the protected `result.json` audit corroborates it,
-and live Git/API SHAs both match the exact requested release. It separately
-reports `ALREADY_CURRENT`, failures, stalled `STARTED` receipts, and
-signed requests that expired with no host receipt. Unverifiable success
-conditions produce a **verification required** alert, never a false success.
-
-Delivery failures are retried on the next notifier timer run. Sent-event
-markers on the durable data mount prevent normal duplicate alerts; a power
-loss between Telegram delivery and writing the marker can result in one repeat.
-Notification errors do not block deployment, and the independent timer runs
-even while the deploy authorization is OFF. Completion messages are evidence
-and a prompt to inspect the host receipt; they do not authorize any new
-deployment or automatically open/close a maintenance window.
+**This proves the manually signed and verified release path. It does not yet prove end-to-end autonomous acquisition, editing, rendering or YouTube publishing.**
