@@ -154,22 +154,32 @@ def get_challenge(channel, identity):
         challenge = _latest(session, row)
         if row.status not in {"waiting_human", "leased"} and challenge.state != "closed":
             close_challenges(session, row)
-        return view(challenge)
+        result = view(challenge)
+        from katcha.services.acquisition_notifications import notification_configuration_error
+
+        if challenge.notification_state in {"pending", "not_configured"}:
+            reason = notification_configuration_error(get_settings(), channel)
+            if reason:
+                result["notification_state"] = "not_configured"
+                result["notification_issue"] = reason
+        return result
 
 
 def _locked(session, channel, identity, *, worker=None, message=None, challenge_id=None):
     row = jobs._job(session, channel, identity)
-    challenge = _latest(session, row)
-    # A write lock serializes command admission, retry and completion on SQLite as
-    # well as PostgreSQL; ordinary reads alone do not fence simultaneous tabs.
+    # Lock the job before its challenge, matching cancellation/failure lock order.
+    # This also serializes simultaneous browser tabs on SQLite, where FOR UPDATE
+    # is ignored. Preserve the progress timestamp during mailbox-only operations.
     session.execute(
-        update(AcquisitionChallenge)
+        update(jobs.AcquisitionJob)
         .where(
-            AcquisitionChallenge.id == challenge.id,
+            jobs.AcquisitionJob.id == identity,
+            jobs.AcquisitionJob.channel_profile_id == channel,
         )
-        .values(state=AcquisitionChallenge.state)
+        .values(updated_at=jobs.AcquisitionJob.updated_at)
     )
     session.refresh(row)
+    challenge = _latest(session, row)
     session.refresh(challenge)
     if challenge_id is not None and challenge.id != challenge_id:
         raise jobs.JobConflict("This verification request was replaced; refresh the download")

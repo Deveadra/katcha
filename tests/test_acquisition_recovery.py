@@ -246,3 +246,62 @@ def test_unknown_and_rate_limit_never_enter_human_retry(recovery_db):
     assert result.status == "recovery_required"
     with db.session_scope() as session:
         assert session.scalar(select(AcquisitionChallenge)) is None
+
+
+def test_expired_command_is_scrubbed_without_operator_visit(recovery_db):
+    row, identity, challenge = waiting(recovery_db)
+    cmd = command(recovery_db, row, challenge, {"action": "type", "text": "private"})
+    with db.session_scope() as session:
+        session.get(AcquisitionBrowserCommand, cmd["id"]).expires_at = jobs._now() - timedelta(
+            seconds=1
+        )
+    recovery.clean_expired_mailboxes()
+    with db.session_scope() as session:
+        stored = session.get(AcquisitionBrowserCommand, cmd["id"])
+        assert stored.state == "expired" and stored.payload is None
+
+
+def test_migration_preserves_existing_jobs_and_refuses_history_loss(job_db):  # noqa: F811
+    import importlib.util
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import inspect
+
+    row, identity = leased(job_db)
+    spec = importlib.util.spec_from_file_location(
+        "human_migration", "migrations/versions/0067_acquisition_human_recovery.py"
+    )
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    with db.session_scope() as session:
+        engine = session.get_bind()
+    db.Base.metadata.create_all(
+        engine,
+        tables=[
+            table
+            for table in db.Base.metadata.sorted_tables
+            if table.name not in {"acquisition_challenges", "acquisition_browser_commands"}
+        ],
+    )
+    with engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        assert set(
+            c["name"] for c in inspect(connection).get_columns("acquisition_challenges")
+        ) == set(AcquisitionChallenge.__table__.columns.keys())
+    assert jobs.get_job(job_db[0], row.id).status == "leased"
+    with db.session_scope() as session:
+        session.add(
+            AcquisitionChallenge(
+                job_id=row.id,
+                channel_profile_id=job_db[0],
+                generation=row.generation,
+                expires_at=jobs._now() + timedelta(minutes=30),
+            )
+        )
+    with engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        with pytest.raises(RuntimeError, match="Retain human recovery"):
+            migration.downgrade()
+    assert jobs.get_job(job_db[0], row.id).claim_id == identity["claim_id"]
