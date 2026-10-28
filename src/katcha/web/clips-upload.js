@@ -4,6 +4,12 @@ const libraryUpload = {busy: false, controller: null, sourceId: "", channel: "",
 const mediaUploadMax = 4 * 1024 ** 3;
 const smallUploadMax = 512 * 1024 ** 2;
 const allowedUploadExt = new Set(["mp4", "mov", "m4v", "mkv", "webm"]);
+const acceptedMediaMime = new Set([
+    "application/octet-stream", "video/mp4", "video/quicktime",
+    "video/webm", "video/x-matroska",
+]);
+const safeUploadMime = file => acceptedMediaMime.has(file.type)
+    ? file.type : "application/octet-stream";
 
 function uploadMediaStatus(value, percent = null) {
     $("upload-media-status").textContent = value;
@@ -75,7 +81,7 @@ async function uploadLibraryMultipart(file, title, idempotency, channel, signal)
         method: "POST", signal,
         body: JSON.stringify({
             filename: file.name, title: title || null, size_bytes: file.size,
-            content_type: file.type || "application/octet-stream",
+            content_type: safeUploadMime(file),
             permitted_use: true, idempotency_key: idempotency,
         }),
     });
@@ -101,6 +107,7 @@ async function uploadLibraryMultipart(file, title, idempotency, channel, signal)
     const done = new Set((detail.parts || []).map(part => part.part_number));
     let completed = (detail.parts || []).reduce((sum, part) => sum + part.size, 0);
     let next = 1;
+    let stopped = false;
     const update = () => uploadMediaStatus(
         "Uploading " + file.name + ": " +
         Math.floor(Math.min(100, completed * 100 / file.size)) + "% (" +
@@ -109,7 +116,7 @@ async function uploadLibraryMultipart(file, title, idempotency, channel, signal)
     );
     update();
     async function worker() {
-        while (next <= begin.part_count) {
+        while (!stopped && next <= begin.part_count) {
             if (signal.aborted) throw new DOMException("Upload paused", "AbortError");
             const partNumber = next++;
             if (done.has(partNumber)) continue;
@@ -118,6 +125,7 @@ async function uploadLibraryMultipart(file, title, idempotency, channel, signal)
             let accepted = false;
             for (let attempt = 0; attempt < 3 && !accepted; attempt++) {
                 if (signal.aborted) throw new DOMException("Upload paused", "AbortError");
+                if (stopped) return;
                 const signed = await api(url + "/parts", {
                     method: "POST", signal, body: JSON.stringify({part_number: partNumber}),
                 });
@@ -146,7 +154,13 @@ async function uploadLibraryMultipart(file, title, idempotency, channel, signal)
         }
     }
     // Only two concurrent chunks; avoids buffering 4 GiB in the browser or OCI.
-    const results = await Promise.allSettled([worker(), worker()]);
+    // An unrecoverable failure in one transfer must not let the other drain
+    // the entire multi-GiB upload while the UI is already failing.
+    async function boundedWorker() {
+        try { await worker(); }
+        catch (error) { stopped = true; throw error; }
+    }
+    const results = await Promise.allSettled([boundedWorker(), boundedWorker()]);
     const failed = results.find(x => x.status === "rejected");
     if (failed) throw failed.reason;
     uploadMediaStatus("Transfer complete. Verifying the full video and registering the clip…", 100);
@@ -197,7 +211,7 @@ async function uploadLibraryMedia() {
                     "/editorial-projects/source-uploads?" + params,
                 {
                     method: "POST", body: file, signal: libraryUpload.controller.signal,
-                    headers: {"Content-Type": file.type || "application/octet-stream"},
+                    headers: {"Content-Type": safeUploadMime(file)},
                 },
             );
             if (!response.ok) {
