@@ -107,6 +107,12 @@ understanding or production clearance.
 
 ## Editorial operator integration
 
+Before accepting a newly uploaded trailer as a golden real-footage fixture, use the
+[read-only R2 verification procedure](CONTENT_MEDIA_LIVE_VERIFICATION.md) for
+the exact Content ID or Editorial Source ID. It compares complete canonical
+bytes to the recorded SHA and video probe, but does not grant render rights,
+assert scene recognition or prove a real Remotion encode.
+
 To reuse a trailer uploaded through **Content**, first verify the Content
 record is `media_ready` with a Clip ID, then add that same Clip to the
 Editorial project's Media Bin. This creates a project reference without
