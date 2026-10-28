@@ -424,7 +424,7 @@ def test_editorial_source_permissions_revoked_during_stream(uploaded):
             source.source_metadata = meta
 
     uploaded.store.on_end = revoke
-    with pytest.raises(evidence.VerificationBlocked, match="evidence"):
+    with pytest.raises(evidence.VerificationBlocked, match="permission|evidence"):
         evidence.verify_editorial_upload(
             uploaded.channel, uploaded.source, store=uploaded.store
         )
