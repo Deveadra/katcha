@@ -13,6 +13,7 @@ const KATCHA_WORKSPACES = [
 
 function workspaceKeyFromPath(path = location.pathname) {
     if (path.startsWith('/home') || path.endsWith('/home.html') || path.startsWith('/operations') || path.endsWith('/operations.html')) return 'home';
+    if (path.startsWith('/acquisition-recovery')) return 'sources';
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) return 'sources';
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) return 'clips';
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) return 'channel';
