@@ -487,6 +487,24 @@ class Settings(BaseSettings):
     telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
     telegram_review_link_ttl_seconds: int = Field(default=21600, ge=300, le=604800)
     telegram_review_storage_endpoint_url: str | None = None
+    # Explicit admission: a paired global chat is not permission to disclose every channel.
+    telegram_acquisition_app_origin: str | None = None
+    telegram_acquisition_channel_ids: tuple[uuid.UUID, ...] = ()
+
+    @field_validator("telegram_acquisition_app_origin")
+    @classmethod
+    def validate_telegram_acquisition_app_origin(cls, value):
+        if value is None or not str(value).strip():
+            return None
+        text = str(value).strip().rstrip("/")
+        parsed = urlsplit(text)
+        if (
+            parsed.scheme != "https" or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or parsed.path or parsed.port not in {None, 443}
+        ):
+            raise ValueError("Acquisition notifications require the Katcha HTTPS app origin")
+        return text
 
     @field_validator(
         "telegram_bot_token",
