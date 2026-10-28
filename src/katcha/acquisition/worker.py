@@ -92,6 +92,8 @@ class Worker:
         access_headers=None,
         control_ca_file=None,
         resource_lock_path: Path | None = None,
+        human_recovery_enabled: bool = False,
+        human_browser=None,
     ):
         parsed = urlsplit(api_url)
         if (
@@ -113,7 +115,9 @@ class Worker:
         self.state_dir = state_dir
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.client = client or httpx.Client(
-            timeout=httpx.Timeout(30, connect=5), trust_env=False, follow_redirects=False,
+            timeout=httpx.Timeout(30, connect=5),
+            trust_env=False,
+            follow_redirects=False,
             verify=ssl.create_default_context(cafile=control_ca_file),
         )
         # Separate clients: bearer authority must NEVER reach a source or signed storage URL.
@@ -124,6 +128,11 @@ class Worker:
         if set(access_headers) - {"CF-Access-Client-Id", "CF-Access-Client-Secret"}:
             raise ValueError("Only configured Access service headers are accepted")
         self.headers = {**access_headers, "Authorization": f"Bearer {token}"}
+        self.human_browser = human_browser
+        if human_recovery_enabled and self.human_browser is None:
+            from katcha.acquisition.human_browser import HumanBrowser
+
+            self.human_browser = HumanBrowser()
         self.cookie_file = Path(cookie_file) if cookie_file else None
         if self.cookie_file and self.cookie_file.stat().st_mode & 0o077:
             raise ValueError("Operator cookie file must be readable only by its owner")
@@ -156,27 +165,35 @@ class Worker:
         return f"/v1/channels/{channel}/acquisition-jobs"
 
     def run_job(self, journal: Journal):
+        path = f"{self.root(journal.state['channel'])}/{journal.state['job_id']}"
+        current = self.request("GET", path)
+        if current["status"] == "waiting_human" or (
+            current["status"] == "leased" and journal.state["phase"] == "human_resuming"
+        ):
+            # Waiting on a person must not reserve scarce media-processing capacity.
+            return self._recover_human(journal, path, current)
         try:
             with resource_slot(
                 self.resource_lock_path,
                 ticket=f"acquisition:{journal.state['channel']}:{journal.state['job_id']}",
             ):
-                return self._run_job(journal)
+                return self._run_job(journal, current=current)
         except ResourceBusy:
             # Admission precedes claim/heartbeat: the job stays durably queued.
             log.info("Media resource busy; acquisition remains queued")
             return None
 
-    def _run_job(self, journal: Journal):
+    def _run_job(self, journal: Journal, *, current=None):
         state = journal.state
         path = f"{self.root(state['channel'])}/{state['job_id']}"
-        current = self.request("GET", path)
+        current = current or self.request("GET", path)
         if current["status"] in {
             "completed",
             "awaiting_validation",
             "failed",
             "cancelled",
         }:
+            self._close_human(journal)
             journal.update(phase="done", server_status=current["status"])
             if current["status"] in {"completed", "awaiting_validation"}:
                 self._remove_media(journal)
@@ -186,7 +203,25 @@ class Worker:
             and state["phase"] in {"acquired", "uploading"}
             and state.get("sha256")
         ):
+            self._close_human(journal)
             journal.update(phase="done", server_status="recovery_required")
+            return
+        if state["phase"] == "reporting_failure":
+            result = self.request(
+                "POST",
+                path + "/fail",
+                {
+                    **journal.identity(),
+                    "code": state["failure_code"],
+                    **({"recovery_available": True} if state.get("recovery_available") else {}),
+                },
+            )
+            journal.update(
+                phase="waiting_human" if result["status"] == "waiting_human" else "done",
+                server_status=result["status"],
+            )
+            if result["status"] != "waiting_human":
+                self._close_human(journal)
             return
         # A prior process may have downloaded the complete file before persisting its hash.
         # Only a completed local file with a durable identity can bypass provider access.
@@ -301,19 +336,32 @@ class Worker:
                 else:
                     cookie_copy = journal.directory / "session.cookies"
                     try:
-                        if self.cookie_file:
-                            shutil.copyfile(self.cookie_file, cookie_copy)
+                        human_cookie = journal.directory / "human-session.cookies"
+                        session_file = (
+                            human_cookie if state.get("human_retry") else self.cookie_file
+                        )
+                        if session_file:
+                            fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                            os.close(fd)
                             cookie_copy.chmod(0o600)
+                            shutil.copyfile(session_file, cookie_copy)
                         media = fetch_extracted(
                             lease["fetch_url"],
                             lease["permission"],
                             journal.directory,
                             lease["job"]["max_bytes"],
                             progress,
-                            cookie_file=cookie_copy if self.cookie_file else None,
+                            cookie_file=cookie_copy if session_file else None,
+                            **(
+                                {"user_agent": state.get("human_user_agent")}
+                                if state.get("human_retry")
+                                else {}
+                            ),
                         )
                     finally:
                         cookie_copy.unlink(missing_ok=True)
+                        human_cookie.unlink(missing_ok=True)
+                        journal.update(human_retry=False)
                 journal.update(
                     phase="acquired",
                     filename=media.name,
@@ -370,11 +418,34 @@ class Worker:
                         )
             result = self.request("POST", path + "/upload/complete", journal.identity())
             journal.update(phase="done", server_status=result["status"])
+            self._close_human(journal)
             self._remove_media(journal)
         except FetchFailure as exc:
             journal.update(failure_code=exc.code)
-            self.request("POST", path + "/fail", {**journal.identity(), "code": exc.code})
-            journal.update(phase="done", server_status="failed")
+            recovery_available = (
+                exc.code == "authentication_required"
+                and state.get("transport") == "extractor"
+                and self.human_browser is not None
+                and self.human_browser.ready()
+            )
+            # Persist the failure before sending it: a lost response is reconciled from
+            # authoritative server state on the next pass, never by repeating extraction.
+            journal.update(phase="reporting_failure", recovery_available=recovery_available)
+            result = self.request(
+                "POST",
+                path + "/fail",
+                {
+                    **journal.identity(),
+                    "code": exc.code,
+                    **({"recovery_available": True} if recovery_available else {}),
+                },
+            )
+            waiting = result["status"] == "waiting_human"
+            journal.update(
+                phase="waiting_human" if waiting else "done", server_status=result["status"]
+            )
+            if not waiting:
+                self._close_human(journal)
             if exc.code not in {"transport_error", "session_lost", "outcome_unknown"}:
                 self._remove_media(journal)
         except (httpx.TransportError, httpx.HTTPStatusError):
@@ -384,6 +455,138 @@ class Worker:
         finally:
             stop.set()
             thread.join(timeout=35)
+
+    def _close_human(self, journal):
+        (journal.directory / "human-session.cookies").unlink(missing_ok=True)
+        if self.human_browser:
+            self.human_browser.close(journal.state["channel"], journal.state["job_id"])
+
+    def _recover_human(self, journal, path, current):
+        state = journal.state
+        # Recover a lost /fail response (or a journal recreated from server queue state).
+        if state.get("generation") is None:
+            raise LeaseLost("Human verification belongs to the original worker journal")
+        if current["status"] == "waiting_human":
+            poll = self.request("POST", path + "/human/poll", journal.identity())
+            if poll["state"] == "closed":
+                self._close_human(journal)
+                journal.update(phase="done", server_status="recovery_required")
+                return
+            if state["phase"] != "human_resuming":
+                journal.update(phase="waiting_human")
+            command = poll.get("command")
+            if command:
+                if self.human_browser:
+                    result = self.human_browser.execute(
+                        state["channel"],
+                        state["job_id"],
+                        command["action"],
+                        poll["fetch_url"],
+                        poll["permission"],
+                    )
+                else:
+                    result = {
+                        "available": False,
+                        "code": "browser_unavailable",
+                        "message": "The acquisition browser is unavailable on this worker.",
+                    }
+                self.request(
+                    "POST",
+                    path + "/human/result",
+                    {
+                        **journal.identity(),
+                        "command_id": command["id"],
+                        "result": result,
+                    },
+                )
+                return
+            if poll["state"] != "retry_requested":
+                return
+        else:
+            # The resume response may have been lost after the lease was granted.
+            # Reuse its saved old identity; the API returns the same new lease.
+            poll = None
+        try:
+            with resource_slot(
+                self.resource_lock_path,
+                ticket=f"acquisition:{state['channel']}:{state['job_id']}",
+            ):
+                cookie = journal.directory / "human-session.cookies"
+                if state["phase"] != "human_resuming":
+                    try:
+                        if not self.human_browser:
+                            raise ValueError("Browser unavailable")
+                        cookie.unlink(missing_ok=True)
+                        user_agent = self.human_browser.export_cookies(
+                            state["channel"],
+                            state["job_id"],
+                            poll["permission"],
+                            cookie,
+                        )
+                    except Exception:
+                        cookie.unlink(missing_ok=True)
+                        self.request(
+                            "POST",
+                            path + "/human/unavailable",
+                            {
+                                **journal.identity(),
+                                "code": "session_expired"
+                                if self.human_browser
+                                else "browser_unavailable",
+                            },
+                        )
+                        return
+                    journal.update(
+                        phase="human_resuming",
+                        resume_identity=journal.identity(),
+                        human_user_agent=user_agent,
+                    )
+                if not cookie.is_file() or cookie.stat().st_mode & 0o077:
+                    cookie.unlink(missing_ok=True)
+                    if current["status"] == "waiting_human":
+                        self.request(
+                            "POST",
+                            path + "/human/unavailable",
+                            {
+                                **journal.identity(),
+                                "code": "session_expired",
+                            },
+                        )
+                        journal.update(phase="waiting_human", human_retry=False)
+                    else:
+                        # The lease was granted but its recovery file was lost. Do not
+                        # silently use another session or repeat an uncertain extraction.
+                        journal.update(
+                            generation=current["generation"],
+                            phase="reporting_failure",
+                            failure_code="session_lost",
+                            recovery_available=False,
+                        )
+                        result = self.request(
+                            "POST",
+                            path + "/fail",
+                            {
+                                **journal.identity(),
+                                "code": "session_lost",
+                            },
+                        )
+                        journal.update(phase="done", server_status=result["status"])
+                        self._close_human(journal)
+                    return
+                lease = self.request("POST", path + "/human/resume", state["resume_identity"])
+                # This marker is saved before extraction. A crash during extraction then
+                # follows the ordinary session_lost quarantine instead of another retry.
+                journal.update(
+                    phase="human_retry",
+                    human_retry=True,
+                    generation=lease["job"]["generation"],
+                    sequence=0,
+                    bytes_received=0,
+                )
+                self._remove_media(journal)
+                return self._run_job(journal, current=lease["job"])
+        except ResourceBusy:
+            return None
 
     @staticmethod
     def _remove_media(journal):
@@ -404,6 +607,11 @@ class Worker:
                     self.run_job(journal)
                 except LeaseLost as exc:
                     log.warning("Acquisition requires reconciliation job=%s reason=%s", job_id, exc)
+                    continue
+                if (
+                    self.resource_lock_path is not None
+                    and journal.state["phase"] == "waiting_human"
+                ):
                     continue
                 if self.resource_lock_path is not None:
                     return
@@ -457,9 +665,13 @@ def main():
         cookie_file=os.environ.get("KATCHA_ACQUISITION_COOKIE_FILE"),
         access_headers=access_headers,
         control_ca_file=os.environ.get("KATCHA_ACQUISITION_CONTROL_CA_FILE"),
+        human_recovery_enabled=(
+            os.environ.get("KATCHA_ACQUISITION_HUMAN_RECOVERY_ENABLED", "false") == "true"
+        ),
         resource_lock_path=(
             Path(os.environ["KATCHA_LOCAL_RESOURCE_LOCK_PATH"])
-            if os.environ.get("KATCHA_LOCAL_RESOURCE_LOCK_PATH") else None
+            if os.environ.get("KATCHA_LOCAL_RESOURCE_LOCK_PATH")
+            else None
         ),
     )
     lock = (worker.state_dir / "worker.lock").open("a")
