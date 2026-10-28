@@ -22,7 +22,7 @@ function uploadMediaOpen() {
     if (!currentChannel() || libraryUpload.busy) return;
     $("upload-media-channel").textContent = "Destination: " + channelName(currentChannel());
     uploadMediaStatus("Choose a local video to upload.");
-    $("upload-media-dialog").showModal();
+    $("add-media-dialog").showModal();
 }
 
 function setLibraryUploadBusy(busy) {
