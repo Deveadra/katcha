@@ -22,6 +22,7 @@ from katcha.orchestration.client import (
     start_publication_workflow,
     start_short_episode_editorial_workflow,
 )
+from katcha.services.acquisition_notifications import deliver_pending_acquisition_notifications
 from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
@@ -783,6 +784,12 @@ async def main() -> None:
 
     while True:
         try:
+            try:
+                await asyncio.to_thread(deliver_pending_acquisition_notifications, client, settings)
+            except Exception as exc:
+                # Acquisition rollout/DB failures must not stop existing review delivery.
+                # No raw exception: upstream messages may contain private request context.
+                LOGGER.warning("Acquisition notification scan failed type=%s", type(exc).__name__)
             await _deliver_pending(client, settings)
             updates = await asyncio.to_thread(
                 client.get_updates,

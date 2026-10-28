@@ -146,7 +146,9 @@ class _ResponseStream(io.RawIOBase):
         super().close()
 
 
-def fetch_extracted(url, permission, directory, max_bytes, progress, *, cookie_file=None):
+def fetch_extracted(
+    url, permission, directory, max_bytes, progress, *, cookie_file=None, user_agent=None
+):
     """Use yt-dlp's extractors with *all* HTTP through the approved pinned transport.
 
     Only HTTPS native downloads and local FFmpeg merging are selected. No external
@@ -267,6 +269,8 @@ def fetch_extracted(url, permission, directory, max_bytes, progress, *, cookie_f
     )
     if cookie_file:
         options["cookiefile"] = str(cookie_file)
+    if user_agent:
+        options["http_headers"] = {"User-Agent": user_agent}
     try:
         with ApprovedDownloader(options) as downloader:
             downloader.extract_info(url, download=True)

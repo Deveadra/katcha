@@ -98,3 +98,44 @@ systemctl --user disable --now katcha-acquisition-workstation.service
 Keep the temporary route available until direct authentication, service restart,
 and an actual handoff have passed. Do not copy OCI-side service credentials to a
 second machine without explicit operator approval of that additional location.
+
+## Human verification on this workstation
+
+The worker can now pause an authentication challenge and accept operator browser
+commands through its existing authenticated outbound control connection. Enable
+`KATCHA_ACQUISITION_HUMAN_RECOVERY_ENABLED=true` in the workstation environment
+only after installing the release with its `browser` extra and its matching
+Chromium runtime:
+
+```sh
+.venv/bin/python -m pip install '.[browser]'
+.venv/bin/python -m playwright install chromium
+```
+
+Use the same immutable release as the API. The API must also enable human
+recovery and have its credential encryption key configured; Telegram delivery
+requires its configured recipient, admitted channels and authenticated app origin.
+The existing supervised service keeps the browser on the acquisition host and
+opens no inbound port. Do not point this recovery flow at the separate goal
+browser: the downloader must use this host's session and network.
+
+When a source requires verification, the worker releases its media-processing
+slot and waits without retrying the source. Open the recovery link in Katcha and
+choose **Open verification**. Complete the provider's prompts yourself in that
+browser view, then choose **Check access and continue**. That action authorizes
+one new download attempt; it does not declare the CAPTCHA solved or the media
+verified. The normal independent hash/probe and channel handoff still determine
+whether acquisition succeeded.
+
+The worker exports only this job's approved-domain cookies to a private 0600
+file, uses the browser's User-Agent for the retry, and removes the file after the
+attempt. Cookies never enter Telegram, API payloads or the job journal. A browser
+restart loses the live session; reopen verification instead of repeating an
+uncertain form submission. Lost control responses reuse the saved execution
+identity. An interrupted extraction is quarantined rather than replayed.
+
+Browser actions and waiting requests expire. A cancelled or expired request
+closes its session when the worker next observes that state. The browser also
+has its own idle and absolute expiry. Runtime, network and provider acceptance
+must be checked on the intended workstation; the offline regression tests do
+not prove a successful YouTube sign-in or download.
