@@ -14,6 +14,7 @@ import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
+from typing import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -39,7 +40,7 @@ class VerificationBlocked(ValueError):
 @dataclass(frozen=True)
 class ContentEvidence:
     channel_id: uuid.UUID
-    content_id: uuid.UUID
+    content_id: uuid.UUID | None
     source_id: uuid.UUID
     clip_id: uuid.UUID
     object_key: str
@@ -49,6 +50,7 @@ class ContentEvidence:
     width: int
     height: int
     evidence_digest: str
+    upload_kind: str = "content"
 
 
 def _snapshot(channel_id: uuid.UUID, content_id: uuid.UUID) -> ContentEvidence:
@@ -149,6 +151,98 @@ def _snapshot(channel_id: uuid.UUID, content_id: uuid.UUID) -> ContentEvidence:
         )
 
 
+
+def _editorial_snapshot(channel_id: uuid.UUID, source_id: uuid.UUID) -> ContentEvidence:
+    """Check the original Editorial source-upload or completed multipart journal."""
+    with session_scope() as session:
+        source = session.get(SourceItem, source_id)
+        if (
+            source is None
+            or source.platform != "upload"
+            or source.status != "ready"
+            or source.clip_id is None
+            or source.source_url != f"https://upload.katcha.invalid/{source.id}"
+            or source.canonical_url != source.source_url
+        ):
+            raise VerificationBlocked("editorial_source_not_completed")
+        metadata = dict(source.source_metadata or {})
+        if (
+            metadata.get("channel_profile_id") != str(channel_id)
+            or metadata.get("permitted_use_confirmed") is not True
+            or not str(metadata.get("actor") or "").strip()
+        ):
+            raise VerificationBlocked("editorial_source_permission_missing")
+        clip = session.get(Clip, source.clip_id)
+        if (
+            clip is None
+            or not clip.storage_key
+            or clip.status == "failed"
+            or not isinstance(clip.sha256, str)
+            or not _SHA256.fullmatch(clip.sha256)
+            or not isinstance(clip.size_bytes, int)
+            or not 0 < clip.size_bytes <= MAX_VERIFY_BYTES
+        ):
+            raise VerificationBlocked("editorial_source_clip_invalid_or_oversized")
+        if metadata.get("multipart") is True:
+            if (
+                metadata.get("state") != "ready"
+                or metadata.get("sha256") != clip.sha256
+                or metadata.get("size_bytes") != clip.size_bytes
+                or not isinstance(metadata.get("part_count"), int)
+                or metadata["part_count"] <= 0
+            ):
+                raise VerificationBlocked("editorial_multipart_completion_invalid")
+        elif not (
+            isinstance(metadata.get("upload_request_sha256"), str)
+            and _SHA256.fullmatch(metadata["upload_request_sha256"])
+        ):
+            raise VerificationBlocked("editorial_source_upload_identity_missing")
+        lifecycle = session.get(ClipLifecycle, clip.id)
+        if lifecycle is not None and lifecycle.lifecycle_state != "hot":
+            raise VerificationBlocked("clip_not_hot")
+        try:
+            duration = float(clip.duration_seconds or 0)
+            width, height = int(clip.width or 0), int(clip.height or 0)
+        except (TypeError, ValueError) as exc:
+            raise VerificationBlocked("clip_video_metadata_invalid") from exc
+        if duration <= 0 or width <= 0 or height <= 0:
+            raise VerificationBlocked("clip_video_metadata_invalid")
+        seal = hashlib.sha256(
+            json.dumps(
+                {
+                    "source_id": str(source.id),
+                    "clip_id": str(clip.id),
+                    "source_metadata": metadata,
+                    "source_status": source.status,
+                    "clip_status": clip.status,
+                    "object_key": clip.storage_key,
+                    "sha256": clip.sha256,
+                    "size_bytes": clip.size_bytes,
+                    "duration": str(clip.duration_seconds),
+                    "width": width,
+                    "height": height,
+                    "lifecycle": lifecycle.lifecycle_state if lifecycle else "hot",
+                },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        return ContentEvidence(
+            channel_id=channel_id,
+            content_id=None,
+            source_id=source.id,
+            clip_id=clip.id,
+            object_key=clip.storage_key,
+            size_bytes=clip.size_bytes,
+            sha256=clip.sha256,
+            duration_seconds=duration,
+            width=width,
+            height=height,
+            evidence_digest=seal,
+            upload_kind="editorial",
+        )
+
+
 def _require_production_store(store: ObjectStore) -> None:
     settings = store.settings
     parsed = urlsplit(str(settings.s3_endpoint_url or ""))
@@ -198,10 +292,36 @@ def verify_content_upload(
     expected_sha256: str | None = None,
     store: ObjectStore | None = None,
 ) -> dict[str, object]:
-    """Verify one exact Content receipt and its complete R2 bytes before reporting success."""
+    """Verify one Content receipt plus actual R2 bytes; never grant render rights."""
+    return _verify_media(
+        lambda: _snapshot(channel_id, content_id), expected_sha256=expected_sha256, store=store
+    )
+
+
+def verify_editorial_upload(
+    channel_id: uuid.UUID,
+    source_id: uuid.UUID,
+    *,
+    expected_sha256: str | None = None,
+    store: ObjectStore | None = None,
+) -> dict[str, object]:
+    """Verify an Editorial source-upload receipt, not an arbitrary provider URL."""
+    return _verify_media(
+        lambda: _editorial_snapshot(channel_id, source_id),
+        expected_sha256=expected_sha256,
+        store=store,
+    )
+
+
+def _verify_media(
+    current_snapshot: Callable[[], ContentEvidence],
+    *,
+    expected_sha256: str | None,
+    store: ObjectStore | None,
+) -> dict[str, object]:
     if expected_sha256 is not None and not _SHA256.fullmatch(expected_sha256):
         raise VerificationBlocked("expected_sha256_invalid")
-    before = _snapshot(channel_id, content_id)
+    before = current_snapshot()
     if expected_sha256 is not None and expected_sha256 != before.sha256:
         raise VerificationBlocked("expected_sha256_does_not_match_receipt")
     storage = store if store is not None else ObjectStore()
@@ -234,7 +354,7 @@ def verify_content_upload(
         if transferred != before.size_bytes or digest.hexdigest() != before.sha256:
             raise VerificationBlocked("r2_bytes_or_digest_mismatch")
         video = _probe(path, before)
-    after = _snapshot(channel_id, content_id)
+    after = current_snapshot()
     if after != before:
         raise VerificationBlocked("content_evidence_changed_during_verification")
     return {
@@ -242,8 +362,9 @@ def verify_content_upload(
         "status": "verified",
         "verification_level": "live_r2_bytes_and_ffprobe_read_only",
         "verified_at": datetime.now(UTC).isoformat(),
-        "channel_id": str(channel_id),
-        "content_id": str(content_id),
+        "channel_id": str(before.channel_id),
+        "content_id": str(before.content_id) if before.content_id else None,
+        "upload_kind": before.upload_kind,
         "source_id": str(before.source_id),
         "clip_id": str(before.clip_id),
         "sha256": before.sha256,
@@ -262,13 +383,20 @@ def verify_content_upload(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel-id", type=uuid.UUID, required=True)
-    parser.add_argument("--content-id", type=uuid.UUID, required=True)
+    identity = parser.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--content-id", type=uuid.UUID)
+    identity.add_argument("--source-id", type=uuid.UUID)
     parser.add_argument("--expected-sha256", default=None)
     args = parser.parse_args(argv)
     try:
-        result = verify_content_upload(
-            args.channel_id, args.content_id, expected_sha256=args.expected_sha256
-        )
+        if args.content_id is not None:
+            result = verify_content_upload(
+                args.channel_id, args.content_id, expected_sha256=args.expected_sha256
+            )
+        else:
+            result = verify_editorial_upload(
+                args.channel_id, args.source_id, expected_sha256=args.expected_sha256
+            )
     except VerificationBlocked as exc:
         print(json.dumps({"format_version": 1, "status": "blocked", "code": str(exc)}))
         return 2
