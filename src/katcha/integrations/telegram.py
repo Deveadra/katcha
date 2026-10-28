@@ -66,7 +66,9 @@ class TelegramBotClient:
                 f"Telegram {method} returned invalid JSON"
             ) from exc
         if response.is_error or not payload.get("ok"):
-            description = redact_telegram_secrets(str(payload.get("description") or response.text)[:1000])
+            description = redact_telegram_secrets(
+                str(payload.get("description") or response.text)[:1000]
+            )
             raise TelegramAPIError(f"Telegram {method} failed: {description}")
         return payload.get("result")
 
