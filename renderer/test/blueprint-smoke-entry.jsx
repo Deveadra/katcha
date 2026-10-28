@@ -64,11 +64,11 @@ const Original = () => (
   <BlueprintVideo source={{...source, audio_volume: 1}}
     header={{enabled: false, height_px: 0, text: null}} narration={null} brand={brand} />
 );
-const Meme = () => (
+const Meme = ({caption = ""}) => (
   <BlueprintVideo source={{...source, audio_volume: 1}}
     header={{enabled: false, height_px: 0, text: null}} narration={null} brand={brand}
     meme_events={[
-      {id: 'reaction', kind: 'image', url: staticFile('reaction.png'),
+      {id: 'reaction', kind: 'image', url: staticFile('reaction.png'), caption,
         start_seconds: 0.5, duration_seconds: 1.5, volume: 0},
       {id: 'sound', kind: 'audio', url: staticFile('reaction.wav'),
         start_seconds: 0.5, duration_seconds: 1, volume: 0.7},
@@ -81,6 +81,8 @@ const Root = () => (
       fps={30} width={540} height={960} defaultProps={{}} />
     <Composition id="SyntheticMemeBlueprint" component={Meme} durationInFrames={81}
       fps={30} width={540} height={960} defaultProps={{}} />
+    <Composition id="SyntheticCaptionedMeme" component={Meme} durationInFrames={81}
+      fps={30} width={540} height={960} defaultProps={{caption: "WHEN THE PLAN GOES SIDEWAYS"}} />
     <Composition
       id="SyntheticPersonaBlueprint"
       component={Persona}

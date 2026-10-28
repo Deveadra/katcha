@@ -56,7 +56,7 @@ try {
   });
 
   const ids = ['SyntheticPersonaBlueprint', 'SyntheticHeaderBlueprint',
-    'SyntheticSourceOriginal', 'SyntheticMemeBlueprint'];
+    'SyntheticSourceOriginal', 'SyntheticMemeBlueprint', 'SyntheticCaptionedMeme'];
   const stills = [];
   for (const id of ids) {
     const composition = await selectComposition({serveUrl, id, inputProps: {}});
@@ -99,6 +99,16 @@ try {
     'persona and header blueprints unexpectedly rendered identical frames',
   );
   assert.notDeepEqual(stills[2], stills[3], 'Meme reaction image is not visible');
+  assert.notDeepEqual(stills[3], stills[4], 'Contextual meme caption is not visible');
+  // Keep the media and layout identical: only the caption text changes.
+  const captionProps = {caption: 'A DIFFERENT CONTEXTUAL REACTION'};
+  const captionComposition = await selectComposition({serveUrl,
+    id: 'SyntheticCaptionedMeme', inputProps: captionProps});
+  const captionStill = path.join(outputDir, 'DifferentCaption.png');
+  await renderStill({composition: captionComposition, serveUrl, frame: 30,
+    imageFormat: 'png', output: captionStill, inputProps: captionProps});
+  assert.notDeepEqual(stills[4], await fs.readFile(captionStill),
+    'Changing caption text did not change the rendered frame');
   const {stderr: volume} = await exec('ffmpeg', ['-hide_banner', '-i',
     path.join(outputDir, 'SyntheticMemeBlueprint.mp4'), '-af', 'volumedetect', '-f', 'null', '-']);
   assert.match(volume, /max_volume: -[\d.]+ dB/, 'Meme soundbit has no audible samples');

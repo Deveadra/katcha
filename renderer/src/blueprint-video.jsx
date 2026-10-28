@@ -79,13 +79,29 @@ const Captions = ({narration, brand}) => {
 };
 
 export const MemeTrack = ({events = []}) => {
-  const {fps} = useVideoConfig();
+  const {fps, height} = useVideoConfig();
   const style = {position: 'absolute', right: '5%', bottom: '18%', width: '42%',
     maxHeight: '35%', objectFit: 'contain', borderRadius: 8};
+  const captionedMediaStyle = {width: '100%', maxHeight: height * 0.38,
+    objectFit: 'contain', borderRadius: 16, boxShadow: '0 8px 30px #0009'};
   return events.map((event) => (
     <Sequence key={event.id} from={secondsToFrames(event.start_seconds, fps)}
       durationInFrames={Math.max(1, secondsToFrames(event.duration_seconds, fps))}>
-      {event.kind === 'audio' ? <Audio src={event.url} volume={event.volume} />
+      {event.caption?.trim() ? (
+        <div style={{position: 'absolute', left: '10%', right: '10%', bottom: '12%',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: height / 120}}>
+          {event.kind === 'audio' ? <Audio src={event.url} volume={event.volume} />
+            : event.kind === 'image' ? <Img src={event.url} style={captionedMediaStyle} />
+            : <OffthreadVideo src={event.url} volume={event.volume} style={captionedMediaStyle} />}
+          <div style={{boxSizing: 'border-box', maxWidth: '100%', padding: '0.3em 0.5em',
+            background: '#101010ee', border: '0.05em solid #fff', borderRadius: 12,
+            color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif',
+            fontSize: height / 36, fontWeight: 900, lineHeight: 1.08,
+            textAlign: 'center', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap'}}>
+            {event.caption}
+          </div>
+        </div>
+      ) : event.kind === 'audio' ? <Audio src={event.url} volume={event.volume} />
         : event.kind === 'image' ? <Img src={event.url} style={style} />
         : <OffthreadVideo src={event.url} volume={event.volume} style={style} />}
     </Sequence>
