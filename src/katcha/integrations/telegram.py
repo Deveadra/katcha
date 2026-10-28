@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import Any
 
 import httpx
@@ -12,6 +14,40 @@ class TelegramAPIError(RuntimeError):
     pass
 
 
+# Telegram's Bot API puts the credential in the URL path. HTTPX's normal INFO
+# request log therefore contains a live secret unless sanitized *before* the
+# log record reaches any configured handler, collector, or APM integration.
+_TELEGRAM_TOKEN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?:bot)?[0-9]{5,}(?::|%3a)[A-Za-z0-9_-]{15,}"
+)
+
+
+def redact_telegram_secrets(message: str) -> str:
+    return _TELEGRAM_TOKEN_RE.sub("bot[REDACTED]", message)
+
+
+class _TelegramHTTPLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        safe = redact_telegram_secrets(message)
+        if safe != message:
+            record.msg = safe
+            record.args = ()
+        return True
+
+
+def install_telegram_log_redaction() -> None:
+    # Logger filters execute before the record propagates to root handlers.
+    # This protects the API process as well as the standalone Telegram worker.
+    for name in (
+        "httpx", "httpcore.connection", "httpcore.http11",
+        "httpcore.http2", "httpcore.proxy",
+    ):
+        logger = logging.getLogger(name)
+        if not any(isinstance(item, _TelegramHTTPLogFilter) for item in logger.filters):
+            logger.addFilter(_TelegramHTTPLogFilter())
+
+
 class TelegramBotClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -19,6 +55,7 @@ class TelegramBotClient:
         token = secret.get_secret_value().strip() if secret else ""
         if not token:
             raise TelegramAPIError("Telegram bot token is not configured")
+        install_telegram_log_redaction()
         self.base_url = f"https://api.telegram.org/bot{token}"
 
     def _result(self, response: httpx.Response, method: str) -> Any:
@@ -29,7 +66,7 @@ class TelegramBotClient:
                 f"Telegram {method} returned invalid JSON"
             ) from exc
         if response.is_error or not payload.get("ok"):
-            description = str(payload.get("description") or response.text)[:1000]
+            description = redact_telegram_secrets(str(payload.get("description") or response.text)[:1000])
             raise TelegramAPIError(f"Telegram {method} failed: {description}")
         return payload.get("result")
 
