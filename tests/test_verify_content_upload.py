@@ -64,7 +64,7 @@ def uploaded(monkeypatch, tmp_path):
             frame = av.VideoFrame.from_image(
                 Image.new("RGB", (64, 36), "red" if index < 10 else "blue")
             )
-            frame.pts = index + 50
+            frame.pts = index
             frame.time_base = Fraction(1, 10)
             for packet in stream.encode(frame):
                 container.mux(packet)
