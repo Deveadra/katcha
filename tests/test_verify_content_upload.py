@@ -299,6 +299,42 @@ def test_rights_change_during_stream_fails_closed(uploaded):
         _verify(uploaded)
 
 
+
+def test_missing_ffprobe_binary_decodes_real_frame_with_pyav(uploaded, monkeypatch):
+    def absent(_path):
+        raise FileNotFoundError("ffprobe is not installed")
+
+    monkeypatch.setattr(evidence, "ffprobe", absent)
+    result = _verify(uploaded)
+    assert result["status"] == "verified"
+    assert result["video"]["width"] == 64
+    assert result["video"]["video_stream_count"] == 1
+
+
+def test_ffprobe_failure_does_not_fall_back_or_claim_success(uploaded, monkeypatch):
+    def failed(_path):
+        raise RuntimeError("damaged input")
+
+    monkeypatch.setattr(evidence, "ffprobe", failed)
+    with pytest.raises(evidence.VerificationBlocked, match="video_probe_unavailable"):
+        _verify(uploaded)
+
+
+def test_hash_consistent_but_nonvideo_blob_is_rejected(uploaded):
+    corrupted = b"not-actually-a-video" * 20
+    uploaded.store.blob = corrupted
+    with db.session_scope() as session:
+        clip = session.get(Clip, uploaded.clip)
+        row = session.get(ContentItem, uploaded.content)
+        receipt = dict(row.details)
+        clip.size_bytes = row.size_bytes = row.upload_offset = len(corrupted)
+        clip.sha256 = receipt["verified_sha256"] = hashlib.sha256(corrupted).hexdigest()
+        row.details = receipt
+    with pytest.raises(evidence.VerificationBlocked, match="video_probe"):
+        _verify(uploaded)
+
+
+
 def test_stored_video_metadata_mismatch_blocks_even_with_correct_bytes(uploaded):
     with db.session_scope() as session:
         session.get(Clip, uploaded.clip).width = 1280
