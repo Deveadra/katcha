@@ -89,3 +89,17 @@ def test_telegram_api_error_description_is_safe() -> None:
         client._result(response, "getMe")
     assert TOKEN not in str(exc.value)
     assert "bot[REDACTED]" in str(exc.value)
+
+
+@pytest.mark.parametrize("method", ["get_me", "delete_webhook"])
+def test_transport_error_never_exposes_telegram_url(monkeypatch, method: str) -> None:
+    client = TelegramBotClient(Settings(_env_file=None, telegram_bot_token=TOKEN))
+
+    def broken_request(*args, **kwargs):
+        raise httpx.ConnectError(f"connection failed at {URL}")
+
+    monkeypatch.setattr(httpx, "get" if method == "get_me" else "post", broken_request)
+    with pytest.raises(TelegramAPIError) as exc:
+        getattr(client, method)()
+    assert TOKEN not in str(exc.value)
+    assert "ConnectError" in str(exc.value)
