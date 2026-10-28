@@ -8,7 +8,8 @@ This is the evidence gate before using a trailer for KQA-101 real-media tests.
 The implementation is `python -m katcha.ops.verify_content_upload`. It does
 **not** upload, retry, copy, promote, delete, index, render or publish anything.
 It performs scoped PostgreSQL SELECTs, one R2 object HEAD and one bounded object
-GET, SHA-256 verification, and ffprobe over a private temporary file removed
+GET, SHA-256 verification, and ffprobe (or one decoded PyAV frame if ffprobe is absent)
+over a private temporary file removed
 afterward. No bucket-wide listing, paid AI requests or YouTube calls are made.
 
 ## Find the exact ID and choose the correct path
