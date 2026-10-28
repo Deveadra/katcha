@@ -71,6 +71,10 @@ async function connect() {
 }
 function method(){for(const kind of ['file','url','clip']) $(kind+'-input').hidden=$('input-kind').value!==kind;}
 $('input-kind').addEventListener('change',method);
+$('file').addEventListener('change',()=>{
+    const file = $('file').files[0];
+    if (file && !$('title').value.trim()) $('title').value = file.name.replace(/\\.[^.]+$/, '');
+});
 $('connect-form').addEventListener('submit',e=>{e.preventDefault();connect().catch(e=>message(e.message));});
 $('channel').addEventListener('change',()=>{contentState.channel=$('channel').value;contentState.item='';contentState.selected=null;contentState.offset=0;packageOffset=0;$('packages').innerHTML='';$('more-packages').hidden=true;sessionStorage.setItem('katcha.channel',contentState.channel);$('detail').innerHTML='<p>Select content to see its progress.</p>';$('channel-link').href='/channels?channel='+encodeURIComponent(contentState.channel);$('add').disabled=!contentState.channel;$('browse-clips').href='/clips?channel='+encodeURIComponent(contentState.channel);load().catch(e=>message(e.message));});
 $('search-form').addEventListener('submit',e=>{e.preventDefault();contentState.offset=0;load().catch(e=>message(e.message));});
@@ -153,6 +157,38 @@ $('intake-form').addEventListener('submit',async e=>{
         if(kind==='file'&&!file)throw new Error('Choose a video file.');
         if(kind==='clip'&&!$('clip-id').value)throw new Error('Choose a clip in Clips and select Create video first.');
         if(kind==='file'&&file.size>4*1024**3)throw new Error('Choose a video export up to 4 GiB.');
+        // Large footage is registered directly in the channel Clip Library,
+        // without creating an Editorial project or proxying 3 GiB through OCI.
+        // The Content listing adopts the completed SourceItem after verification.
+        if(kind==='file'&&file.size>window.KatchaStandaloneMediaUpload.LARGE_THRESHOLD){
+            $('pause').hidden=false;
+            $('upload-progress').hidden=false;
+            const result=await window.KatchaStandaloneMediaUpload.upload({
+                file, title:$('title').value.trim(), channel:contentState.channel,
+                api, shouldPause:()=>contentState.pause,
+                onProgress:({phase,received,size})=>{
+                    uploadProgress(received,size);
+                    message(phase==='verifying'
+                        ? 'All bytes received. Verifying the R2 object and registering the clip…'
+                        : 'R2 received '+received.toLocaleString()+' of '+size.toLocaleString()+' bytes.');
+                },
+            });
+            if(result.paused){
+                message('Upload paused. Reselect this file with the same title to resume from saved R2 parts.');
+                return;
+            }
+            if(!result.clip_id)throw new Error('R2 did not confirm a registered Clip. Inspect the saved upload before continuing.');
+            contentState.item='';contentState.selected=null;
+            history.replaceState(null,'','/content?channel='+encodeURIComponent(contentState.channel));
+            $('detail').innerHTML='<p>Media saved. Select an item to inspect it.</p>';
+            await load();
+            const link=document.createElement('a');
+            link.href='/clips?channel='+encodeURIComponent(contentState.channel)+'&clip='+encodeURIComponent(result.clip_id);
+            link.textContent='Open stored clip in Media Library';
+            $('upload-notice').replaceChildren('Upload verified. No project created. ',link);
+            message('Media saved to the channel library. No project created.');
+            return;
+        }
         const inputIdentity=kind==='file'?file.name+':'+file.size+':'+file.lastModified:kind==='url'?$('url').value:$('clip-id').value;
         let fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(inputIdentity)))).map(b=>b.toString(16).padStart(2,'0')).join('');
         const storageKey='katcha.intake.'+contentState.channel+'.'+fingerprint;
