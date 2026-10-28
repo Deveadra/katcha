@@ -13,8 +13,8 @@ import re
 import sys
 import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
