@@ -17,7 +17,6 @@ from katcha.integrations.telegram import (
 )
 from katcha.telegram_worker import _TelegramSafeFormatter
 
-
 TOKEN = "123456789:AA" + "testSecretToken01234567890"
 URL = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
 
