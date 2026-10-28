@@ -551,6 +551,8 @@ const clips = [
         assert.equal(requests.filter(row => row.method === "POST" &&
             row.path.endsWith("/source-uploads/multipart")).length, 1);
         await page.locator("#upload-media-close").click();
+        // Restore the original fixture selection before legacy inspector assertions.
+        await page.locator(`[data-clip-id="${clipA}"]`).click();
 
         assert.match(await page.locator("#channel-badge").innerText(), /RANKSNAXX/);
         assert.equal(await page.locator("#count-all").innerText(), "2");
