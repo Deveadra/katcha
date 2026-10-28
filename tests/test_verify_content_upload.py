@@ -306,6 +306,112 @@ def test_stored_video_metadata_mismatch_blocks_even_with_correct_bytes(uploaded)
         _verify(uploaded)
 
 
+
+def _as_editorial_upload(uploaded, *, multipart: bool) -> None:
+    with db.session_scope() as session:
+        source = session.get(SourceItem, uploaded.source)
+        source.platform = "upload"
+        source.source_url = f"https://upload.katcha.invalid/{source.id}"
+        source.canonical_url = source.source_url
+        metadata = {
+            "channel_profile_id": str(uploaded.channel),
+            "permitted_use_confirmed": True,
+            "original_filename": "real-fixture.mkv",
+            "actor": "fixture-operator",
+        }
+        if multipart:
+            metadata.update({
+                "multipart": True,
+                "state": "ready",
+                "sha256": uploaded.digest,
+                "size_bytes": len(uploaded.data),
+                "part_count": 1,
+                "part_bytes": len(uploaded.data),
+            })
+        else:
+            metadata["upload_request_sha256"] = "1" * 64
+        source.source_metadata = metadata
+
+
+@pytest.mark.parametrize("multipart", [False, True])
+def test_editorial_uploaded_video_verifies_without_content_receipt(uploaded, multipart):
+    _as_editorial_upload(uploaded, multipart=multipart)
+    result = evidence.verify_editorial_upload(
+        uploaded.channel, uploaded.source, store=uploaded.store
+    )
+    assert result["status"] == "verified"
+    assert result["upload_kind"] == "editorial"
+    assert result["content_id"] is None
+    assert result["sha256"] == uploaded.digest
+    assert result["rights_independently_verified"] is False
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["channel", "permission", "actor", "status", "source_url", "clip_id", "multipart_sha"],
+)
+def test_forged_editorial_source_fails_before_r2(uploaded, tamper):
+    _as_editorial_upload(uploaded, multipart=True)
+    with db.session_scope() as session:
+        source = session.get(SourceItem, uploaded.source)
+        meta = dict(source.source_metadata)
+        if tamper == "channel":
+            meta["channel_profile_id"] = str(uploaded.other)
+        elif tamper == "permission":
+            meta["permitted_use_confirmed"] = False
+        elif tamper == "actor":
+            meta["actor"] = ""
+        elif tamper == "status":
+            meta["state"] = "verifying"
+        elif tamper == "source_url":
+            source.source_url = "https://example.test/unknown"
+        elif tamper == "clip_id":
+            source.clip_id = uuid.uuid4()
+        elif tamper == "multipart_sha":
+            meta["sha256"] = "0" * 64
+        source.source_metadata = meta
+    with pytest.raises(evidence.VerificationBlocked):
+        evidence.verify_editorial_upload(
+            uploaded.channel, uploaded.source, store=uploaded.store
+        )
+    assert uploaded.store.stat_calls == 0
+
+
+def test_editorial_source_permissions_revoked_during_stream(uploaded):
+    _as_editorial_upload(uploaded, multipart=False)
+
+    def revoke():
+        with db.session_scope() as session:
+            source = session.get(SourceItem, uploaded.source)
+            meta = dict(source.source_metadata)
+            meta["permitted_use_confirmed"] = False
+            source.source_metadata = meta
+
+    uploaded.store.on_end = revoke
+    with pytest.raises(evidence.VerificationBlocked, match="evidence"):
+        evidence.verify_editorial_upload(
+            uploaded.channel, uploaded.source, store=uploaded.store
+        )
+
+
+def test_cli_chooses_source_verification(monkeypatch, uploaded, capsys):
+    def source_check(channel_id, source_id, *, expected_sha256):
+        assert channel_id == uploaded.channel
+        assert source_id == uploaded.source
+        assert expected_sha256 == uploaded.digest
+        return {"status": "verified"}
+
+    monkeypatch.setattr(evidence, "verify_editorial_upload", source_check)
+    assert evidence.main(
+        [
+            "--channel-id", str(uploaded.channel),
+            "--source-id", str(uploaded.source),
+            "--expected-sha256", uploaded.digest,
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "verified"}
+
+
 def test_cli_does_not_disclose_provider_or_database_exceptions(monkeypatch, capsys):
     def leak(*args, **kwargs):
         raise RuntimeError("postgres://sensitive:password@host and signed R2 URL")
