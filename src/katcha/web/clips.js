@@ -493,6 +493,7 @@ function updateChannelScope() {
     const selectedName = channel ? channelName(channel) : "All / shared";
     $("channel-badge").textContent = selectedName.toUpperCase();
     $("retention-settings").disabled = !channel;
+    $("add-media-link").href = "/content" + (channel ? "?channel=" + encodeURIComponent(channel.id) : "");
 }
 
 async function loadSummary() {
