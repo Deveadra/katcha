@@ -261,7 +261,9 @@ sudo find /srv/katcha/deployments -maxdepth 2 -type f \
 df -h /
 ```
 
-**All must agree:** Katcha `active`; Git checkout and local API `release_sha` = target; ready endpoint `status: ok`; database starting revision correct; Temporal pending-state `PASSED`; protected `result.json` says **`status: DEPLOYED`**, matching SHA and recovered running workflow IDs/count; timer `disabled`; host gate absent. On **WSL**, verify GitHub variable is still `false` with the `gh variable get` command above.
+**All must agree:** Katcha `active`; Git checkout and local API `release_sha` = target; ready endpoint `status: ok`; database starting revision correct; Temporal pending-state `PASSED`; protected `result.json` says **`status: DEPLOYED`**, matching SHA and recorded `predeploy_running_workflows`, `postdeploy_running_workflows` and `predeploy_workflow_recovery` (`running`, `completed`, `continued_as_new`); timer `disabled`; host gate absent. The executor also checks the original workflow IDs during recovery. On **WSL**, verify GitHub variable is still `false` with the `gh variable get` command above.
+
+The read-only `--readiness` command may still return `REVIEW_REQUIRED` even after a successful deployment; interpret the named technical fields, not that summary as a failure.
 
 Finally open [app.katcha.stream](https://app.katcha.stream) through **authenticated Cloudflare Access**. Check Channel Studio, sources, queue, activity, review/player and channel data. A public curl redirect to Cloudflare login is normal. A loading web app is a *basic smoke test*, not proof every button works or that autonomous YouTube publishing succeeded. Note any playback stutter or broken feature separately. Record disk left after staging; if critical, schedule capacity remediation before the **next** release.
 
