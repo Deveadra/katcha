@@ -128,6 +128,17 @@ const clips = [
         const requests = [];
         page.on("pageerror", (error) => errors.push(error.message));
 
+        let r2Transfers = 0;
+        await page.route("https://r2-upload.example.test/**", route => {
+            r2Transfers++;
+            assert.equal(route.request().method(), "PUT");
+            assert.equal(route.request().headers().authorization, undefined);
+            return route.fulfill({
+                status: 200,
+                headers: {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "PUT"},
+                body: "",
+            });
+        });
         await page.route("**/v1/**", (route) => {
             const request = route.request();
             const url = new URL(request.url());
@@ -150,6 +161,45 @@ const clips = [
             if (request.headers().authorization !== "Bearer clip-token" &&
                 !(url.pathname === `/v1/clips/${clipA}/media` && request.method() === "GET")) {
                 return json({ detail: "Unauthorized" }, 401);
+            }
+
+            // Source upload endpoints are channel-owned. No project ID exists.
+            const uploadBase = `/v1/channels/${channelA}/editorial-projects/source-uploads`;
+            if (url.pathname === uploadBase && request.method() === "POST") {
+                assert.equal(url.searchParams.get("permitted_use"), "true");
+                assert.ok(url.searchParams.get("idempotency_key"));
+                return json({
+                    clip_id: clipB, source_id: "11111111-1111-4111-8111-111111111119",
+                    source_url: "https://upload.katcha.invalid/11111111",
+                    title: url.searchParams.get("title") || "Uploaded media",
+                    filename: url.searchParams.get("filename"),
+                    duration_seconds: 12.0, width: 1920, height: 1080,
+                }, 201);
+            }
+            if (url.pathname === uploadBase + "/multipart" && request.method() === "POST") {
+                assert.equal(body.permitted_use, true);
+                assert.equal(body.filename, "sample-large.mp4");
+                assert.ok(body.size_bytes > 512 * 1024 * 1024);
+                return json({
+                    source_id: "11111111-1111-4111-8111-111111111119",
+                    state: "uploading", part_bytes: body.size_bytes, part_count: 1,
+                }, 201);
+            }
+            if (url.pathname === uploadBase + "/multipart/11111111-1111-4111-8111-111111111119"
+                && request.method() === "GET") {
+                return json({state: "uploading", parts: []});
+            }
+            if (url.pathname === uploadBase + "/multipart/11111111-1111-4111-8111-111111111119/parts"
+                && request.method() === "POST") {
+                assert.equal(body.part_number, 1);
+                return json({url: "https://r2-upload.example.test/test-part"});
+            }
+            if (url.pathname === uploadBase + "/multipart/11111111-1111-4111-8111-111111111119/complete"
+                && request.method() === "POST") {
+                return json({
+                    clip_id: clipB, state: "ready", title: "Standalone large upload",
+                    filename: "sample-large.mp4", duration_seconds: 12,
+                });
             }
 
             if (url.pathname === "/v1/channels") {
@@ -447,6 +497,57 @@ const clips = [
 
         await page.locator(`[data-clip-id="${clipA}"]`).waitFor();
         assert.equal(await page.locator("#channel").inputValue(), channelA);
+
+        // A library upload must not create an Editorial Project.
+        assert.equal(await page.locator("#add-media").isEnabled(), true);
+        await page.locator("#add-media").click();
+        await page.locator("#add-media-dialog").waitFor({state: "visible"});
+        assert.match(await page.locator("#upload-media-channel").innerText(), /RankSnaxx/);
+        await page.locator("#upload-media-file").setInputFiles({
+            name: "standalone.mp4", mimeType: "video/mp4",
+            buffer: Buffer.from("fake-video-test-fixture"),
+        });
+        await page.locator("#upload-media-submit").click();
+        assert.match(await page.locator("#upload-media-status").innerText(), /permission/i);
+        await page.locator("#upload-media-permission").check();
+        await page.locator("#upload-media-title").fill("Standalone upload");
+        await page.locator("#upload-media-submit").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#upload-media-status").textContent.includes("Added Standalone upload"),
+        );
+        assert.equal(
+            requests.some(row => row.method === "POST" &&
+                row.path === `/v1/channels/${channelA}/editorial-projects`),
+            false,
+        );
+        assert.ok(requests.some(row => row.method === "POST" &&
+            row.path.endsWith("/source-uploads") && row.query.title === "Standalone upload"));
+
+        // Simulate a large File without allocating hundreds of MiB in CI.
+        // This tests the same presigned multipart transport, not full R2 decoding.
+        await page.locator("#upload-media-file").setInputFiles({
+            name: "sample-large.mp4", mimeType: "video/mp4",
+            buffer: Buffer.from("fake-large-fixture"),
+        });
+        await page.locator("#upload-media-title").fill("Standalone large upload");
+        await page.evaluate(() => {
+            const input = document.querySelector("#upload-media-file");
+            const file = {
+                name: "sample-large.mp4", type: "video/mp4",
+                size: 600 * 1024 * 1024, lastModified: 42,
+                slice() { return new Blob(["fixture"], {type: "video/mp4"}); },
+            };
+            Object.defineProperty(input, "files", {configurable: true, get: () => [file]});
+        });
+        await page.locator("#upload-media-submit").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#upload-media-status").textContent.includes("Added Standalone large upload"),
+        );
+        assert.equal(r2Transfers, 1);
+        assert.equal(requests.filter(row => row.method === "POST" &&
+            row.path.endsWith("/source-uploads/multipart")).length, 1);
+        await page.locator("#upload-media-close").click();
+
         assert.match(await page.locator("#channel-badge").innerText(), /RANKSNAXX/);
         assert.equal(await page.locator("#count-all").innerText(), "2");
         assert.equal(await page.locator("#count-hot").innerText(), "2");
