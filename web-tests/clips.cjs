@@ -130,14 +130,18 @@ const clips = [
 
         let r2Transfers = 0;
         await page.route("https://r2-upload.example.test/**", route => {
+            const cors = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "PUT, OPTIONS",
+                "Access-Control-Allow-Headers": "content-type",
+            };
+            if (route.request().method() === "OPTIONS") {
+                return route.fulfill({status: 204, headers: cors});
+            }
             r2Transfers++;
             assert.equal(route.request().method(), "PUT");
             assert.equal(route.request().headers().authorization, undefined);
-            return route.fulfill({
-                status: 200,
-                headers: {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "PUT"},
-                body: "",
-            });
+            return route.fulfill({status: 200, headers: cors, body: ""});
         });
         await page.route("**/v1/**", (route) => {
             const request = route.request();
