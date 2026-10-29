@@ -65,6 +65,10 @@ def test_failed_and_short_candidates_research_once_with_durable_evidence(researc
         alternate = query["reservation_key"].endswith(":alternative")
         searches.append(query)
         prefix = "good" if alternate or index > 1 else "bad"
+        assert "last at least 4.0 seconds" in query["operator_request"]
+        assert "avoid unkeyed green-screen" in query["operator_request"]
+        assert "Synthetic visible frame" in query["operator_request"]
+        assert f"Caption {index}" in query["operator_request"]
         if alternate:
             assert "requested media kind" in query["operator_request"]
             assert "at least 4.0 seconds" in query["operator_request"]
