@@ -398,9 +398,9 @@ def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
     assert "MIGRATION_POLICY: ${{ inputs.migration_policy }}" in source
     assert ("options: [refuse, approve-additive-0064, approve-additive-through-0065, "
-            "approve-additive-through-0066]") in source
+            "approve-additive-through-0066, approve-additive-through-0067]") in source
     assert ('["refuse", "approve-additive-0064", "approve-additive-through-0065", '
-            '"approve-additive-through-0066"]') in source
+            '"approve-additive-through-0066", "approve-additive-through-0067"]') in source
     assert "crypto.createHmac" in source
     assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source

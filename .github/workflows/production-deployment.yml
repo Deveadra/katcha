@@ -33,7 +33,7 @@ on:
         required: true
         default: refuse
         type: choice
-        options: [refuse, approve-additive-0064, approve-additive-through-0065, approve-additive-through-0066]
+        options: [refuse, approve-additive-0064, approve-additive-through-0065, approve-additive-through-0066, approve-additive-through-0067]
       confirmation:
         description: Type DEPLOY KATCHA PRODUCTION
         required: true
@@ -202,7 +202,7 @@ jobs:
             if (!["refuse", "approved-resume"].includes(policy)) {
               throw new Error("GITHUB_DEPLOY_WORKFLOW_POLICY_INVALID");
             }
-            if (!["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066"].includes(migrationPolicy)) {
+            if (!["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066", "approve-additive-through-0067"].includes(migrationPolicy)) {
               throw new Error("GITHUB_DEPLOY_MIGRATION_POLICY_INVALID");
             }
             if (context.ref !== "refs/heads/main") {

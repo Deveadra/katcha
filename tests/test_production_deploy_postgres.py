@@ -168,3 +168,44 @@ def test_real_postgres_handoff_upgrade_and_catalog_drift(postgres_gate):
     sql("ALTER TABLE acquisition_transfers DROP CONSTRAINT ck_acquisition_transfer_size")
     with pytest.raises(app.Blocked, match="handoff schema"):
         app.database_release_postflight(policy)
+
+
+@pytest.mark.parametrize("drift", [
+    None,
+    "ALTER TABLE acquisition_challenges ADD COLUMN unexpected text",
+    "ALTER TABLE acquisition_challenges DROP CONSTRAINT uq_acquisition_challenge_generation",
+    "ALTER TABLE acquisition_challenges ALTER COLUMN created_at DROP DEFAULT",
+    "DROP INDEX ix_acquisition_challenges_channel_profile_id",
+    "ALTER TABLE acquisition_browser_commands ALTER COLUMN payload SET NOT NULL",
+    "ALTER TABLE acquisition_browser_commands DROP CONSTRAINT "
+    "acquisition_browser_commands_challenge_id_fkey",
+    "ALTER TABLE acquisition_jobs DROP CONSTRAINT ck_acquisition_job_status",
+    "UPDATE alembic_version SET version_num='0068_unreviewed'",
+], ids=["preserved", "unexpected-column", "unique", "default", "index", "nullable",
+        "foreign-key", "job-status", "revision"])
+def test_real_postgres_recovery_upgrade_and_drift(postgres_gate, drift):
+    app, sql, migrate = postgres_gate
+    sql("ALTER TABLE acquisition_receipts ADD COLUMN bytes_received integer; "
+        "CREATE TABLE media_asset_validations (size_bytes integer)")
+    migrate("0064_application_ai_settings")
+    migrate("0065_acquisition_jobs")
+    migrate("0066_acquisition_handoff")
+    sql("INSERT INTO acquisition_jobs (id, receipt_id, channel_profile_id, status, generation, "
+        "max_bytes, bytes_received, heartbeat_sequence, phase, pending_result) VALUES "
+        "('00000000-0000-0000-0000-000000000003', "
+        "'00000000-0000-0000-0000-000000000001', "
+        "'00000000-0000-0000-0000-000000000002', 'failed', 0, 100, 0, 0, 'queued', '{}')")
+    before = sql("TABLE acquisition_jobs")
+    app.database_release_preflight(True, app.RECOVERY_POLICY)
+    migrate("0067_acquisition_human_recovery")
+    app.database_release_postflight(app.RECOVERY_POLICY)
+    app.database_release_preflight(False)
+    assert sql("TABLE acquisition_jobs") == before
+    sql("UPDATE acquisition_jobs SET status='waiting_human'")
+    app.database_release_postflight("refuse")
+    if drift:
+        sql(drift)
+        with pytest.raises(app.Blocked):
+            app.database_release_preflight(False)
+        with pytest.raises(app.Blocked):
+            app.database_release_postflight("refuse")
