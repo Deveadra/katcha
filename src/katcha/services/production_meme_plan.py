@@ -149,6 +149,8 @@ def plan_memes(store, clip, production, blueprint, duration: float) -> tuple[Mem
         "types and at least two visual reactions. A caption may be a clearly playful analogy, "
         "but must not misquote the source. Give a specific media search query for each beat; "
         "do not invent URLs. Prefer recognizable reaction assets over unrelated stock photos. "
+        "Choose finished reaction assets with natural or transparent backgrounds; avoid "
+        "green-screen clips because this edit does not perform chroma keying. "
         "Use each frame at most once; each addition starts exactly at that frame timestamp. "
         "Choose durations that do not overlap or exceed the source, up to 5 seconds each. "
         f"Required added duration is at least {duration * policy.min_coverage_ratio:.2f}s. "
