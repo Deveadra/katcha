@@ -146,17 +146,65 @@ def secure_receipts() -> None:
 
 def executor_attestation(returncode: int, stdout: str, sha: str) -> str | None:
     """A zero exit code is not evidence of a successfully deployed release."""
-    if returncode != 0:
+    if returncode != 0 or not isinstance(stdout, str) or len(stdout) > 16384:
         return None
     try:
         outcome = json.loads(stdout)
-    except ValueError:
+    except (ValueError, TypeError, RecursionError):
         return None
     if (not isinstance(outcome, dict) or outcome.get("sha") != sha
+        or not isinstance(outcome.get("status"), str)
         or outcome.get("status") not in {"DEPLOYED", "ALREADY_CURRENT"}):
         return None
     return outcome["status"]
 
+
+
+EXECUTOR_FAILURE_REASONS = {
+    "HOST_DISK_FULL": "Host storage is full; review image capacity before a new request.",
+    "HOST_OPERATION_FAILED": "A host operation failed before deployment completed.",
+    "HOST_OPERATION_TIMEOUT": "A host operation did not start or timed out.",
+    "DEPLOYMENT_GUARD_REJECTED": "A deployment guard rejected the release.",
+    "TEMPORAL_DRAIN_REQUIRED": "Pending Temporal work must drain before a new request.",
+    "DEPLOYMENT_LOCKED": "Another production deployment owns the executor lock.",
+    "DEPLOYMENT_NOT_AUTHORIZED": "The host deployment gate did not authorize this attempt.",
+    "RELEASE_EVIDENCE_REJECTED": "Independent release evidence was rejected.",
+    "EXECUTOR_ERROR": "The executor encountered an unclassified local error.",
+    "EXECUTOR_TIMEOUT": "The fixed executor exceeded its deadline.",
+    "EXECUTOR_UNAVAILABLE": "The fixed root-owned executor could not be started safely.",
+    "EXECUTOR_OUTPUT_UNVERIFIED": "The executor did not attest a successful exact release.",
+    "EXECUTOR_REJECTION_UNCLASSIFIED": "The executor failed without a safe structured reason.",
+}
+EXECUTOR_OPERATIONS = {"unknown", "docker.pull", "docker.inspect", "docker.exec", "docker.ps",
+                       "docker.run", "docker.image", "docker.other", "git", "systemctl",
+                       "mountpoint", "python3", "host.other"}
+
+
+def failure_diagnostic(code: str, operation: str = "unknown") -> dict[str, str]:
+    return {"code": code, "operation": operation, "reason": EXECUTOR_FAILURE_REASONS[code]}
+
+
+def executor_rejection(returncode: int, stdout: str, sha: str) -> dict[str, str]:
+    """Accept an exact, bounded enum-only rejection; never preserve raw process output."""
+    fallback = failure_diagnostic("EXECUTOR_OUTPUT_UNVERIFIED" if returncode == 0 else
+                                  "EXECUTOR_REJECTION_UNCLASSIFIED")
+    if returncode == 0 or not isinstance(stdout, str) or len(stdout) > 2048:
+        return fallback
+    try:
+        outcome = json.loads(stdout)
+    except (ValueError, TypeError, RecursionError):
+        return fallback
+    if (not isinstance(outcome, dict) or set(outcome) != {"status", "sha", "diagnostic"}
+        or outcome["status"] != "BLOCKED" or outcome["sha"] != sha):
+        return fallback
+    diagnostic = outcome["diagnostic"]
+    if (not isinstance(diagnostic, dict) or set(diagnostic) != {"code", "operation"}
+        or not isinstance(diagnostic["code"], str)
+        or diagnostic["code"] not in EXECUTOR_FAILURE_REASONS
+        or not isinstance(diagnostic["operation"], str)
+        or diagnostic["operation"] not in EXECUTOR_OPERATIONS):
+        return fallback
+    return failure_diagnostic(diagnostic["code"], diagnostic["operation"])
 
 def attempt(request: dict[str, Any]) -> str:
     secure_receipts()
@@ -183,6 +231,7 @@ def attempt(request: dict[str, Any]) -> str:
 
     status = "BLOCKED"
     executor_status = None
+    diagnostic = None
     try:
         if EXECUTOR.is_symlink() or not EXECUTOR.is_file():
             raise RequestBlocked("fixed root-owned production executor missing")
@@ -192,21 +241,27 @@ def attempt(request: dict[str, Any]) -> str:
         done = subprocess.run(
             [str(EXECUTOR), request["sha"], request["policy"],
              request["migration_policy"]],
-            capture_output=True, text=True, timeout=7200, check=False,
+            capture_output=True, text=True, errors="replace", timeout=7200, check=False,
         )
         # An executor's exit code cannot independently certify deployment.
         executor_status = executor_attestation(
             done.returncode, done.stdout, request["sha"],
         )
         status = "SUCCEEDED" if executor_status else "FAILED_REVIEW_REQUIRED"
-    except (OSError, subprocess.TimeoutExpired, RequestBlocked):
+        if not executor_status:
+            diagnostic = executor_rejection(done.returncode, done.stdout, request["sha"])
+    except subprocess.TimeoutExpired:
         status = "FAILED_REVIEW_REQUIRED"
+        diagnostic = failure_diagnostic("EXECUTOR_TIMEOUT")
+    except (OSError, RequestBlocked):
+        status = "FAILED_REVIEW_REQUIRED"
+        diagnostic = failure_diagnostic("EXECUTOR_UNAVAILABLE")
     # Keep a sanitized and protected audit record; never print env or secrets.
     temp = RECEIPTS / ("nonce-" + request["nonce"] + ".tmp")
     with temp.open("x", encoding="utf-8") as out:
         temp.chmod(0o600)
         json.dump({"status": status, "id": request["id"], "sha": request["sha"],
-                   "executor_status": executor_status}, out)
+                   "executor_status": executor_status, "diagnostic": diagnostic}, out)
         out.write("\n")
         out.flush()
         os.fsync(out.fileno())

@@ -65,7 +65,7 @@ jobs:
           bash -n deploy/scripts/install-production-deployer.sh
           bash -n scripts/check-production-deployment-github.sh
           # Isolated contract tests need only pytest, not app-wide SQLAlchemy fixtures.
-          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_deploy_0067.py tests/test_production_github_auth_preflight.py tests/test_production_deploy_notifications.py
+          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_deploy_0067.py tests/test_production_deploy_rejections.py tests/test_production_github_auth_preflight.py tests/test_production_deploy_notifications.py
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
