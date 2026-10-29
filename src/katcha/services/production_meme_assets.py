@@ -372,7 +372,7 @@ def prepare_production_memes(production_id: str) -> dict:
                 {
                     "channel_profile_id": str(production.channel_profile_id),
                     "reservation_key": f"meme:{identity}:{generation}:{beat_index}:{medium}",
-                    "operator_request": f"Find a directly downloadable {phrase} "
+                    "operator_request": f"Find directly downloadable {medium} media for: {phrase}. "
                     "that fits this clip. "
                     "Prefer original sources with clear license information. Return concrete asset "
                     "URLs or pages exposing downloadable media, not search pages. "
