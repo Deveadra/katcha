@@ -145,3 +145,9 @@ def test_attempt_keeps_consumed_nonce_and_safe_private_receipt(monkeypatch, tmp_
 @pytest.mark.parametrize("output", ["[" * 1001 + "]" * 1001, " " * 16385, None])
 def test_success_attestation_rejects_oversized_or_deep_output_safely(output):
     assert poller().executor_attestation(0, output, SHA) is None
+
+
+@pytest.mark.parametrize("status", [[], {}, None, False])
+def test_success_attestation_rejects_nontext_status_safely(status):
+    output = json.dumps({"status": status, "sha": SHA})
+    assert poller().executor_attestation(0, output, SHA) is None

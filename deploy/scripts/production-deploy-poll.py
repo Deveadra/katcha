@@ -153,6 +153,7 @@ def executor_attestation(returncode: int, stdout: str, sha: str) -> str | None:
     except (ValueError, TypeError, RecursionError):
         return None
     if (not isinstance(outcome, dict) or outcome.get("sha") != sha
+        or not isinstance(outcome.get("status"), str)
         or outcome.get("status") not in {"DEPLOYED", "ALREADY_CURRENT"}):
         return None
     return outcome["status"]
@@ -240,7 +241,7 @@ def attempt(request: dict[str, Any]) -> str:
         done = subprocess.run(
             [str(EXECUTOR), request["sha"], request["policy"],
              request["migration_policy"]],
-            capture_output=True, text=True, timeout=7200, check=False,
+            capture_output=True, text=True, errors="replace", timeout=7200, check=False,
         )
         # An executor's exit code cannot independently certify deployment.
         executor_status = executor_attestation(
