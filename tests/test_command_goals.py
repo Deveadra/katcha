@@ -961,3 +961,48 @@ async def test_cloudflare_native_channel_tool_is_authenticated_without_jwt(saved
         await run_native_tool(
             goal, "list_editorial_projects", {"path": {}, "query": {}}, uuid.uuid4()
         )
+
+
+def test_browser_failure_is_durable_error_not_a_successful_observation(saved):
+    goal = receipt(saved[0])
+    step_id = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(CommandGoalStep(
+            id=step_id, goal_id=goal.id, number=0,
+            decision={"tool": "browser_open_page", "arguments": {"url": "https://fixture.example"}},
+            status="planned", result={},
+        ))
+    result = {
+        "available": False, "code": "browser_network_budget_exhausted",
+        "outcome_uncertain": False,
+    }
+    goal_runner._save_result(goal.id, step_id, result)
+    with db.session_scope() as session:
+        step = session.get(CommandGoalStep, step_id)
+        current = session.get(CommandGoal, goal.id)
+        assert step.status == "observed"
+        assert step.error == "browser_network_budget_exhausted"
+        assert current.observations[-1]["error"] == step.error
+        assert current.observations[-1]["result"] == result
+
+
+def test_browser_budget_measurement_survives_goal_result_persistence(saved):
+    goal = receipt(saved[0])
+    step_id = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(CommandGoalStep(
+            id=step_id, goal_id=goal.id, number=0,
+            decision={"tool": "browser_snapshot", "arguments": {}},
+            status="planned", result={},
+        ))
+    receipt_data = {
+        "available": True, "scene_verified": False,
+        "research_budget": {"navigations_used": 3, "network_connects_used": 8},
+    }
+    goal_runner._save_result(goal.id, step_id, receipt_data)
+    with db.session_scope() as session:
+        step = session.get(CommandGoalStep, step_id)
+        current = session.get(CommandGoal, goal.id)
+        assert step.error is None
+        assert step.result["research_budget"]["navigations_used"] == 3
+        assert current.observations[-1]["result"] == receipt_data

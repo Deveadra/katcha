@@ -9,9 +9,16 @@ search candidates cannot be inspected.
 
 A channel-scoped ProjectMediaItem must reference an acquired video. Denied,
 restricted, revoked, expired and reference-only rights states block inspection.
-Inspection requires either the current channel's existing operator-upload
-permission (`permitted_use_confirmed`) or a matching latest production-eligible
-rights assessment and latest validated video acquisition. The latter route is
+Inspection requires either the current channel's existing Editorial operator-upload
+permission (`permitted_use_confirmed`), an original completed **Content page**
+file-upload receipt, or a matching latest production-eligible rights assessment
+and latest validated video acquisition. A Content upload is recognized only
+through a linked channel-scoped ContentItem and SourceItem, both ready, the
+matching canonical Clip, exact completed byte count, verified SHA-256, and
+retained operator rights confirmation/actor. The `local_file` source platform
+label or matching Clip hash alone is insufficient. Content receipt revocation
+blocks future indexing and reads; none of these pathways automatically grants
+production clearance. The latter route is
 conservative: it does not infer review permission from a provider URL.
 
 The service checks permission and canonical identity before storage access,
@@ -99,6 +106,19 @@ Deterministic acceptance uses generated three-color footage with cuts at 1 and
 understanding or production clearance.
 
 ## Editorial operator integration
+
+Before accepting a newly uploaded trailer as a golden real-footage fixture, use the
+[read-only R2 verification procedure](CONTENT_MEDIA_LIVE_VERIFICATION.md) for
+the exact Content ID or Editorial Source ID. It compares complete canonical
+bytes to the recorded SHA and video probe, but does not grant render rights,
+assert scene recognition or prove a real Remotion encode.
+
+To reuse a trailer uploaded through **Content**, first verify the Content
+record is `media_ready` with a Clip ID, then add that same Clip to the
+Editorial project's Media Bin. This creates a project reference without
+duplicating the media. Existing 200-MiB decoder intake limits remain: R2
+acceptance of a larger clip does not make it indexable. Check rights separately
+for inspection and production.
 
 Editorial → Assets → Project Media Bin → **Inspect acquired footage** indexes
 acquired canonical video with current inspection permission. Links and restricted,

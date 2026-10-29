@@ -26,6 +26,11 @@ from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
 from katcha.services.compilations import register_compilation_regeneration
+from katcha.services.operations_outcome_evidence import (
+    OutcomeRecord,
+    assess_publication_records,
+    assess_render_records,
+)
 from katcha.services.productions import register_regeneration
 from katcha.services.publications import retry_publication
 from katcha.services.short_episode_reviews import register_short_episode_regeneration
@@ -105,6 +110,43 @@ class OperationsWorkItem(BaseModel):
     href: str
     recovery_action: Literal["resume", "restart"] | None = None
     recovery_label: str | None = None
+
+
+class OperationsOutputMetrics(BaseModel):
+    """Channel-scoped observations, not proof of a live successful pipeline."""
+
+    channel_profile_id: uuid.UUID
+    generated_at: datetime
+    window_hours: int
+    since: datetime
+    render_attempt_records: int
+    render_attempts_marked_verified: int
+    render_attempts_dead_lettered: int
+    recorded_published_videos: int
+    failed_publication_records: int
+    analytics_snapshots_collected: int
+    youtube_connection_configured: bool
+    stale_production_candidates: int
+    stale_short_episode_candidates: int
+    remote_media_objects_verified: int | None = None
+    live_youtube_videos_verified: int | None = None
+    measurement_basis: Literal["durable_database_records_only"] = "durable_database_records_only"
+
+
+class OperationsOutcomeEvidence(BaseModel):
+    """Read-only record consistency. Does not verify provider/object existence."""
+
+    kind: Literal["production", "short_episode", "publication"]
+    source_id: uuid.UUID
+    assessment: Literal["unverified", "recorded", "corroborated", "inconsistent"]
+    evidence_codes: list[str]
+    missing_codes: list[str]
+    live_provider_checked: bool = False
+    business_recovery_verified: bool = False
+    limitation: str = (
+        "Database records only: Temporal completion, storage object existence, "
+        "live provider state, and safe replay have not been verified."
+    )
 
 
 class RecoverWorkRequest(BaseModel):
@@ -415,6 +457,207 @@ def _event_href(
     if event.aggregate_type == "channel_profile":
         return f"/channels?channel={channel_profile_id}"
     return None
+
+
+def _outcome_response(
+    kind: Literal["production", "short_episode", "publication"],
+    source_id: uuid.UUID,
+    evidence: OutcomeRecord,
+) -> OperationsOutcomeEvidence:
+    return OperationsOutcomeEvidence(
+        kind=kind,
+        source_id=source_id,
+        assessment=evidence.assessment,
+        evidence_codes=list(evidence.evidence_codes),
+        missing_codes=list(evidence.missing_codes),
+    )
+
+
+@router.get("/output-metrics", response_model=OperationsOutputMetrics)
+def operations_output_metrics(
+    http_request: Request,
+    channel_profile_id: uuid.UUID,
+    hours: int = Query(default=24, ge=1, le=168),
+) -> OperationsOutputMetrics:
+    """Bounded, read-only output throughput counters for one authorized channel."""
+    require_control_channel(http_request, channel_profile_id)
+    now = datetime.now(UTC)
+    since = now - timedelta(hours=hours)
+    stale_cutoff = now - timedelta(hours=24)
+    with session_scope() as session:
+        profile = session.get(ChannelProfile, channel_profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="channel profile not found")
+        youtube_connected = profile.youtube_connection_id is not None
+
+        def count(statement: object) -> int:
+            return int(session.scalar(statement) or 0)
+
+        render_scope = (
+            RenderAttempt.channel_profile_id == channel_profile_id,
+            RenderAttempt.created_at >= since,
+        )
+        total_renders = count(
+            select(func.count(RenderAttempt.id)).where(*render_scope)
+        )
+        recorded_renders = count(
+            select(func.count(RenderAttempt.id))
+            .where(*render_scope, RenderAttempt.status == "verified")
+        )
+        dead_letters = count(
+            select(func.count(RenderAttempt.id))
+            .where(*render_scope, RenderAttempt.status == "dead_letter")
+        )
+
+        published = 0
+        failed_publications = 0
+        analytics = 0
+        if profile.youtube_connection_id is not None:
+            pub_connection = Publication.youtube_connection_id == profile.youtube_connection_id
+            published = count(
+                select(func.count(Publication.id))
+                .where(
+                    pub_connection,
+                    Publication.status == "published",
+                    Publication.youtube_video_id.is_not(None),
+                    Publication.youtube_video_id != "",
+                    Publication.published_at >= since,
+                )
+            )
+            failed_publications = count(
+                select(func.count(Publication.id))
+                .where(
+                    pub_connection, Publication.created_at >= since,
+                    Publication.status == "failed",
+                )
+            )
+            analytics = count(
+                select(func.count(PublicationAnalyticsSnapshot.id))
+                .join(
+                    Publication,
+                    Publication.id == PublicationAnalyticsSnapshot.publication_id,
+                )
+                .where(
+                    pub_connection,
+                    PublicationAnalyticsSnapshot.sampled_at >= since,
+                )
+            )
+
+        production_stale = count(
+            select(func.count(Production.id)).where(
+                Production.channel_profile_id == channel_profile_id,
+                Production.status.in_(
+                    ("queued", "scripting", "voicing", "rendering")
+                ),
+                Production.updated_at < stale_cutoff,
+            )
+        )
+        episode_stale = count(
+            select(func.count(ShortEpisode.id)).where(
+                ShortEpisode.channel_profile_id == channel_profile_id,
+                ShortEpisode.status.in_(
+                    ("scripting", "voicing", "rendering")
+                ),
+                ShortEpisode.updated_at < stale_cutoff,
+            )
+        )
+    return OperationsOutputMetrics(
+        channel_profile_id=channel_profile_id,
+        generated_at=now,
+        window_hours=hours,
+        since=since,
+        render_attempt_records=total_renders,
+        render_attempts_marked_verified=recorded_renders,
+        render_attempts_dead_lettered=dead_letters,
+        recorded_published_videos=published,
+        failed_publication_records=failed_publications,
+        analytics_snapshots_collected=analytics,
+        youtube_connection_configured=youtube_connected,
+        stale_production_candidates=production_stale,
+        stale_short_episode_candidates=episode_stale,
+    )
+
+
+@router.get(
+    "/work/{kind}/{source_id}/outcome-evidence",
+    response_model=OperationsOutcomeEvidence,
+)
+def inspect_work_outcome(
+    kind: Literal["production", "short_episode", "publication"],
+    source_id: uuid.UUID,
+    http_request: Request,
+) -> OperationsOutcomeEvidence:
+    """Assess existing durable receipts without launching providers or mutations."""
+    with session_scope() as session:
+        if kind == "publication":
+            publication = session.get(Publication, source_id)
+            if publication is None:
+                raise HTTPException(status_code=404, detail="publication not found")
+            profile = session.scalar(
+                select(ChannelProfile).where(
+                    ChannelProfile.youtube_connection_id == publication.youtube_connection_id
+                )
+            )
+            if profile is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="publication channel ownership cannot be verified",
+                )
+            require_control_channel(http_request, profile.id)
+            last_sample = session.scalar(
+                select(PublicationAnalyticsSnapshot)
+                .where(PublicationAnalyticsSnapshot.publication_id == source_id)
+                .order_by(PublicationAnalyticsSnapshot.sampled_at.desc())
+                .limit(1)
+            )
+            return _outcome_response(
+                kind, source_id, assess_publication_records(publication, last_sample)
+            )
+
+        if kind == "production":
+            source = session.get(Production, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail="production not found")
+            if source.channel_profile_id is None:
+                raise HTTPException(
+                    status_code=409, detail="production channel ownership cannot be verified"
+                )
+            require_control_channel(http_request, source.channel_profile_id)
+            attempt_clause = RenderAttempt.production_id == source_id
+            asset = session.scalar(
+                select(ProductionAsset)
+                .where(
+                    ProductionAsset.production_id == source_id,
+                    ProductionAsset.kind == "render",
+                )
+                .order_by(ProductionAsset.generation.desc(), ProductionAsset.created_at.desc())
+                .limit(1)
+            )
+        else:
+            source = session.get(ShortEpisode, source_id)
+            if source is None:
+                raise HTTPException(status_code=404, detail="short episode not found")
+            require_control_channel(http_request, source.channel_profile_id)
+            attempt_clause = RenderAttempt.short_episode_id == source_id
+            asset = session.scalar(
+                select(ShortEpisodeAsset)
+                .where(
+                    ShortEpisodeAsset.short_episode_id == source_id,
+                    ShortEpisodeAsset.kind == "render",
+                )
+                .order_by(ShortEpisodeAsset.generation.desc(), ShortEpisodeAsset.created_at.desc())
+                .limit(1)
+            )
+
+        attempt = session.scalar(
+            select(RenderAttempt)
+            .where(attempt_clause)
+            .order_by(RenderAttempt.attempt_number.desc(), RenderAttempt.created_at.desc())
+            .limit(1)
+        )
+        return _outcome_response(
+            kind, source_id, assess_render_records(source, attempt, asset)
+        )
 
 
 @router.post(

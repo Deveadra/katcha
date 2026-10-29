@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
+from katcha.content_models import ContentItem
 from katcha.db import session_scope
 from katcha.editorial.media_intake.scene_schemas import SceneIndexV1, SearchShotsRequest
 from katcha.editorial.media_intake.scene_worker import MAX_RESULT_BYTES
@@ -62,13 +63,48 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
         ):
             raise EditorialConflict("Canonical media exceeds the indexing size budget or is absent")
         sources = list(session.scalars(select(SourceItem).where(SourceItem.clip_id == clip.id)))
-        owned = [
-            source
-            for source in sources
-            if source.platform == "upload"
-            and (source.source_metadata or {}).get("permitted_use_confirmed") is True
-            and str((source.source_metadata or {}).get("channel_profile_id")) == str(channel_id)
-        ]
+        # The Editorial uploader writes platform="upload"; the Content page
+        # writes platform="local_file". Both register canonical Clips, but
+        # Content uploads must prove their *completed* original receipt rather
+        # than trusting a source metadata string or an unrelated shared Clip.
+        owned = []
+        content_receipts: dict[uuid.UUID, ContentItem] = {}
+        for source in sources:
+            metadata = source.source_metadata or {}
+            if (
+                source.status != "ready"
+                or str(metadata.get("channel_profile_id")) != str(channel_id)
+            ):
+                continue
+            if source.platform == "upload":
+                if metadata.get("permitted_use_confirmed") is True:
+                    owned.append(source)
+                continue
+            if source.platform != "local_file":
+                continue
+            content = session.scalar(
+                select(ContentItem).where(
+                    ContentItem.source_id == source.id,
+                    ContentItem.clip_id == clip.id,
+                    ContentItem.channel_profile_id == channel_id,
+                    ContentItem.input_kind == "file",
+                    ContentItem.status == "ready",
+                )
+            )
+            if content is None:
+                continue
+            receipt = content.details or {}
+            if (
+                metadata.get("content_item_id") != str(content.id)
+                or receipt.get("rights_confirmed") is not True
+                or not str(receipt.get("rights_confirmed_by") or "").strip()
+                or receipt.get("verified_sha256") != clip.sha256
+                or content.size_bytes != clip.size_bytes
+                or content.upload_offset != clip.size_bytes
+            ):
+                continue
+            owned.append(source)
+            content_receipts[source.id] = content
         authority: tuple[str, ...]
         permission: dict[str, Any] = {"status": item.status, "rights": item.rights_status}
         if item.rights_assessment_id is not None:
@@ -139,8 +175,25 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
             authority = (f"rights:{assessment.id}", f"validation:{validation.id}")
         elif owned:
             permission["upload_evidence"] = sorted(str(source.id) for source in owned)
+            permission["content_receipts"] = [
+                {
+                    "content_id": str(content_receipts[source.id].id),
+                    "source_id": str(source.id),
+                    "verified_sha256": content_receipts[source.id].details["verified_sha256"],
+                    "rights_confirmed_by": (
+                        content_receipts[source.id].details["rights_confirmed_by"]
+                    ),
+                }
+                for source in sorted(owned, key=lambda row: str(row.id))
+                if source.id in content_receipts
+            ]
             authority = tuple(
-                f"upload:{source.id}" for source in sorted(owned, key=lambda row: str(row.id))
+                ref
+                for source in sorted(owned, key=lambda row: str(row.id))
+                for ref in (
+                    (f"upload:{source.id}", f"content:{content_receipts[source.id].id}")
+                    if source.id in content_receipts else (f"upload:{source.id}",)
+                )
             )
         else:
             raise EditorialConflict(

@@ -4,6 +4,7 @@ const state = {
     allChannels: [],
     overview: null,
     loading: false,
+    metricsSequence: 0,
 };
 
 function escapeHTML(value) {
@@ -186,6 +187,11 @@ function renderWork(items, hostId, stateClass) {
                         '</button>'
                     : '') +
                 '<a href="' + escapeHTML(row.href) + '">Open</a>' +
+                (["production", "short_episode", "publication"].includes(row.kind)
+                    ? '<button type="button" class="ops-secondary" data-outcome-kind="' +
+                        escapeHTML(row.kind) + '" data-outcome-id="' +
+                        escapeHTML(row.id) + '">Check evidence</button>'
+                    : '') +
                 '<a href="' + escapeHTML(askHref(row)) + '">Ask Katcha ✦</a></div>' +
         '</article>';
     }).join("");
@@ -363,6 +369,43 @@ function syncChannelFilter(channels, selected = "") {
     $("channel-filter").disabled = false;
 }
 
+async function loadOutputMetrics(channelId) {
+    const host = $("output-metrics");
+    const requestId = ++state.metricsSequence;
+    if (!channelId) {
+        host.textContent = "Choose one channel to inspect its stored output records.";
+        return;
+    }
+    host.textContent = "Loading channel output evidence…";
+    try {
+        const metrics = await api(
+            "/v1/operations/output-metrics?channel_profile_id=" +
+            encodeURIComponent(channelId) + "&hours=48",
+        );
+        if (requestId !== state.metricsSequence) return;
+        host.textContent =
+            "Last 48 hours: " +
+            compactNumber(metrics.render_attempts_marked_verified) + " verified render-attempt records / " +
+            compactNumber(metrics.render_attempt_records) + " attempts, " +
+            compactNumber(metrics.render_attempts_dead_lettered) + " dead-lettered; " +
+            compactNumber(metrics.recorded_published_videos) + " recorded publications, " +
+            compactNumber(metrics.failed_publication_records) + " failed publications, " +
+            compactNumber(metrics.analytics_snapshots_collected) + " analytics snapshots. " +
+            "Stale processing candidates: " +
+            compactNumber(
+                Number(metrics.stale_production_candidates || 0) +
+                Number(metrics.stale_short_episode_candidates || 0)
+            ) + ". " +
+            (metrics.youtube_connection_configured
+                ? "" : "No YouTube connection configured. ") +
+            "Database records only; remote object existence and live YouTube status are unverified.";
+    } catch {
+        if (requestId !== state.metricsSequence) return;
+        host.textContent =
+            "Output evidence unavailable. No conclusion about pipeline health can be drawn.";
+    }
+}
+
 async function loadOperationsHealth() {
     const button = $("health-refresh");
     button.disabled = true;
@@ -468,6 +511,7 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
         if (!channelId || !state.allChannels.length) syncChannelFilter(payload.channels, channelId);
         else syncChannelFilter([], channelId);
         renderOverview(payload);
+        void loadOutputMetrics(channelId);
         void loadAiReadiness();
         void loadOperationsHealth();
         setStatus(
@@ -541,6 +585,39 @@ async function launcherConnect() {
     }
 }
 
+async function inspectOutcome(event) {
+    const button = event.target.closest("[data-outcome-kind][data-outcome-id]");
+    if (!button) return;
+    const card = button.closest(".ops-row");
+    if (!card) return;
+    let note = card.querySelector(".ops-outcome-note");
+    if (!note) {
+        note = document.createElement("p");
+        note.className = "ops-outcome-note";
+        note.setAttribute("role", "status");
+        card.append(note);
+    }
+    button.disabled = true;
+    note.textContent = "Checking durable outcome records…";
+    try {
+        const record = await api(
+            "/v1/operations/work/" + encodeURIComponent(button.dataset.outcomeKind) +
+            "/" + encodeURIComponent(button.dataset.outcomeId) + "/outcome-evidence",
+        );
+        const evidence = Array.isArray(record.evidence_codes) ? record.evidence_codes : [];
+        const missing = Array.isArray(record.missing_codes) ? record.missing_codes : [];
+        note.textContent =
+            "Recorded outcome: " + friendly(record.assessment) + ". " +
+            "Evidence: " + (evidence.map(friendly).join(", ") || "none") + ". " +
+            "Missing or conflicting: " + (missing.map(friendly).join(", ") || "none") + ". " +
+            "Live provider and business recovery not verified.";
+    } catch {
+        note.textContent = "Outcome evidence unavailable. Do not interpret this as success.";
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function recoverWork(event) {
     const button = event.target.closest("[data-recover-kind][data-recover-id]");
     if (!button) return;
@@ -577,9 +654,11 @@ $("connect-form").addEventListener("submit", connect);
 $("refresh").addEventListener("click", () => loadOverview($("channel-filter").value));
 $("attention-list").addEventListener("click", recoverWork);
 $("active-list").addEventListener("click", recoverWork);
+$("attention-list").addEventListener("click", inspectOutcome);
+$("active-list").addEventListener("click", inspectOutcome);
 function navigateCard(event) {
     const card = event.target.closest(".ops-row[data-card-href]");
-    if (!card || event.target.closest("a, button, input, select, textarea")) return;
+    if (!card || event.target.closest("a, button, input, select, textarea, .ops-outcome-note")) return;
     if (event.type === "keydown" && (event.target !== card || !["Enter", " "].includes(event.key))) return;
     if (event.type === "keydown") event.preventDefault();
     const href = card.dataset.cardHref;

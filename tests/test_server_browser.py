@@ -162,3 +162,62 @@ async def test_real_private_navigation_rejected_and_stale_refs_do_not_act(real_p
         await pool.execute(scope, browser.BrowserAction(action="type", text="wrong page"))
     with pytest.raises(ValueError, match="non-public"):
         await pool.execute(scope, browser.BrowserAction(action="open", url="https://127.0.0.1/"))
+
+
+async def test_real_chromium_cannot_exceed_navigation_budget(monkeypatch, real_pool):
+    pool, _ = real_pool
+    monkeypatch.setattr(browser, "MAX_BROWSER_NAVIGATIONS", 1)
+    key = ("actor", "channel", "bounded-goal")
+    first = await pool.execute(
+        key, browser.BrowserAction(action="open", url="https://fixture.test/")
+    )
+    assert first["research_budget"]["navigations_used"] == 1
+    assert first["research_budget"]["navigations_remaining"] == 0
+    with pytest.raises(ValueError, match="navigation limit reached"):
+        await pool.execute(
+            key, browser.BrowserAction(action="open", url="https://fixture.test/next")
+        )
+    assert pool.sessions[key].navigation_budget_exhausted is True
+
+
+async def test_real_acquisition_browser_exports_only_its_own_session(real_pool, tmp_path):
+    """Actual Chromium sign-in fixture feeds the acquisition retry cookie format."""
+    import http.cookiejar
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.acquisition.human_browser import HumanBrowser
+
+    pool, _ = real_pool
+    human = HumanBrowser.__new__(HumanBrowser)
+    human.pool = pool
+    human.loop = asyncio.get_running_loop()
+    permission = {
+        "provider": "fixture", "operations": ["download"], "allowed_hosts": ["fixture.test"],
+        "evidence_scope": "local synthetic browser test", "evidence_refs": ["fixture:authorized"],
+        "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    }
+
+    async def act(action):
+        return await asyncio.to_thread(human.execute, "channel", "original-job", action,
+                                       "https://fixture.test/", permission)
+
+    opened = await act({"action": "open"})
+    assert opened["available"]
+    filled = await act({"action": "fill", "ref": control(opened, "Name"), "text": "Operator"})
+    signed = await act({"action": "click", "ref": control(filled, "Sign in")})
+    assert "Hello Operator" in signed["text"]
+    destination = tmp_path / "human-session.cookies"
+    agent = await asyncio.to_thread(human.export_cookies, "channel", "original-job",
+                                    permission, destination)
+    assert agent and destination.stat().st_mode & 0o077 == 0
+    jar = http.cookiejar.MozillaCookieJar(str(destination))
+    jar.load(ignore_discard=True)
+    assert [(cookie.name, cookie.value) for cookie in jar] == [("session", "ok")]
+    with pytest.raises(ValueError, match="expired"):
+        await asyncio.to_thread(human.export_cookies, "channel", "different-job",
+                                permission, tmp_path / "other.cookies")
+    assert not (tmp_path / "other.cookies").exists()
+    await asyncio.to_thread(human.close, "channel", "original-job")
+    with pytest.raises(ValueError, match="expired"):
+        await asyncio.to_thread(human.export_cookies, "channel", "original-job",
+                                permission, tmp_path / "closed.cookies")

@@ -10,7 +10,11 @@ from sqlalchemy import func, select
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import ReviewDecision
-from katcha.integrations.telegram import TelegramAPIError, TelegramBotClient
+from katcha.integrations.telegram import (
+    TelegramAPIError,
+    TelegramBotClient,
+    redact_telegram_secrets,
+)
 from katcha.models import DomainEvent
 from katcha.orchestration.client import (
     start_longform_workflow,
@@ -18,6 +22,7 @@ from katcha.orchestration.client import (
     start_publication_workflow,
     start_short_episode_editorial_workflow,
 )
+from katcha.services.acquisition_notifications import deliver_pending_acquisition_notifications
 from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
@@ -48,6 +53,33 @@ from katcha.telegram_models import TelegramBotCursor, TelegramReviewSession
 
 LOGGER = logging.getLogger("katcha.telegram")
 _CURSOR_KEY = "operator-bot"
+
+
+class _TelegramSafeFormatter(logging.Formatter):
+    """Redact secrets even when they occur inside formatted tracebacks."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_telegram_secrets(super().format(record))
+
+
+def _configure_logging(settings: Settings) -> None:
+    # This is a dedicated worker process. Use a single sanitized root handler
+    # so even an HTTP exception traceback cannot print the bot credential.
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(
+            _TelegramSafeFormatter(
+                "%(asctime)s %(levelname)s %(name)s %(message)s"
+            )
+        )
+    # HTTPX normally prints the entire Bot API URL on every successful poll.
+    # Preserve WARNING/ERROR diagnostics; the shared filter redacts those.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _authorized(
@@ -713,10 +745,7 @@ async def _handle_update(
 
 async def main() -> None:
     settings = get_settings()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    _configure_logging(settings)
     if not settings.telegram_enabled:
         LOGGER.info(
             "Telegram worker is dormant; set KATCHA_TELEGRAM_ENABLED=true to enable it"
@@ -755,6 +784,12 @@ async def main() -> None:
 
     while True:
         try:
+            try:
+                await asyncio.to_thread(deliver_pending_acquisition_notifications, client, settings)
+            except Exception as exc:
+                # Acquisition rollout/DB failures must not stop existing review delivery.
+                # No raw exception: upstream messages may contain private request context.
+                LOGGER.warning("Acquisition notification scan failed type=%s", type(exc).__name__)
             await _deliver_pending(client, settings)
             updates = await asyncio.to_thread(
                 client.get_updates,
