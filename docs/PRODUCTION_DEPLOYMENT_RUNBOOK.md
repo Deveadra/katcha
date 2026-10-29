@@ -377,3 +377,10 @@ Observer output in journald is not itself a push notification. Keep the
 production deployment gate and deployment timer disabled between explicitly
 approved releases. Automatic image publication and observer checks do not
 authorize schema changes or restarting Temporal workflows.
+
+## Reviewed acquisition recovery migration0067
+
+For a release moving a verified0066 database to0067, use the bounded
+[`approve-additive-through-0067` review](PRODUCTION_0067_MIGRATION_REVIEW.md).
+This adds the two recovery tables and expands acquisition status; it preserves
+all existing signing, Temporal drain, backup/restore and exact-release gates.
