@@ -24,8 +24,9 @@ from katcha.editorial.images import normalize_image
 from katcha.editorial.media_intake.transport import PublicDestinationTransport
 from katcha.integrations.storage import ObjectStore
 from katcha.production_models import Production, ProductionAsset
-from katcha.rendering.blueprint_manifest import BlueprintMemeEvent
+from katcha.rendering.blueprint_manifest import BlueprintMemeEvent, validate_meme_additions
 from katcha.runtime_fence import assert_mutation_authority
+from katcha.services.production_meme_plan import plan_memes
 
 MAX_BYTES = 24 * 1024 * 1024
 
@@ -116,7 +117,11 @@ class _MediaLinks(HTMLParser):
             kind = declared or _media_extension(url)
             if kind == medium:
                 preferred.append(url)
-            elif not kind or (medium == "audio" and kind == "video"):
+            elif (
+                not kind
+                or (medium == "audio" and kind == "video")
+                or (medium == "video" and Path(urlsplit(url).path).suffix.lower() == ".gif")
+            ):
                 unknown.append(url)
         return list(dict.fromkeys([*preferred, *unknown]))[:8]
 
@@ -185,12 +190,17 @@ def download_meme(url: str, medium: str, max_seconds: float) -> tuple[bytes, str
 
 
 def _normalize(data, content_type, medium, max_seconds, resolved):
+    binary = content_type in {"application/octet-stream", "application/ogg", "application/mp4"}
     if medium == "image":
-        if not content_type.startswith("image/"):
+        if not (content_type.startswith("image/") or binary):
             raise ValueError("Search result did not provide an image")
         encoded, _, _ = normalize_image(data)
         return encoded, "image/png", max_seconds, resolved
-    if not content_type.startswith(("audio/", "video/")):
+    if not (
+        content_type.startswith(("audio/", "video/"))
+        or binary
+        or (medium == "video" and content_type == "image/gif")
+    ):
         raise ValueError("Search result did not provide audio or video")
     with tempfile.TemporaryDirectory(prefix="katcha-meme-") as directory:
         source = Path(directory) / "source.media"
@@ -290,6 +300,7 @@ def meme_events_for_production(session, production, store) -> list[BlueprintMeme
 
 
 def prepare_production_memes(production_id: str) -> dict:
+    assert_mutation_authority("production.meme.prepare")
     identity = uuid.UUID(production_id)
     with session_scope() as session:
         production = session.get(Production, identity)
@@ -333,24 +344,35 @@ def prepare_production_memes(production_id: str) -> dict:
                 asset_metadata={"status": "searching", "rights_status": "not_assessed"},
             )
         )
-    assert_mutation_authority("production.meme.prepare")
     events = []
     failures = []
+    evidence = {}
     store = ObjectStore()
     try:
         adapter = WebScoutDiscoveryAdapter()
-        for medium, phrase in (
-            ("audio", "meme soundbit sound effect"),
-            ("image", "meme reaction image"),
-            ("video", "short reaction meme video"),
-        ):
+        if blueprint.meme.require_grounded_plan:
+            plan, evidence = plan_memes(store, clip, production, blueprint, duration)
+            with session_scope() as session:
+                receipt = session.get(ProductionAsset, receipt_id)
+                receipt.asset_metadata = {**receipt.asset_metadata, "planning": evidence}
+            requests = [(beat.kind, beat.search_query, beat) for beat in plan.beats]
+        else:
+            requests = [
+                (medium, phrase, None)
+                for medium, phrase in (
+                    ("audio", "meme soundbit sound effect"),
+                    ("image", "meme reaction image"),
+                    ("video", "short reaction meme video"),
+                )
+            ]
+        for beat_index, (medium, phrase, beat) in enumerate(requests):
             if len(events) >= blueprint.meme.max_assets:
                 break
             batch = adapter.discover(
                 {
                     "channel_profile_id": str(production.channel_profile_id),
-                    "reservation_key": f"meme:{identity}:{generation}:{medium}",
-                    "operator_request": f"Find a directly downloadable {phrase} "
+                    "reservation_key": f"meme:{identity}:{generation}:{beat_index}:{medium}",
+                    "operator_request": f"Find directly downloadable {medium} media for: {phrase}. "
                     "that fits this clip. "
                     "Prefer original sources with clear license information. Return concrete asset "
                     "URLs or pages exposing downloadable media, not search pages. "
@@ -362,7 +384,10 @@ def prepare_production_memes(production_id: str) -> dict:
             )
             for candidate in batch.items[:3]:
                 try:
-                    seconds = min(blueprint.meme.max_asset_seconds, duration)
+                    seconds = min(
+                        beat.duration_seconds if beat else blueprint.meme.max_asset_seconds,
+                        duration,
+                    )
                     data, mime, seconds, media_url = download_meme(
                         candidate.source_url, medium, seconds
                     )
@@ -371,7 +396,11 @@ def prepare_production_memes(production_id: str) -> dict:
                     key = f"productions/{identity}/meme/{generation}/{digest}.{extension}"
                     store.put_bytes(data, key, content_type=mime)
                     # Spread brief accents through the clip; this is timing, not a semantic claim.
-                    start = min(duration * (0.25 + len(events) * 0.25), duration - seconds)
+                    start = (
+                        evidence["frame_times"][beat.frame_index]
+                        if beat
+                        else min(duration * (0.25 + len(events) * 0.25), duration - seconds)
+                    )
                     event = BlueprintMemeEvent(
                         id=f"meme-{len(events)}",
                         kind=medium,
@@ -380,7 +409,8 @@ def prepare_production_memes(production_id: str) -> dict:
                         title=(candidate.title or phrase)[:300],
                         start_seconds=max(0, start),
                         duration_seconds=seconds,
-                        volume=0.55,
+                        volume=0.7 if beat else 0.55,
+                        caption=beat.caption if beat else "",
                     )
                     with session_scope() as session:
                         session.add(
@@ -397,22 +427,34 @@ def prepare_production_memes(production_id: str) -> dict:
                                     "sha256": digest,
                                     "media_url": media_url,
                                     "rights_status": "not_assessed",
-                                    "timing_basis": "spaced_accents",
+                                    "timing_basis": "observed_source_frame"
+                                    if beat
+                                    else "spaced_accents",
+                                    "beat_index": beat_index,
+                                    "observed_frame": beat.model_dump(mode="json")
+                                    if beat
+                                    else None,
                                 },
                             )
                         )
                     events.append(event)
                     break
                 except (ValueError, httpx.HTTPError, subprocess.SubprocessError) as exc:
-                    failures.append(f"{medium}: {type(exc).__name__}: {str(exc)[:200]}")
+                    failures.append(f"beat {beat_index} {medium}: {type(exc).__name__}")
         if not events:
             raise RuntimeError(
                 "Meme additions could not be completed: searches returned no usable "
                 "downloadable soundbit, reaction image, or meme video"
             )
+        validate_meme_additions(events, blueprint.meme, duration)
+        if blueprint.meme.require_grounded_plan and not any(
+            abs(event.start_seconds - evidence["frame_times"][0]) < 0.001 for event in events
+        ):
+            raise ValueError("The planned early meme hook could not be downloaded")
         with session_scope() as session:
             receipt = session.get(ProductionAsset, receipt_id)
             receipt.asset_metadata = {
+                "planning": evidence,
                 "status": "completed",
                 "assets": len(events),
                 "failures": failures,
@@ -424,7 +466,8 @@ def prepare_production_memes(production_id: str) -> dict:
             receipt = session.get(ProductionAsset, receipt_id)
             receipt.asset_metadata = {
                 "status": "failed",
-                "error": str(exc)[:1000],
+                "planning": evidence,
+                "error": f"Meme preparation failed ({type(exc).__name__}); check beat results",
                 "failures": failures,
                 "rights_status": "not_assessed",
             }
