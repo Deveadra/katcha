@@ -10,7 +10,7 @@ The policy admits only the added, immutable 0067 migration and the exact reviewe
 `migrations/env.py` change importing Telegram models. It verifies the 0064–0066
 migration blobs as well. Modified migration files, unknown revisions, additional
 Alembic changes, missing artifacts, and a database below the verified 0066 schema
-remain blocked. Use `--plan EXACT_SHA` to inspect the release without changing it.
+remain blocked. Use `--plan-release EXACT_SHA` to inspect the release without changing it.
 
 The preflight verifies the existing job/transfer schema and absence of both new
 recovery tables. The existing deployer then requires a fresh backup, a successful
