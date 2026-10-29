@@ -204,8 +204,8 @@ jobs:
           pip install -e '.[media]'
           pytest -q tests/test_media_decode.py
 
-      - name: Install PostgreSQL recovery test tools
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install PostgreSQL recovery and media test tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client ffmpeg
 
       - name: Test manual content recovery first
         env:
