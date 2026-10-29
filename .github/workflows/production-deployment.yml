@@ -33,7 +33,7 @@ on:
         required: true
         default: refuse
         type: choice
-        options: [refuse, approve-additive-0064, approve-additive-through-0065, approve-additive-through-0066]
+        options: [refuse, approve-additive-0064, approve-additive-through-0065, approve-additive-through-0066, approve-additive-through-0067]
       confirmation:
         description: Type DEPLOY KATCHA PRODUCTION
         required: true
@@ -65,7 +65,7 @@ jobs:
           bash -n deploy/scripts/install-production-deployer.sh
           bash -n scripts/check-production-deployment-github.sh
           # Isolated contract tests need only pytest, not app-wide SQLAlchemy fixtures.
-          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_github_auth_preflight.py tests/test_production_deploy_notifications.py
+          python -m pytest --noconftest -q tests/test_production_deploy.py tests/test_production_deploy_0067.py tests/test_production_github_auth_preflight.py tests/test_production_deploy_notifications.py
 
   preflight:
     if: github.event_name == 'workflow_dispatch'
@@ -202,7 +202,7 @@ jobs:
             if (!["refuse", "approved-resume"].includes(policy)) {
               throw new Error("GITHUB_DEPLOY_WORKFLOW_POLICY_INVALID");
             }
-            if (!["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066"].includes(migrationPolicy)) {
+            if (!["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066", "approve-additive-through-0067"].includes(migrationPolicy)) {
               throw new Error("GITHUB_DEPLOY_MIGRATION_POLICY_INVALID");
             }
             if (context.ref !== "refs/heads/main") {
