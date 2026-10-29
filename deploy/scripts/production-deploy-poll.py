@@ -146,11 +146,11 @@ def secure_receipts() -> None:
 
 def executor_attestation(returncode: int, stdout: str, sha: str) -> str | None:
     """A zero exit code is not evidence of a successfully deployed release."""
-    if returncode != 0:
+    if returncode != 0 or not isinstance(stdout, str) or len(stdout) > 16384:
         return None
     try:
         outcome = json.loads(stdout)
-    except ValueError:
+    except (ValueError, TypeError, RecursionError):
         return None
     if (not isinstance(outcome, dict) or outcome.get("sha") != sha
         or outcome.get("status") not in {"DEPLOYED", "ALREADY_CURRENT"}):

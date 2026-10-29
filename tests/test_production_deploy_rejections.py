@@ -140,3 +140,8 @@ def test_attempt_keeps_consumed_nonce_and_safe_private_receipt(monkeypatch, tmp_
         )
     assert app.attempt(request) == "ALREADY_CONSUMED"
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("output", ["[" * 1001 + "]" * 1001, " " * 16385, None])
+def test_success_attestation_rejects_oversized_or_deep_output_safely(output):
+    assert poller().executor_attestation(0, output, SHA) is None
