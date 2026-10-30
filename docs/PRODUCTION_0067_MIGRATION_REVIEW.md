@@ -32,3 +32,15 @@ exact image provenance remain required. A migration-bearing deployment is
 forward-only once cutover begins: failed postflight requires supervised forward
 repair, never restarting an old image or downgrading a populated recovery table.
 This policy is a reviewed capability, not authorization to deploy any release.
+
+If an executor attempt is rejected before a deployment audit directory exists,
+inspect its root-private `requests/nonce-<nonce>.json` receipt under
+`/srv/katcha/deployments`. Updated tooling records a controlled `diagnostic`
+with a fixed code, operation and explanation. For example, `HOST_DISK_FULL`
+with `docker.pull` identifies capacity failure while staging an immutable image.
+Raw process output, command arguments, environment and signed request payloads
+are excluded. Unknown/legacy executor output remains
+`EXECUTOR_REJECTION_UNCLASSIFIED`; a zero exit without exact-release success
+attestation remains `EXECUTOR_OUTPUT_UNVERIFIED`. The consumed request stays
+consumed; diagnosis never grants permission to replay it. Review and correct the
+specific failure before requesting a new signed attempt.

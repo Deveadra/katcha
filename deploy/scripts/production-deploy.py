@@ -92,6 +92,12 @@ IMAGE_FOR_SERVICE = {
 class Blocked(RuntimeError):
     """Reject an unsafe deployment without exposing host credentials."""
 
+    def __init__(self, message: str, *, code: str = "DEPLOYMENT_GUARD_REJECTED",
+                 operation: str = "unknown"):
+        super().__init__(message)
+        self.code = code
+        self.operation = operation
+
 
 # The root-installed independent verifier produces these exact, controlled
 # rejection reasons. Never surface its raw stdout/stderr: unexpected output,
@@ -133,13 +139,40 @@ SAFE_RELEASE_VERIFIER_REASONS = frozenset({
 })
 
 
+
+def safe_host_operation(args: tuple[str, ...]) -> str:
+    """Emit a fixed operation name, never a command argument, URL or path."""
+    if not args:
+        return "unknown"
+    if args[0] == "docker":
+        return "docker." + (args[1] if len(args) > 1 and args[1] in {
+            "pull", "inspect", "exec", "ps", "run", "image",
+        } else "other")
+    return args[0] if args[0] in {"git", "systemctl", "mountpoint", "python3"} else "host.other"
+
+
+def rejection_diagnostic(exc: Exception) -> dict[str, str]:
+    """Serialize only controlled metadata; exception messages stay out of receipts."""
+    if isinstance(exc, Blocked):
+        exact_guards = {
+            "Temporal has pending activities or tasks; drain required": "TEMPORAL_DRAIN_REQUIRED",
+            "another production deployment is active": "DEPLOYMENT_LOCKED",
+            "production deployment is not enabled locally": "DEPLOYMENT_NOT_AUTHORIZED",
+            "production deployment authorization disabled": "DEPLOYMENT_NOT_AUTHORIZED",
+            "independent release verifier rejected evidence without a safe reason":
+                "RELEASE_EVIDENCE_REJECTED",
+        }
+        return {"code": exact_guards.get(str(exc), exc.code), "operation": exc.operation}
+    return {"code": "EXECUTOR_ERROR", "operation": "unknown"}
+
 def run(*args: str, timeout: int = 30, release_verifier: bool = False) -> str:
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         if release_verifier:
             raise Blocked("independent release verifier failed to start or timed out") from exc
-        raise Blocked("host operation failed or timed out") from exc
+        raise Blocked("host operation failed or timed out",
+                      code="HOST_OPERATION_TIMEOUT", operation=safe_host_operation(args)) from exc
     if proc.returncode != 0:
         if release_verifier and len(proc.stdout) <= 4096:
             try:
@@ -156,7 +189,13 @@ def run(*args: str, timeout: int = 30, release_verifier: bool = False) -> str:
                 raise Blocked("independent release verifier blocked: " + detail["reason"])
         if release_verifier:
             raise Blocked("independent release verifier rejected evidence without a safe reason")
-        raise Blocked("host operation did not succeed: " + args[0])
+        code = "HOST_OPERATION_FAILED"
+        # Only classify bounded output into fixed codes; never retain process output.
+        if (isinstance(proc.stderr, str) and len(proc.stderr) <= 8192
+            and "no space left on device" in proc.stderr.lower()):
+            code = "HOST_DISK_FULL"
+        raise Blocked("host operation did not succeed: " + args[0],
+                      code=code, operation=safe_host_operation(args))
     if len(proc.stdout) > 1_000_000:
         raise Blocked("host operation output unexpectedly large")
     return proc.stdout.strip()
@@ -1596,6 +1635,9 @@ def main() -> int:
                 raise Blocked("another production deployment is active") from exc
             result = deploy(sys.argv[1], sys.argv[2], sys.argv[3])
     except (Blocked, OSError, ValueError, KeyError) as exc:
+        print(json.dumps({"status": "BLOCKED",
+                          "sha": sys.argv[1] if SHA.fullmatch(sys.argv[1]) else None,
+                          "diagnostic": rejection_diagnostic(exc)}, sort_keys=True))
         print("DEPLOY_BLOCKED: " + str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True))
