@@ -10,6 +10,8 @@ on:
       - tests/test_cloud_runtime_contract.py
       - tests/test_control_auth.py
       - tests/test_cloudflare_edge.py
+      - src/katcha/acquisition/worker.py
+      - tests/test_acquisition_access_preflight.py
   push:
     branches: [main]
     paths:
@@ -42,8 +44,9 @@ jobs:
 
       - name: Validate application and edge policy contracts
         run: |
-          python -m py_compile src/katcha/ops/cloudflare_edge.py
+          python -m py_compile src/katcha/ops/cloudflare_edge.py src/katcha/acquisition/worker.py
           pytest -q \
+            tests/test_acquisition_access_preflight.py \
             tests/test_control_auth.py \
             tests/test_cloud_runtime_contract.py \
             tests/test_cloudflare_edge.py
