@@ -34,6 +34,28 @@ class LeaseLost(Exception):
     pass
 
 
+def _control_refusal_reason(response: httpx.Response) -> str:
+    """Classify a refusal without exposing response bodies or credentials.
+
+    A normal Cloudflare proxy response may include cf-ray even when the API
+    itself denied access, so that header alone cannot identify the rejecting
+    layer. A FastAPI-style JSON detail is evidence of an application denial.
+    All other denials remain explicitly unclassified.
+    """
+    status = response.status_code
+    if status not in {401, 403}:
+        return f"control_http_{status}"
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+    if content_type == "application/json":
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and "detail" in body:
+            return f"katcha_principal_http_{status}"
+    return f"edge_or_unclassified_http_{status}"
+
+
 class Journal:
     def __init__(self, directory: Path, channel: str, job_id: str):
         self.directory = directory / str(uuid.UUID(channel)) / str(uuid.UUID(job_id))
@@ -145,20 +167,31 @@ class Worker:
                     method, self.api_url + path, json=payload, headers=self.headers
                 )
                 if response.is_redirect:
-                    raise LeaseLost(
-                        "Control origin redirected; configure API Access service credentials"
-                    )
+                    raise LeaseLost("edge_or_unclassified_redirect")
                 if response.status_code in {401, 403, 404, 409, 410}:
-                    raise LeaseLost(f"Control request refused ({response.status_code})")
+                    raise LeaseLost(_control_refusal_reason(response))
                 if response.status_code >= 500:
                     response.raise_for_status()
                 response.raise_for_status()
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError:
+                    raise LeaseLost("control_non_json_response") from None
             except (httpx.TransportError, httpx.HTTPStatusError):
                 if attempt == 2:
                     raise
                 time.sleep(attempt + 1)
         raise RuntimeError("Unreachable retry state")
+
+    def check_authentication(self) -> None:
+        """Read-only edge and narrowly scoped principal proof; no claims or uploads."""
+        health = self.request("GET", "/v1/health/live")
+        if not isinstance(health, dict) or health.get("status") != "ok" or health.get("service") != "katcha":
+            raise LeaseLost("control_health_unexpected_response")
+        for channel in self.channels:
+            jobs = self.request("GET", self.root(channel) + "?status=queued&limit=1")
+            if not isinstance(jobs, list):
+                raise LeaseLost("worker_principal_unexpected_response")
 
     @staticmethod
     def root(channel):
@@ -654,6 +687,10 @@ def sha256_file(path):
 def main():
     parser = argparse.ArgumentParser(description="Channel-scoped Katcha acquisition worker")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--check-auth", action="store_true",
+        help="Check live API edge and channel-scoped authorization without claiming work",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     # httpx request logs include signed source/storage URLs. Keep them private.
@@ -688,18 +725,33 @@ def main():
             else None
         ),
     )
+    if args.check_auth:
+        try:
+            worker.check_authentication()
+        except LeaseLost as exc:
+            log.error("Acquisition authentication check failed reason=%s", exc)
+            return 1
+        except httpx.HTTPError:
+            log.error("Acquisition authentication check failed reason=control_transport_error")
+            return 1
+        log.info("Acquisition authentication check passed channels=%d", len(worker.channels))
+        return 0
     lock = (worker.state_dir / "worker.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     while True:
         try:
             worker.once()
+        except LeaseLost as exc:
+            # LeaseLost reasons are fixed safe codes, not upstream text.
+            log.error("Worker pass blocked reason=%s", exc)
         except Exception as exc:
             # No exception message: upstream exceptions can contain bearer/signed URLs.
             log.error("Worker pass interrupted type=%s", type(exc).__name__)
         if args.once:
             break
         time.sleep(5)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
