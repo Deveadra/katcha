@@ -10,6 +10,8 @@ on:
       - tests/test_cloud_runtime_contract.py
       - tests/test_control_auth.py
       - tests/test_cloudflare_edge.py
+      - src/katcha/acquisition/worker.py
+      - tests/test_acquisition_access_preflight.py
   push:
     branches: [main]
     paths:
