@@ -69,7 +69,7 @@ def test_search_download_receipt_manifest_and_retry_reuse(research_db, monkeypat
     monkeypatch.setattr(
         memes,
         "download_meme",
-        lambda url, medium, seconds: (
+        lambda url, medium, seconds, **kwargs: (
             medium.encode(),
             {"image": "image/png", "audio": "audio/wav", "video": "video/mp4"}[medium],
             seconds,
@@ -393,7 +393,7 @@ def test_grounded_remix_requires_downloaded_beats_before_completion(
         ),
     )
 
-    def download(url, medium, seconds):
+    def download(url, medium, seconds, **kwargs):
         if fail_visuals and medium != "audio":
             raise ValueError("Unavailable asset https://example.com/private?token=secret")
         return medium.encode(), f"{medium}/fixture", seconds, url

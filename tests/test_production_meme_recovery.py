@@ -84,7 +84,7 @@ def test_failed_and_short_candidates_research_once_with_durable_evidence(researc
             )
         )
 
-    def download(url, medium, seconds):
+    def download(url, medium, seconds, *, minimum_seconds=0):
         attempt = receipt(production)["search_attempts"][-1]
         assert attempt["candidates"][0]["status"] == "downloading"
         downloads.append(url)
@@ -94,6 +94,7 @@ def test_failed_and_short_candidates_research_once_with_durable_evidence(researc
                 "private-secret", request=response.request, response=response
             )
         actual = 1.25 if "/bad/1" in url else seconds
+        assert minimum_seconds == 4
         return url.encode(), f"{medium}/fixture", actual, url
 
     monkeypatch.setattr(
@@ -143,7 +144,7 @@ def test_exhaustion_is_bounded_and_retains_failed_candidate_evidence(research_db
             )
         )
 
-    def download(url, *args):
+    def download(url, *args, **kwargs):
         downloads.append(url)
         raise ValueError("Never persist arbitrary exception text with secret=exposed")
 
@@ -201,6 +202,38 @@ def test_static_lazy_images_and_gif_video_are_resolved_without_scripts(monkeypat
     )
     assert memes.download_meme("https://example.com/image", "image", 4)[0] == b"actual image"
     assert memes.download_meme("https://example.com/video", "video", 4)[0] == b"actual gif"
+
+
+def test_short_video_candidate_falls_back_to_longer_gif_on_same_page(monkeypatch):
+    pages = {
+        "https://example.com/reaction": (
+            b'<video><source src="/short.mp4" type="video/mp4"></video>'
+            b'<img data-original="/reaction.gif">',
+            "text/html",
+        ),
+        "https://example.com/short.mp4": (b"short video", "video/mp4"),
+        "https://example.com/reaction.gif": (b"loopable reaction", "image/gif"),
+    }
+
+    def fetch(url):
+        return (*pages[url], url)
+
+    def normalize(data, mime, kind, seconds, url):
+        actual = 1.5 if url.endswith("short.mp4") else seconds
+        output_mime = "video/mp4" if url.endswith(".gif") else mime
+        return data, output_mime, actual, url
+
+    monkeypatch.setattr(memes, "_fetch", fetch)
+    monkeypatch.setattr(memes, "_normalize", normalize)
+
+    data, mime, seconds, url = memes.download_meme(
+        "https://example.com/reaction", "video", 4.6, minimum_seconds=4.6
+    )
+
+    assert data == b"loopable reaction"
+    assert mime == "video/mp4"
+    assert seconds == 4.6
+    assert url == "https://example.com/reaction.gif"
 
 
 def test_animated_reaction_gif_can_be_used_as_a_sanitized_still():
