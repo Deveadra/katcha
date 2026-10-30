@@ -86,3 +86,36 @@ def test_frame_sheet_uses_recorded_timestamps_and_local_only_decoder(monkeypatch
     assert Image.open(io.BytesIO(data)).size == (1536, 480)
     assert len(calls) == len(times) == 8
     assert [float(args[args.index("-ss") + 1]) for args in calls] == times
+
+
+def test_live_planner_requests_realistic_durations_and_visual_headroom(monkeypatch):
+    from katcha.editing.blueprints import meme_v2
+
+    prompts = []
+    settings = SimpleNamespace(resolved_ai_execution_mode=lambda: "live")
+    monkeypatch.setattr(planner, "get_ai_settings", lambda: settings)
+    monkeypatch.setattr(planner, "assert_mutation_authority", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        planner,
+        "source_frames",
+        lambda *args: (b"synthetic frame fixture", [4, 25, 46, 66, 87, 108, 128, 148]),
+    )
+
+    def generate(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return SimpleNamespace(
+            value=plan(), target=SimpleNamespace(provider="codex", model="fixture")
+        )
+
+    monkeypatch.setattr(planner, "generate_subscription_json", generate)
+    store = SimpleNamespace(put_bytes=lambda *args, **kwargs: None)
+    clip = SimpleNamespace(sha256="0" * 64)
+    production = SimpleNamespace(id="fixture", generation=1, analysis_snapshot={})
+    saved_plan, evidence = planner.plan_memes(store, clip, production, meme_v2(), 158)
+    assert len(saved_plan.beats) == 4  # Guidance leaves existing validation contracts intact.
+    assert evidence["provider"] == "codex"
+    assert "0.5-2 second" in prompts[0]
+    assert "14-15% planned" in prompts[0]
+    assert "at least two reaction images and a reaction video" in prompts[0]
+    assert "Audio is optional" in prompts[0]
+    assert "green-screen clips" in prompts[0]
