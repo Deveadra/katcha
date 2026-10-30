@@ -186,7 +186,11 @@ class Worker:
     def check_authentication(self) -> None:
         """Read-only edge and narrowly scoped principal proof; no claims or uploads."""
         health = self.request("GET", "/v1/health/live")
-        if not isinstance(health, dict) or health.get("status") != "ok" or health.get("service") != "katcha":
+        if (
+            not isinstance(health, dict)
+            or health.get("status") != "ok"
+            or health.get("service") != "katcha"
+        ):
             raise LeaseLost("control_health_unexpected_response")
         for channel in self.channels:
             jobs = self.request("GET", self.root(channel) + "?status=queued&limit=1")
