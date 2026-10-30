@@ -393,7 +393,7 @@ def test_grounded_remix_requires_downloaded_beats_before_completion(
         ),
     )
 
-    def download(url, medium, seconds):
+    def download(url, medium, seconds, **kwargs):
         if fail_visuals and medium != "audio":
             raise ValueError("Unavailable asset https://example.com/private?token=secret")
         return medium.encode(), f"{medium}/fixture", seconds, url

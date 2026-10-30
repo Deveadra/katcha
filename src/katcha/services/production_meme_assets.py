@@ -244,7 +244,13 @@ def _fetch(url: str) -> tuple[bytes, str, str]:
     raise ValueError("Meme asset redirected too many times")
 
 
-def download_meme(url: str, medium: str, max_seconds: float) -> tuple[bytes, str, float, str]:
+def download_meme(
+    url: str,
+    medium: str,
+    max_seconds: float,
+    *,
+    minimum_seconds: float = 0,
+) -> tuple[bytes, str, float, str]:
     """Resolve a real direct asset or page media link; normalize locally before storage."""
     data, content_type, resolved = _fetch(url)
     if content_type in {"text/html", "application/xhtml+xml"}:
@@ -254,7 +260,17 @@ def download_meme(url: str, medium: str, max_seconds: float) -> tuple[bytes, str
         for candidate in parser.candidates(medium):
             try:
                 body, mime, media_url = _fetch(urljoin(resolved, candidate))
-                return _normalize(body, mime, medium, max_seconds, media_url)
+                normalized = _normalize(body, mime, medium, max_seconds, media_url)
+                if normalized[2] + 0.05 < minimum_seconds:
+                    errors.append(
+                        {
+                            "code": "short_media",
+                            "actual_duration_seconds": normalized[2],
+                            "required_duration_seconds": minimum_seconds,
+                        }
+                    )
+                    continue
+                return normalized
             except (ValueError, httpx.HTTPError, subprocess.SubprocessError) as exc:
                 errors.append(_download_failure(exc))
         raise _PageMediaUnavailable(errors)
@@ -592,7 +608,10 @@ def prepare_production_memes(production_id: str) -> dict:
                             duration,
                         )
                         data, mime, seconds, media_url = download_meme(
-                            candidate.source_url, medium, seconds
+                            candidate.source_url,
+                            medium,
+                            seconds,
+                            minimum_seconds=beat.duration_seconds if beat else 0,
                         )
                         if beat and seconds + 0.05 < beat.duration_seconds:
                             outcome.update(
