@@ -10,19 +10,21 @@ import subprocess
 import tempfile
 import time
 import uuid
+import warnings
 from contextvars import ContextVar
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import select
 
 from katcha.acquisition.web_scout import WebScoutDiscoveryAdapter
 from katcha.db import session_scope
 from katcha.editing.blueprints import EditBlueprintContract
-from katcha.editorial.images import normalize_image
 from katcha.editorial.media_intake.transport import PublicDestinationTransport
 from katcha.integrations.storage import ObjectStore
 from katcha.production_models import Production, ProductionAsset
@@ -259,12 +261,43 @@ def download_meme(url: str, medium: str, max_seconds: float) -> tuple[bytes, str
     return _normalize(data, content_type, medium, max_seconds, resolved)
 
 
+def _normalize_meme_still(data: bytes) -> bytes:
+    """Convert a bounded reaction GIF/WebP to one sanitized PNG frame."""
+    if not data or len(data) > MAX_BYTES:
+        raise ValueError("Meme image exceeds the bounded download size")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                if image.format not in {"PNG", "JPEG", "GIF", "WEBP"}:
+                    raise ValueError("Use a readable PNG, JPEG, GIF, or WebP image")
+                if max(image.size) > 8192 or image.width * image.height > 16_000_000:
+                    raise ValueError("Meme image exceeds the bounded pixel dimensions")
+                image.seek(0)
+                image.load()
+                oriented = ImageOps.exif_transpose(image).convert("RGBA")
+                clean = Image.frombytes("RGBA", oriented.size, oriented.tobytes())
+                output = BytesIO()
+                clean.save(output, format="PNG")
+                encoded = output.getvalue()
+                if len(encoded) > 16 * 1024 * 1024:
+                    raise ValueError("Decoded meme image is too large")
+                return encoded
+    except (
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as exc:
+        raise ValueError("The meme image is not a readable bounded image") from exc
+
+
 def _normalize(data, content_type, medium, max_seconds, resolved):
     binary = content_type in {"application/octet-stream", "application/ogg", "application/mp4"}
     if medium == "image":
         if not (content_type.startswith("image/") or binary):
             raise ValueError("Search result did not provide an image")
-        encoded, _, _ = normalize_image(data)
+        encoded = _normalize_meme_still(data)
         return encoded, "image/png", max_seconds, resolved
     if not (
         content_type.startswith(("audio/", "video/"))
@@ -298,9 +331,20 @@ def _normalize(data, content_type, medium, max_seconds, resolved):
         required = "audio" if medium == "audio" else "video"
         if not any(stream.get("codec_type") == required for stream in streams):
             raise ValueError(f"Meme asset has no {required} stream")
-        seconds = min(float(probe.get("format", {}).get("duration", 0)), max_seconds)
-        if not math.isfinite(seconds) or seconds <= 0:
+        source_seconds = float(probe.get("format", {}).get("duration", 0))
+        if not math.isfinite(source_seconds) or source_seconds <= 0:
             raise ValueError("Meme asset duration is unavailable")
+        format_names = set(
+            str(probe.get("format", {}).get("format_name", "")).split(",")
+        )
+        loop_reaction = (
+            medium == "video"
+            and "gif" in format_names
+            and source_seconds + 0.05 < max_seconds
+        )
+        # GIFs are inherently looping reactions. Preserve that behavior when a
+        # short GIF is placed on a longer planned beat; never stretch a live clip.
+        seconds = max_seconds if loop_reaction else min(source_seconds, max_seconds)
         target = Path(directory) / ("sound.wav" if medium == "audio" else "video.mp4")
         args = [
             "ffmpeg",
@@ -309,13 +353,19 @@ def _normalize(data, content_type, medium, max_seconds, resolved):
             "-loglevel",
             "error",
             "-y",
-            "-protocol_whitelist",
-            "file,pipe",
-            "-i",
-            str(source),
-            "-t",
-            str(seconds),
         ]
+        if loop_reaction:
+            args.extend(["-stream_loop", "-1"])
+        args.extend(
+            [
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+                str(source),
+                "-t",
+                str(seconds),
+            ]
+        )
         args += (
             ["-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le"]
             if medium == "audio"
