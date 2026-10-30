@@ -71,7 +71,7 @@ systemctl --user is-active katcha-acquisition-workstation.service
 journalctl --user -u katcha-acquisition-workstation.service -n 30 --no-pager
 ```
 
-A running service alone is not acceptance. Verify the real narrow token reaches
+A running service alone is not acceptance. First run `python -m katcha.acquisition.worker --check-auth` from the installed worker environment, with the same systemd credential mounts, and investigate any sanitized failure code using [Access authentication and 403 diagnosis](ACQUISITION_ACCESS_AUTH.md). Verify the real narrow token reaches
 the channel API through Access, other channels return 403, operator validation
 returns 403, and an explicitly authorized job completes primary-side media
 validation. Test a service restart with the temporary SSH control path stopped;
