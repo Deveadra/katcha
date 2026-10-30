@@ -50,11 +50,32 @@ def test_preflight_requires_real_katcha_health_and_channel_authorization(tmp_pat
 @pytest.mark.parametrize(
     ("response", "reason"),
     [
-        (httpx.Response(403, headers={"content-type": "text/html"}, text="cloudflare-secret-sentinel"), "edge_or_unclassified_http_403"),
-        (httpx.Response(403, json={"detail": "private-worker-secret-sentinel"}), "katcha_principal_http_403"),
-        (httpx.Response(401, json={"detail": "expired-private-sentinel"}), "katcha_principal_http_401"),
-        (httpx.Response(200, headers={"content-type": "text/html"}, text="secret-html-sentinel"), "control_non_json_response"),
-        (httpx.Response(302, headers={"Location": "https://login.example/secret-token-sentinel"}), "edge_or_unclassified_redirect"),
+        (
+            httpx.Response(
+                403, headers={"content-type": "text/html"}, text="cloudflare-secret-sentinel"
+            ),
+            "edge_or_unclassified_http_403",
+        ),
+        (
+            httpx.Response(403, json={"detail": "private-worker-secret-sentinel"}),
+            "katcha_principal_http_403",
+        ),
+        (
+            httpx.Response(401, json={"detail": "expired-private-sentinel"}),
+            "katcha_principal_http_401",
+        ),
+        (
+            httpx.Response(
+                200, headers={"content-type": "text/html"}, text="secret-html-sentinel"
+            ),
+            "control_non_json_response",
+        ),
+        (
+            httpx.Response(
+                302, headers={"Location": "https://login.example/secret-token-sentinel"}
+            ),
+            "edge_or_unclassified_redirect",
+        ),
     ],
 )
 def test_preflight_denies_and_redacts_failed_control_responses(tmp_path, response, reason):
