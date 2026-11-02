@@ -137,6 +137,8 @@ The `installed_tool_version.source_sha` may differ from the application `TARGET_
 
 **Migration policy:** If `schema_change=false` and `migration_files=[]`, choose **`migration_policy=refuse`**. Production was verified at `0067_acquisition_human_recovery` on November 2, 2026; treat that as a dated observation, not a substitute for a fresh database check. When `0066_acquisition_handoff` or `0067_acquisition_human_recovery` is already applied and verified, do **not** apply it again. For a proposed migration, inspect the exact diff/blob and live database, evaluate compatibility and forward repair, and separately authorize only the proposed reviewed policy. If schema or migration identity differs, **STOP**. No manual Alembic stamp, schema downgrade or forced rollback.
 
+For historical compatibility, the reviewed `0065 → 0066` migration used `approve-additive-through-0066`. Production has since advanced to verified `0067`; do **not** reuse that old policy for a current schema. Always follow the fresh planner's exact policy, and keep `refuse` for migration-free releases.
+
 **Temporal policy:** Default **`running_workflows=refuse`** blocks deployment when workflows remain running. Review actual IDs/types and pending work using:
 
 ```bash
