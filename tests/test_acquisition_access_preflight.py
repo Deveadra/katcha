@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
 
 import httpx
 import pytest
 
+import katcha.acquisition.worker as worker_module
 from katcha.acquisition.worker import LeaseLost, Worker
 
 CHANNEL = str(uuid.UUID("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
@@ -107,3 +109,68 @@ def test_preflight_rejects_unexpected_authenticated_payload(tmp_path):
 
     with pytest.raises(LeaseLost, match="worker_principal_unexpected_response"):
         build_worker(tmp_path, handle).check_authentication()
+
+
+@pytest.mark.parametrize(("status", "expected_reason"), [
+    (503, "control_http_503"),
+    (502, "control_http_502"),
+])
+def test_auth_cli_distinguishes_persistent_http_failure_from_transport(
+    tmp_path, monkeypatch, caplog, status, expected_reason,
+):
+    token = tmp_path / "token"
+    token.write_text("private-worker-secret", encoding="utf-8")
+    token.chmod(0o600)
+    monkeypatch.setenv("KATCHA_ACQUISITION_TOKEN_FILE", str(token))
+    monkeypatch.setenv("KATCHA_ACQUISITION_API_URL", "https://app.katcha.stream")
+    monkeypatch.setenv("KATCHA_ACQUISITION_CHANNEL_IDS", CHANNEL)
+    for name in ("KATCHA_ACQUISITION_CF_ACCESS_ID_FILE",
+                 "KATCHA_ACQUISITION_CF_ACCESS_SECRET_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys, "argv", ["acquisition-worker", "--check-auth"])
+    request = httpx.Request("GET", "https://private-worker-secret.invalid/internal")
+    response = httpx.Response(
+        status, request=request, text="private-worker-secret in response"
+    )
+
+    class FakeWorker:
+        channels = [CHANNEL]
+
+        def check_authentication(self):
+            raise httpx.HTTPStatusError(
+                "private-worker-secret", request=request, response=response
+            )
+
+        def once(self):
+            pytest.fail("Read-only auth preflight must not start job acquisition")
+
+    monkeypatch.setattr(worker_module, "Worker", lambda *args, **kwargs: FakeWorker())
+    assert worker_module.main() == 1
+    assert expected_reason in caplog.text
+    assert "control_transport_error" not in caplog.text
+    assert "private-worker-secret" not in caplog.text
+
+
+def test_auth_cli_success_does_not_run_worker_loop(tmp_path, monkeypatch):
+    token = tmp_path / "token"
+    token.write_text("test-private-worker", encoding="utf-8")
+    token.chmod(0o600)
+    monkeypatch.setenv("KATCHA_ACQUISITION_TOKEN_FILE", str(token))
+    monkeypatch.setenv("KATCHA_ACQUISITION_API_URL", "https://app.katcha.stream")
+    monkeypatch.setenv("KATCHA_ACQUISITION_CHANNEL_IDS", CHANNEL)
+    for name in ("KATCHA_ACQUISITION_CF_ACCESS_ID_FILE",
+                 "KATCHA_ACQUISITION_CF_ACCESS_SECRET_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys, "argv", ["acquisition-worker", "--check-auth"])
+
+    class FakeWorker:
+        channels = [CHANNEL]
+
+        def check_authentication(self):
+            pass
+
+        def once(self):
+            pytest.fail("Read-only auth preflight must not claim any jobs")
+
+    monkeypatch.setattr(worker_module, "Worker", lambda *args, **kwargs: FakeWorker())
+    assert worker_module.main() == 0
