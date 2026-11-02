@@ -1,4 +1,5 @@
 import re
+import stat
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -248,6 +249,10 @@ class Settings(BaseSettings):
     control_api_token: SecretStr | None = None
     control_api_scopes: str = "*"
     control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
+    # Only the production API's single-host overlay sets these. The token stays in
+    # the UID 10001 credential mount, never in the shared core environment file.
+    acquisition_control_token_file: Path | None = None
+    acquisition_control_channel_id: uuid.UUID | None = None
     cloudflare_access_principals: list[CloudflareAccessPrincipalSettings] = Field(
         default_factory=list
     )
@@ -270,6 +275,38 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_control_principals(self):
+        # Attach exactly one narrowly scoped acquisition identity, from a private
+        # Docker bind mount only on the API. Never copy a bearer token to .env.
+        token_file = self.acquisition_control_token_file
+        channel = self.acquisition_control_channel_id
+        if (token_file is None) != (channel is None):
+            raise ValueError("Acquisition file principal requires token file and channel UUID")
+        if token_file is not None:
+            if token_file != Path("/run/acquisition/worker-token"):
+                raise ValueError("Unrecognized acquisition token mount path")
+            try:
+                info = token_file.lstat()
+                valid = (
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_uid == 10001
+                    and info.st_gid == 10001
+                    and stat.S_IMODE(info.st_mode) == 0o600
+                    and info.st_nlink == 1
+                    and info.st_size > 0
+                )
+                if not valid:
+                    raise ValueError("Acquisition token mount has unsafe metadata")
+                raw = token_file.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise ValueError("Acquisition token mount unavailable") from None
+            if not raw or any(character.isspace() for character in raw):
+                raise ValueError("Acquisition token mount contains invalid credential")
+            self.control_principals.append(ControlPrincipalSettings(
+                name="acquisition-forescene-vm1",
+                credentials=[ControlCredentialSettings(id="vm1-mounted", token=SecretStr(raw))],
+                scopes=["acquisition:work"],
+                channel_profile_ids=[str(channel)],
+            ))
         names: set[str] = set()
         token_values: set[str] = set()
         for principal in self.control_principals:
