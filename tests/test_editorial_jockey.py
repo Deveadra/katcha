@@ -148,12 +148,10 @@ def test_index_and_search_are_durable_scoped_and_review_only(configured):
         channel, project, request, actor="operator", client=provider, store=store
     ) == result
     assert provider.searches == 1
-    with pytest.raises(EditorialConflict, match="budget"):
-        jockey.search_jockey(
-            channel, project, request.model_copy(update={"idempotency_key": "different",
-                "requirement_id": requirement + "-other"}),
-            actor="operator", client=provider, store=store,
-        )
+    with db.session_scope() as session:
+        jockey._lock_project(session, channel, project)
+        with pytest.raises(EditorialConflict, match="budget"):
+            jockey._reserve(session, project, jockey.get_settings())
     with pytest.raises(EditorialConflict):
         jockey.get_index(other, project, item)
     with db.session_scope() as session:
