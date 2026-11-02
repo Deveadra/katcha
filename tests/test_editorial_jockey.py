@@ -19,7 +19,7 @@ from katcha.config import Settings
 from katcha.editorial.jockey_schemas import JockeyAdmission, JockeySearchRequest
 from katcha.editorial_models import EditorialRun
 from katcha.services import editorial_jockey as jockey
-from katcha.services.editorial_projects import EditorialConflict
+from katcha.services.editorial_projects import EditorialConflict, EditorialNotFound
 
 
 class FakeProvider:
@@ -153,7 +153,7 @@ def test_index_and_search_are_durable_scoped_and_review_only(configured):
         jockey._lock_project(session, channel, project)
         with pytest.raises(EditorialConflict, match="budget"):
             jockey._reserve(session, project, jockey.get_settings())
-    with pytest.raises(EditorialConflict):
+    with pytest.raises(EditorialNotFound):
         jockey.get_index(other, project, item)
     with db.session_scope() as session:
         rows = list(session.scalars(select(EditorialRun).where(
