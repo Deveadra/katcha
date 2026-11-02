@@ -8,9 +8,10 @@ const {
 const SHA = 'a'.repeat(40);
 const good = () => REQUIRED_PUSH_JOBS.map((name, i) => ({
   name, id: i + 1, status: 'completed', conclusion: 'success',
-  head_sha: SHA, run_attempt: 1,
+  head_sha: SHA, run_attempt: 1, run_id: 123, runner_id: 42,
+  steps: [{name: 'Set up job', status: 'completed', conclusion: 'success'}],
 }));
-const check = (jobs) => assessCiJobs(jobs, SHA, 1);
+const check = (jobs) => assessCiJobs(jobs, SHA, 1, 123);
 
 test('requires every successful job and correct revision/attempt', () => {
   assert.equal(check(good()).ok, true);
@@ -34,6 +35,13 @@ test('requires every successful job and correct revision/attempt', () => {
   const otherAttempt = good();
   otherAttempt[6].run_attempt = 2;
   assert.equal(check(otherAttempt).ok, false);
+  const wrongRun = good();
+  wrongRun[6].run_id = 456;
+  assert.equal(check(wrongRun).ok, false);
+  const neverExecuted = good();
+  neverExecuted[6].steps = [];
+  neverExecuted[6].runner_id = null;
+  assert.equal(check(neverExecuted).ok, false);
 });
 
 test('bounded polling permits eventual consistency but never permits unresolved jobs', async () => {
