@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -191,14 +192,12 @@ def start_index(
 
 
 def _block(run_id: uuid.UUID, stage: str) -> None:
-    try:
+    # The original intent was committed even if the final checkpoint cannot be saved.
+    with suppress(Exception):
         checkpoint(
             str(run_id), 1, stage=stage, status="blocked",
             error="Provider outcome requires manual reconciliation; automatic retry prohibited",
         )
-    except Exception:
-        # The original intent was committed; never hide an uncertain external operation.
-        pass
 
 
 def advance_index(
