@@ -87,9 +87,26 @@ const core = {
   setOutput: (key, value) => { outputs[key] = value; },
   setFailed: (message) => { failures.push(message); }, info: () => {},
 };
-const github = { rest: { repos: { getBranch: async () => ({
-  data: {commit: {sha: fixture.current_sha}},
-}) }} };
+const github = {
+  rest: {
+    repos: {getBranch: async () => ({
+      data: {commit: {sha: fixture.current_sha}},
+    })},
+    actions: {listJobsForWorkflowRun: () => {}},
+  },
+  paginate: async () => {
+    const {REQUIRED_PUSH_JOBS} = require(
+      fixture.workspace + "/scripts/ci-release-job-gate.cjs"
+    );
+    return REQUIRED_PUSH_JOBS.map((name, i) => ({
+      id: i + 1, name, run_id: 123, run_attempt: 1,
+      head_sha: "a".repeat(40), status: "completed", conclusion: "success",
+      runner_id: i + 100,
+      steps: [{name: "Set up job", status: "completed", conclusion: "success"}],
+    }));
+  },
+};
+process.env.GITHUB_WORKSPACE = fixture.workspace;
 process.env.RELEASE_SHA = "a".repeat(40);
 (async () => {
 """ + script + """
@@ -97,7 +114,10 @@ process.env.RELEASE_SHA = "a".repeat(40);
 .catch((error) => { console.error(error); process.exit(1); });
 """
     result = subprocess.run(
-        ["node", "-e", harness, json.dumps({"payload": payload, "current_sha": current_sha})],
+        ["node", "-e", harness, json.dumps({
+            "payload": payload, "current_sha": current_sha,
+            "workspace": str(WORKFLOW.parents[2]),
+        })],
         capture_output=True, text=True, check=True, timeout=15,
     )
     return json.loads(result.stdout)
@@ -107,7 +127,7 @@ def ci_payload(**changes: object) -> dict:
     run = {
         "event": "push", "conclusion": "success", "head_branch": "main",
         "head_repository": {"full_name": "Deveadra/katcha"},
-        "head_sha": "a" * 40,
+        "head_sha": "a" * 40, "id": 123, "run_attempt": 1,
     }
     run.update(changes)
     return {"workflow_run": run}
