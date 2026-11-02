@@ -41,6 +41,11 @@ _ACTIVE_STATES = {"queued", "sent", "awaiting_edit_feedback", "backlogged"}
 _REVIEWABLE_EPISODE_STATES = {"rendered", "render_review"}
 
 
+class OversizedTelegramReview(ValueError):
+    """Review media cannot be uploaded to Telegram's configured Bot API limit."""
+
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramReviewCard:
     session_id: uuid.UUID
@@ -782,6 +787,33 @@ def longform_review_url(
     )
 
 
+def oversized_review_url(
+    card: TelegramReviewCard,
+    *,
+    settings: Settings | None = None,
+) -> str | None:
+    """Mint a short-lived HTTPS media link rather than uploading an oversized video.
+
+    The presigned URL is shared only in the authorized operator's private
+    Telegram review card. Never persist or log the signed URL.
+    """
+    settings = settings or get_settings()
+    endpoint, reachable = _longform_review_endpoint(settings)
+    if not reachable or (endpoint is not None and urlparse(endpoint).scheme != "https"):
+        return None
+    url = ObjectStore(settings).presigned_get_url(
+        card.render_key,
+        expires_seconds=settings.telegram_review_link_ttl_seconds,
+        filename=f"katcha-review-{card.source_id}.mp4",
+        endpoint_url=endpoint,
+    )
+    # Refuse insecure or incorrectly generated signed links, including a
+    # mistakenly configured HTTP endpoint or an internal-only URL.
+    if urlparse(url).scheme != "https":
+        return None
+    return url
+
+
 def render_bytes(card: TelegramReviewCard, *, settings: Settings | None = None) -> bytes:
     settings = settings or get_settings()
     store = ObjectStore(settings)
@@ -791,7 +823,7 @@ def render_bytes(card: TelegramReviewCard, *, settings: Settings | None = None) 
     if size <= 0:
         raise ValueError("Telegram review render is empty")
     if size > max_bytes:
-        raise ValueError(
+        raise OversizedTelegramReview(
             f"Telegram review render is {size / 1024 / 1024:.1f} MB; "
             f"configured Bot API limit is {settings.telegram_video_max_mb} MB"
         )

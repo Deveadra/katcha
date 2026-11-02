@@ -34,6 +34,7 @@ from katcha.services.short_episode_reviews import (
     review_short_episode,
 )
 from katcha.services.telegram_reviews import (
+    OversizedTelegramReview,
     backlogged_sessions,
     ensure_review_sessions,
     feedback_session,
@@ -42,6 +43,7 @@ from katcha.services.telegram_reviews import (
     mark_failed,
     mark_sent,
     operator_binding,
+    oversized_review_url,
     pair_operator,
     pending_review_sessions,
     render_bytes,
@@ -228,11 +230,48 @@ async def _deliver_pending(
                 if card.file_id:
                     video = card.file_id
                 else:
-                    video = await asyncio.to_thread(
-                        render_bytes,
-                        card,
-                        settings=settings,
-                    )
+                    try:
+                        video = await asyncio.to_thread(
+                            render_bytes,
+                            card,
+                            settings=settings,
+                        )
+                    except OversizedTelegramReview as exc:
+                        review_url = oversized_review_url(card, settings=settings)
+                        if not review_url:
+                            raise ValueError(
+                                "Telegram video exceeds the upload limit and an externally "
+                                "reachable HTTPS review media endpoint is not configured"
+                            ) from exc
+                        message = await asyncio.to_thread(
+                            client.send_message,
+                            card.chat_id,
+                            (
+                                card.caption
+                                + "\n\n▶ This video exceeds Telegram's upload limit. "
+                                + "Open the full video using the secure, expiring "
+                                + "review link below. "
+                                + "Tap Refresh if the link expires."
+                            ),
+                            reply_markup=keyboard(
+                                card.callback_token,
+                                review_url=review_url,
+                            ),
+                        )
+                        set_session_state(
+                            row.id,
+                            "queued",
+                            metadata={
+                                "delivery_mode": "oversized_review_link",
+                                "review_link_available": True,
+                            },
+                        )
+                        mark_sent(
+                            row.id,
+                            message_id=int(message["message_id"]),
+                            telegram_file_id=None,
+                        )
+                        continue
                 message = await asyncio.to_thread(
                     client.send_video,
                     card.chat_id,
@@ -393,6 +432,22 @@ async def _refresh(
         set_session_state(row.id, "queued")
         return "Review re-queued."
     card = review_card(row.id)
+    if dict(row.session_metadata or {}).get("delivery_mode") == "oversized_review_link":
+        review_url = oversized_review_url(card, settings=settings)
+        if not review_url:
+            raise ValueError("The secure review link endpoint is no longer available")
+        await asyncio.to_thread(
+            client.edit_text,
+            row.chat_id,
+            row.message_id,
+            text=(
+                card.caption
+                + "\n\n▶ Open the full video with the refreshed, expiring "
+                + "review link below."
+            ),
+            reply_markup=keyboard(card.callback_token, review_url=review_url),
+        )
+        return "Secure review link refreshed."
     if card.source_kind == "compilation":
         review_url = longform_review_url(card, settings=settings)
         if review_url:
