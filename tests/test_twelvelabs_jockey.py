@@ -6,12 +6,11 @@ import sys
 import uuid
 from types import SimpleNamespace
 
-from pydantic import SecretStr, ValidationError
 import pytest
+from pydantic import SecretStr, ValidationError
 
 from katcha.config import Settings
 from katcha.integrations import twelvelabs_jockey as jockey
-
 
 CHANNEL = uuid.UUID("11111111-1111-4111-8111-111111111111")
 CLIP = uuid.UUID("22222222-2222-4222-8222-222222222222")
