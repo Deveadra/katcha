@@ -735,6 +735,13 @@ def main():
         except LeaseLost as exc:
             log.error("Acquisition authentication check failed reason=%s", exc)
             return 1
+        except httpx.HTTPStatusError as exc:
+            # Status only. Never print the URL, request, response body or headers.
+            log.error(
+                "Acquisition authentication check failed reason=control_http_%d",
+                exc.response.status_code,
+            )
+            return 1
         except httpx.HTTPError:
             log.error("Acquisition authentication check failed reason=control_transport_error")
             return 1
