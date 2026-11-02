@@ -9,7 +9,13 @@ import httpx
 import pytest
 
 import katcha.acquisition.worker as worker_module
-from katcha.acquisition.worker import LeaseLost, Worker
+from katcha.acquisition.worker import (
+    ControlAuthBlocked,
+    Journal,
+    LeaseLost,
+    Worker,
+    run_worker_polls,
+)
 
 CHANNEL = str(uuid.UUID("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
 ACCESS = {
@@ -174,3 +180,114 @@ def test_auth_cli_success_does_not_run_worker_loop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(worker_module, "Worker", lambda *args, **kwargs: FakeWorker())
     assert worker_module.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("response", "reason"),
+    [
+        (httpx.Response(401, json={"detail": "private-auth-sentinel"}), "katcha_principal_http_401"),
+        (httpx.Response(403, text="edge-private-sentinel"), "edge_or_unclassified_http_403"),
+        (
+            httpx.Response(302, headers={"Location": "https://login.example/private-sentinel"}),
+            "edge_or_unclassified_redirect",
+        ),
+    ],
+)
+def test_auth_denial_is_distinct_and_secret_safe(tmp_path, response, reason):
+    worker = build_worker(tmp_path, lambda _request: response)
+    with pytest.raises(ControlAuthBlocked) as failed:
+        worker.check_authentication()
+    assert str(failed.value) == reason
+    assert "private" not in str(failed.value)
+
+
+def test_non_auth_control_reconciliation_is_not_global_auth_block(tmp_path):
+    worker = build_worker(tmp_path, lambda _request: httpx.Response(409, json={"detail": "lease"}))
+    with pytest.raises(LeaseLost) as failed:
+        worker.check_authentication()
+    assert str(failed.value) == "control_http_409"
+    assert not isinstance(failed.value, ControlAuthBlocked)
+
+
+def test_denied_journal_request_stops_processing_other_jobs(tmp_path, monkeypatch):
+    worker = build_worker(tmp_path, lambda _request: pytest.fail("No network expected"))
+    journal = Journal(worker.state_dir, CHANNEL, str(uuid.uuid4()))
+    monkeypatch.setattr(
+        worker,
+        "run_job",
+        lambda _journal: (_ for _ in ()).throw(
+            ControlAuthBlocked("katcha_principal_http_403")
+        ),
+    )
+    with pytest.raises(ControlAuthBlocked, match="katcha_principal_http_403"):
+        worker.once()
+    assert journal.path.exists()
+    assert Journal(worker.state_dir, CHANNEL, journal.state["job_id"]).state["phase"] == "new"
+
+
+def test_permanent_auth_failure_backoff_resets_after_recovery(caplog):
+    responses = iter(
+        [
+            ControlAuthBlocked("edge_or_unclassified_http_403"),
+            ControlAuthBlocked("edge_or_unclassified_http_403"),
+            None,
+            ControlAuthBlocked("katcha_principal_http_401"),
+            None,
+        ]
+    )
+    calls = []
+    delays = []
+
+    class StopPolling(Exception):
+        pass
+
+    class FakeWorker:
+        def once(self):
+            calls.append("poll")
+            outcome = next(responses)
+            if outcome is not None:
+                raise outcome
+
+    def sleep(seconds):
+        delays.append(seconds)
+        if len(delays) == 5:
+            raise StopPolling()
+
+    with pytest.raises(StopPolling):
+        run_worker_polls(FakeWorker(), sleep=sleep)
+    assert len(calls) == 5
+    assert delays == [30, 60, 5, 30, 5]
+    assert caplog.text.count("Worker authentication blocked reason=") == 2
+    assert caplog.text.count("Worker authentication recovered") == 2
+
+
+def test_auth_denial_once_returns_failed_status_without_retry():
+    class FakeWorker:
+        def __init__(self):
+            self.calls = 0
+
+        def once(self):
+            self.calls += 1
+            raise ControlAuthBlocked("edge_or_unclassified_http_403")
+
+    worker = FakeWorker()
+    assert run_worker_polls(
+        worker, once=True, sleep=lambda _seconds: pytest.fail("Unexpected retry")
+    ) == 2
+    assert worker.calls == 1
+
+
+def test_transient_reconciliation_keeps_short_polling_interval():
+    class StopPolling(Exception):
+        pass
+
+    class FakeWorker:
+        def once(self):
+            raise LeaseLost("control_http_409")
+
+    def sleep(seconds):
+        assert seconds == 5
+        raise StopPolling()
+
+    with pytest.raises(StopPolling):
+        run_worker_polls(FakeWorker(), sleep=sleep)
