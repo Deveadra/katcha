@@ -149,7 +149,10 @@ def test_channel_store_mapping_cannot_share_provider_corpus():
     with pytest.raises(ValidationError, match="distinct"):
         settings(stores={str(CHANNEL): STORE, other: STORE})
     with pytest.raises(ValidationError, match="canonical"):
-        settings(stores={str(CHANNEL).upper(): STORE})
+        settings(stores={str(CHANNEL).replace("-", ""): STORE})
+    alpha_channel = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    with pytest.raises(ValidationError, match="canonical"):
+        settings(stores={str(alpha_channel).upper(): STORE})
 
 
 def test_defaults_do_not_enable_paid_provider():
