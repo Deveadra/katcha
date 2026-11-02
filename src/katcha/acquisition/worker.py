@@ -34,6 +34,10 @@ class LeaseLost(Exception):
     pass
 
 
+class ControlAuthBlocked(LeaseLost):
+    """Persistent control authorization failure; suspend short-interval polling."""
+
+
 def _control_refusal_reason(response: httpx.Response) -> str:
     """Classify a refusal without exposing response bodies or credentials.
 
@@ -167,8 +171,10 @@ class Worker:
                     method, self.api_url + path, json=payload, headers=self.headers
                 )
                 if response.is_redirect:
-                    raise LeaseLost("edge_or_unclassified_redirect")
-                if response.status_code in {401, 403, 404, 409, 410}:
+                    raise ControlAuthBlocked("edge_or_unclassified_redirect")
+                if response.status_code in {401, 403}:
+                    raise ControlAuthBlocked(_control_refusal_reason(response))
+                if response.status_code in {404, 409, 410}:
                     raise LeaseLost(_control_refusal_reason(response))
                 if response.status_code >= 500:
                     response.raise_for_status()
@@ -656,6 +662,10 @@ class Worker:
                 seen.add(job_id)
                 try:
                     self.run_job(journal)
+                except ControlAuthBlocked:
+                    # A revoked/denied control principal blocks the whole worker.
+                    # Do not retry other jobs against the same origin every five seconds.
+                    raise
                 except LeaseLost as exc:
                     log.warning("Acquisition requires reconciliation job=%s reason=%s", job_id, exc)
                     continue
@@ -673,6 +683,8 @@ class Worker:
                     continue
                 try:
                     self.run_job(Journal(self.state_dir, channel, job["id"]))
+                except ControlAuthBlocked:
+                    raise
                 except LeaseLost as exc:
                     log.warning("Acquisition claim unavailable job=%s reason=%s", job["id"], exc)
                     continue
@@ -686,6 +698,51 @@ def sha256_file(path):
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def run_worker_polls(worker: Worker, *, once: bool = False, sleep=time.sleep) -> int:
+    """Back off permanent control auth refusals without losing durable journals.
+
+    The first denial pauses 30s; repeated denials cap at 5m. Avoid repeating
+    an identical sensitive incident on every probe, but log a changed reason
+    and successful recovery. Transient failures retain the prior polling rate.
+    """
+    auth_retry_seconds = 30
+    auth_block_reason = None
+    while True:
+        retry_seconds = 5
+        try:
+            worker.once()
+        except ControlAuthBlocked as exc:
+            reason = str(exc)
+            if reason != auth_block_reason:
+                log.error(
+                    "Worker authentication blocked reason=%s retry_seconds=%d",
+                    reason,
+                    auth_retry_seconds,
+                )
+            auth_block_reason = reason
+            retry_seconds = auth_retry_seconds
+            auth_retry_seconds = min(300, auth_retry_seconds * 2)
+            if once:
+                return 2
+        except LeaseLost as exc:
+            log.error("Worker pass blocked reason=%s", exc)
+            auth_retry_seconds = 30
+            auth_block_reason = None
+        except Exception as exc:
+            # Upstream exceptions may contain signed URLs; never log messages.
+            log.error("Worker pass interrupted type=%s", type(exc).__name__)
+            auth_retry_seconds = 30
+            auth_block_reason = None
+        else:
+            if auth_block_reason is not None:
+                log.info("Worker authentication recovered")
+            auth_retry_seconds = 30
+            auth_block_reason = None
+        if once:
+            return 0
+        sleep(retry_seconds)
 
 
 def main():
@@ -749,19 +806,7 @@ def main():
         return 0
     lock = (worker.state_dir / "worker.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    while True:
-        try:
-            worker.once()
-        except LeaseLost as exc:
-            # LeaseLost reasons are fixed safe codes, not upstream text.
-            log.error("Worker pass blocked reason=%s", exc)
-        except Exception as exc:
-            # No exception message: upstream exceptions can contain bearer/signed URLs.
-            log.error("Worker pass interrupted type=%s", type(exc).__name__)
-        if args.once:
-            break
-        time.sleep(5)
-    return 0
+    return run_worker_polls(worker, once=args.once)
 
 
 if __name__ == "__main__":
