@@ -828,7 +828,7 @@ def test_upgrade_old_postgres_schema_keeps_evidence_uninitialized(database):
         )
     with database.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0066_acquisition_handoff"
+            "0067_acquisition_human_recovery"
         )
         assert (
             connection.execute(text("SELECT COUNT(*) FROM source_search_ledger_head")).scalar_one()

@@ -36,7 +36,7 @@ class AcquisitionJob(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'leased', 'awaiting_validation', 'failed', "
-            "'cancelled', 'recovery_required', 'completed')",
+            "'cancelled', 'recovery_required', 'waiting_human', 'completed')",
             name="ck_acquisition_job_status",
         ),
         CheckConstraint("generation >= 0", name="ck_acquisition_job_generation"),
@@ -99,3 +99,50 @@ class AcquisitionTransfer(Base):
     # Part MD5 and length are frozen before a URL is issued. S3 checks Content-MD5.
     parts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     completed: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+
+class AcquisitionChallenge(Base):
+    """One bounded human recovery round, tied to a fenced worker generation."""
+
+    __tablename__ = "acquisition_challenges"
+    __table_args__ = (
+        ForeignKeyConstraint(["job_id"], ["acquisition_jobs.id"]),
+        UniqueConstraint("job_id", "generation", name="uq_acquisition_challenge_generation"),
+        CheckConstraint(
+            "state IN ('waiting', 'retry_requested', 'retrying', 'closed')",
+            name="ck_acquisition_challenge_state",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="waiting")
+    code: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notification_state: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    notification_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    notification_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AcquisitionBrowserCommand(Base):
+    """Encrypted short-lived browser mailbox; claimed actions are never replayed."""
+
+    __tablename__ = "acquisition_browser_commands"
+    __table_args__ = (
+        ForeignKeyConstraint(["challenge_id"], ["acquisition_challenges.id"]),
+        CheckConstraint(
+            "state IN ('queued', 'claimed', 'completed', 'expired')",
+            name="ck_acquisition_browser_command_state",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    challenge_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    # Fingerprint allows uncertain HTTP saves to be reconciled without retaining plaintext.
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

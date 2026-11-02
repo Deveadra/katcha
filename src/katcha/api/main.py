@@ -273,6 +273,12 @@ def operations_shell(request: Request):
     return RedirectResponse("/operations/assets/operations.html" + query)
 
 
+@app.get("/acquisition-recovery", include_in_schema=False)
+def acquisition_recovery_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/acquisition-recovery.html" + query)
+
+
 @app.get("/explorer", include_in_schema=False)
 def explorer_shell(request: Request):
     query = "?" + request.url.query if request.url.query else ""

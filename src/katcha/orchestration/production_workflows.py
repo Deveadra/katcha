@@ -58,7 +58,10 @@ class ShortProductionWorkflow:
                 await execute_resource_activity(
                     "prepare_meme_assets",
                     production_id,
-                    start_to_close_timeout=timedelta(minutes=12),
+                    # Replayed schedules keep the original timeout and single paid attempt.
+                    start_to_close_timeout=timedelta(minutes=(
+                        25 if workflow.patched("production-meme-bounded-recovery-v2") else 12
+                    )),
                     retry_policy=paid_once,
                 )
 

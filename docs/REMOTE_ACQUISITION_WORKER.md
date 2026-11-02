@@ -128,9 +128,11 @@ acquires media for review; it does not authorize new AI-provider spending.
   Cancellation or quarantine fences subsequent upload completion and promotion.
 - An interruption during yt-dlp extraction is `session_lost`; it is not automatically
   replayed after restart. Authentication challenges are classified as
-  `authentication_required`. This worker/handoff does not claim that an operator
-  cookie file proves a browser CAPTCHA was solved. Secured interactive browser and
-  Telegram challenge control remain a separate capability.
+  `authentication_required`. With configured human recovery and a ready local browser,
+  the job waits for operator verification and one fenced retry instead of failing.
+  See [Human verification](ACQUISITION_HUMAN_RECOVERY.md) for the authenticated
+  browser, Telegram delivery, expiry and same-job continuation. A cookie file or
+  operator click never proves successful acquisition; independent validation does.
 - Read list/detail status through the existing channel-scoped acquisition API.
   Status, phase, byte progress, heartbeat, failure code and source linkage are real
   persisted state. Detailed URLs and signed grants remain private lease responses.

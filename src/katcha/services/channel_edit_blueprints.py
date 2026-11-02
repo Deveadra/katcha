@@ -10,6 +10,7 @@ from katcha.edit_blueprint_models import ChannelEditBlueprintVersion
 from katcha.editing.blueprints import (
     EditBlueprintContract,
     get_edit_blueprint,
+    meme_v1,
     persona_commentary_v1,
     source_original_v1,
 )
@@ -196,6 +197,73 @@ def ensure_default_edit_blueprint(
     return row
 
 
+def _selection_contract(key: str) -> EditBlueprintContract:
+    """New builtin choices use the current recipe; saved contracts remain frozen."""
+    return get_edit_blueprint(key, "2.0.0" if key == "meme" else "1.0.0")
+
+
+def _upgrade_implicit_meme(
+    session: Session, profile: ChannelProfile, row: ChannelEditBlueprintVersion,
+) -> ChannelEditBlueprintVersion:
+    def eligible(candidate: ChannelEditBlueprintVersion) -> bool:
+        metadata = candidate.blueprint_metadata or {}
+        return (
+            candidate.blueprint_key == "meme"
+            and candidate.is_active
+            and not candidate.is_default
+            and metadata.get("created_by") == "builtin_selection"
+            and not metadata.get("explicitly_activated")
+            and (profile.profile_metadata or {}).get("default_edit_blueprint_key") != "meme"
+            and edit_blueprint_contract(candidate) == meme_v1()
+            and not _was_explicitly_activated(session, profile, candidate)
+        )
+
+    if not eligible(row):
+        return row
+    profile = _lock_profile(session, profile)
+    # The lock may have waited for an operator activation. Refresh identity-map
+    # objects before deciding whether that now-committed choice is still implicit.
+    session.refresh(profile)
+    current = _active_family(session, profile, "meme")
+    if current is None:
+        raise RuntimeError("channel meme blueprint disappeared during selection")
+    session.refresh(current)
+    if not eligible(current):
+        return current
+    contract = _selection_contract("meme")
+    current.is_active = False
+    session.flush()
+    replacement = ChannelEditBlueprintVersion(
+        channel_profile_id=profile.id,
+        blueprint_key=contract.key,
+        version=_next_version(session, profile, contract.key),
+        contract_version=contract.version,
+        is_active=True,
+        is_default=False,
+        contract=contract.model_dump(mode="json"),
+        blueprint_metadata={
+            "created_by": "builtin_selection", "supersedes_version": current.version,
+        },
+    )
+    session.add(replacement)
+    session.flush()
+    session.add(DomainEvent(
+        aggregate_type="channel_profile",
+        aggregate_id=str(profile.id),
+        event_type="channel_profile.edit_blueprint_created",
+        payload={
+            "channel_profile_id": str(profile.id),
+            "blueprint_key": replacement.blueprint_key,
+            "blueprint_version": replacement.version,
+            "contract_version": replacement.contract_version,
+            "is_default": False,
+            "actor": "builtin_selection",
+            "supersedes_version": current.version,
+        },
+    ))
+    return replacement
+
+
 def blueprint_for_channel(
     session: Session,
     channel_profile_id: uuid.UUID | None,
@@ -205,7 +273,7 @@ def blueprint_for_channel(
     if channel_profile_id is None:
         if blueprint_key:
             try:
-                contract = get_edit_blueprint(blueprint_key, "1.0.0")
+                contract = _selection_contract(blueprint_key.strip())
             except KeyError as exc:
                 raise ValueError(f"unknown edit blueprint: {blueprint_key}") from exc
         else:
@@ -217,7 +285,7 @@ def blueprint_for_channel(
         row = _active_family(session, profile, blueprint_key.strip())
         if row is None:
             try:
-                contract = get_edit_blueprint(blueprint_key.strip(), "1.0.0")
+                contract = _selection_contract(blueprint_key.strip())
             except KeyError as exc:
                 raise ValueError(
                     f"channel has no active edit blueprint family: {blueprint_key}"
@@ -237,6 +305,7 @@ def blueprint_for_channel(
                 )
                 session.add(row)
                 session.flush()
+        row = _upgrade_implicit_meme(session, profile, row)
     else:
         row = ensure_default_edit_blueprint(session, profile)
     return edit_blueprint_contract(row), row.version

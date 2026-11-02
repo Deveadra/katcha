@@ -354,6 +354,16 @@ def _require_named_principal_route_access(request: Request) -> None:
     method = request.method.upper()
 
     if re.fullmatch(
+        r"/v1/channels/[^/]+/acquisition-jobs/[^/]+/human"
+        r"(?:/(?:commands(?:/[^/]+)?|retry|poll|result|unavailable|resume))?", path
+    ):
+        if method == "POST" and path.endswith(("/poll", "/result", "/unavailable", "/resume")):
+            require_control_scope(request, "acquisition:work")
+        else:
+            require_control_scope(request, "production:create")
+        return
+
+    if re.fullmatch(
         r"/v1/channels/[^/]+/acquisition-jobs(?:/[^/]+"
         r"(?:/(?:claim|heartbeat|report|fail|cancel|reconcile|validate|release-source|"
         r"upload(?:/(?:parts/[0-9]+|complete|recover|cleanup))?))?)?", path

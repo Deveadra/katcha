@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#090b12">
+    <meta name="referrer" content="no-referrer">
+    <title>Katcha · Verify source access</title>
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
+    <link rel="stylesheet" href="/pages/acquisition-recovery-aerith.css">
+    <script src="/acquisition-recovery.js" defer></script>
+    <script src="/launcher-bridge.js" defer></script>
+</head>
+<body data-katcha-page="sources">
+<div class="app-shell">
+    <aside class="rail"><a class="brand" href="/home">katcha.</a><div class="rail-spacer"></div><div class="rail-footer">Source recovery</div></aside>
+    <main id="main-content">
+        <header class="topbar"><div class="breadcrumbs">Sources / <strong>Verify access</strong></div><a href="/clips">Your clips</a></header>
+        <div class="recovery-content">
+            <header><h1>Continue your download</h1><p>Your request stays saved while you complete the source’s verification.</p></header>
+            <section id="access" class="recovery-panel" hidden aria-labelledby="access-title">
+                <h2 id="access-title">Sign in to Katcha</h2><p id="access-message"></p><a id="access-login" hidden>Sign in</a>
+            </section>
+            <section class="recovery-panel" aria-labelledby="request-title">
+                <h2 id="request-title">Your saved request</h2>
+                <p id="status" role="status" aria-live="polite">Loading your request…</p>
+                <p id="expiry"></p><p id="notification"></p>
+                <div class="recovery-actions"><button id="refresh-status" type="button">Refresh status</button><a id="ask-katcha" href="/ai">Open Katcha AI</a></div>
+            </section>
+            <section id="verification" class="recovery-panel" aria-labelledby="verification-title" hidden>
+                <h2 id="verification-title">Verify with the source</h2>
+                <p>Use the browser below to sign in or complete verification yourself. It runs on the download worker. Signing in through a separate phone or computer tab will not update this session.</p>
+                <p>Your sign-in entries are kept out of Katcha AI conversations and notifications. Do not send passwords or verification codes in chat.</p>
+                <div class="recovery-actions"><button id="open-browser" type="button">Open verification</button><button id="refresh-browser" type="button" disabled>Refresh page view</button></div>
+                <p id="browser-status" role="status" aria-live="polite">Open verification to connect to the download worker’s browser.</p>
+                <div id="browser-view" hidden>
+                    <h3 id="browser-title">Source browser</h3><p id="browser-location"></p>
+                    <button id="browser-screen" type="button" aria-label="Click a position in the source browser" hidden><img id="browser-image" alt="Current source browser page"></button>
+                    <p>Click the page to select a field or verification control. Keyboard controls are also available below.</p>
+                    <form id="type-form"><label for="browser-text">Text or verification code for the selected field</label><input id="browser-text" type="password" autocomplete="off" maxlength="10000"><button type="submit">Type into selected field</button></form>
+                    <div class="recovery-actions"><button type="button" data-key="Tab">Next field</button><button type="button" data-key="Shift+Tab">Previous field</button><button type="button" data-key="Enter">Press Enter</button><button type="button" data-key="Space">Press Space</button><button type="button" data-key="Escape">Press Escape</button></div>
+                    <div class="recovery-actions"><button type="button" data-scroll="-600">Scroll up</button><button type="button" data-scroll="600">Scroll down</button></div>
+                    <details class="ae-help"><summary>Page controls and accessible text</summary>
+                        <form id="element-form"><label for="element">Page control</label><select id="element"></select><label for="element-action">Action</label><select id="element-action"><option value="click">Activate</option><option value="fill">Fill field</option><option value="select">Choose option value</option><option value="press">Press Enter</option></select><label for="element-text">Text or option value</label><input id="element-text" type="password" autocomplete="off" maxlength="10000"><button type="submit">Use control</button></form>
+                        <label for="browser-tab">Browser tab</label><select id="browser-tab"></select>
+                        <pre id="page-text"></pre>
+                    </details>
+                    <details class="ae-help"><summary>Position and drag controls</summary><form id="position-form">
+                        <label for="position-x">Horizontal position (0–1279)</label><input id="position-x" type="number" min="0" max="1279" value="640" required>
+                        <label for="position-y">Vertical position (0–799)</label><input id="position-y" type="number" min="0" max="799" value="400" required>
+                        <label for="position-action">Pointer action</label><select id="position-action"><option value="mouse_click">Click here</option><option value="drag">Drag from here</option></select>
+                        <label for="position-x2">Drag to horizontal position</label><input id="position-x2" type="number" min="0" max="1279" value="640" required>
+                        <label for="position-y2">Drag to vertical position</label><input id="position-y2" type="number" min="0" max="799" value="400" required>
+                        <button type="submit">Use pointer</button>
+                    </form></details>
+                </div>
+                <div class="recovery-actions"><button id="retry" type="button" disabled>Check access and continue</button><button id="cancel" type="button">Cancel download</button></div>
+                <p>Continue requests one download attempt using this session. Katcha confirms success only after the downloaded media passes validation. Verification does not grant media usage rights.</p>
+            </section>
+        </div>
+    </main>
+</div>
+</body>
+</html>

@@ -85,7 +85,12 @@ def reconcile_remote_acquisition(channel_id: str, job_id: str) -> dict:
 
     channel, identity = uuid.UUID(channel_id), uuid.UUID(job_id)
     row = jobs.get_job(channel, identity)
-    if row.status == "awaiting_validation":
+    if row.status == "waiting_human":
+        from katcha.services.acquisition_recovery import expire_wait
+
+        expire_wait(channel, identity)
+        row = jobs.get_job(channel, identity)
+    elif row.status == "awaiting_validation":
         # Independent streaming hash/probe may take time for large files. Heartbeat
         # in the activity thread's copied context so Temporal can recover a crash.
         import contextvars
@@ -125,13 +130,16 @@ async def supervise_acquisitions(client, settings):
         try:
 
             def pending():
+                from katcha.services.acquisition_recovery import clean_expired_mailboxes
+
+                clean_expired_mailboxes()
                 with session_scope() as session:
                     return list(
                         session.execute(
                             select(AcquisitionJob.id, AcquisitionJob.channel_profile_id)
                             .where(
                                 AcquisitionJob.status.in_(
-                                    ["queued", "leased", "awaiting_validation"]
+                                    ["queued", "leased", "awaiting_validation", "waiting_human"]
                                 )
                             )
                             .order_by(

@@ -87,6 +87,15 @@ def retrieval_capabilities() -> dict:
         },
         "remote_acquisition": {
             "configured_max_bytes": settings.remote_acquisition_max_bytes,
+            "enabled": settings.remote_acquisition_enabled,
+            "automatic_dispatch_enabled": settings.remote_acquisition_auto_dispatch_enabled,
+            "human_recovery_enabled": settings.acquisition_human_recovery_enabled,
+            "human_recovery_note": (
+                "Approved remote acquisition can wait for an operator in a browser on the "
+                "acquisition host. The worker must have browser recovery enabled and ready. "
+                "Telegram delivery requires its own channel admission. Configuration alone "
+                "does not prove provider access or notification delivery."
+            ),
             "live_transfer_verified": False,
             "analysis_capacity_is_independent": True,
         },
@@ -132,7 +141,35 @@ def source_item_status(channel_id: uuid.UUID, source_item_id: uuid.UUID) -> dict
         )
         if not allowed:
             raise ValueError("Media source was not found in this channel")
+        recovery_status = None
+        job_id = (source.source_metadata or {}).get("remote_acquisition_job_id")
+        if job_id:
+            from katcha.acquisition_job_models import AcquisitionJob
+
+            try:
+                identity = uuid.UUID(str(job_id))
+            except ValueError:
+                identity = None
+            job = session.get(AcquisitionJob, identity) if identity else None
+            if job and job.channel_profile_id == channel_id and job.source_item_id == source.id:
+                recovery_status = {
+                    "job_id": str(job.id),
+                    "status": job.status,
+                    "requires_human_verification": job.status == "waiting_human",
+                    "recovery_url": (
+                        f"/acquisition-recovery?channel={channel_id}&job={job.id}"
+                        if job.status == "waiting_human"
+                        else None
+                    ),
+                    "next_action": (
+                        "Open verification in Katcha, complete the source check in that "
+                        "browser, then choose Check access and continue. Your request is saved."
+                        if job.status == "waiting_human"
+                        else "Inspect the acquisition job status."
+                    ),
+                }
         return {
+            "remote_acquisition": recovery_status,
             "kind": "media_source",
             "source_item_id": str(source.id),
             "workflow_id": source.workflow_id,
@@ -142,6 +179,10 @@ def source_item_status(channel_id: uuid.UUID, source_item_id: uuid.UUID) -> dict
             "diagnostic": (source.source_metadata or {}).get("ingestion_diagnostic"),
             "updated_at": source.updated_at.isoformat(),
             "scene_verified": False,
-            "next_action": "Inspect workflow_status using workflow_id for execution details; "
-            "source_history accepts saved search configurations only.",
+            "next_action": (
+                recovery_status["next_action"]
+                if recovery_status and recovery_status["requires_human_verification"]
+                else "Inspect workflow_status using workflow_id for execution details; "
+                "source_history accepts saved search configurations only."
+            ),
         }

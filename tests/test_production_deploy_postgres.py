@@ -168,3 +168,41 @@ def test_real_postgres_handoff_upgrade_and_catalog_drift(postgres_gate):
     sql("ALTER TABLE acquisition_transfers DROP CONSTRAINT ck_acquisition_transfer_size")
     with pytest.raises(app.Blocked, match="handoff schema"):
         app.database_release_postflight(policy)
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        None,
+        "ALTER TABLE acquisition_challenges ALTER COLUMN generation DROP NOT NULL",
+        "ALTER TABLE acquisition_browser_commands ALTER COLUMN payload SET NOT NULL",
+        "ALTER TABLE acquisition_challenges DROP CONSTRAINT uq_acquisition_challenge_generation",
+        "DROP INDEX ix_acquisition_browser_commands_challenge_id",
+        "ALTER TABLE acquisition_browser_commands ALTER COLUMN created_at DROP DEFAULT",
+        "ALTER TABLE acquisition_jobs DROP CONSTRAINT ck_acquisition_job_status",
+    ],
+)
+def test_real_postgres_recovery_upgrade_and_catalog_drift(postgres_gate, drift):
+    app, sql, migrate = postgres_gate
+    sql(
+        "ALTER TABLE acquisition_receipts ADD COLUMN bytes_received integer; "
+        "CREATE TABLE media_asset_validations (size_bytes integer)"
+    )
+    migrate("0064_application_ai_settings")
+    migrate("0065_acquisition_jobs")
+    migrate("0066_acquisition_handoff")
+    sql("INSERT INTO application_ai_settings VALUES ('retained', 'ciphertext')")
+    receipts = sql("TABLE acquisition_receipts")
+    policy = "approve-additive-through-0067"
+    app.database_release_preflight(True, policy)
+    migrate("0067_acquisition_human_recovery")
+    app.database_release_postflight(policy)
+    app.database_release_preflight(False, "refuse")
+    assert sql("TABLE acquisition_receipts") == receipts
+    assert sql("TABLE application_ai_settings") == "retained|ciphertext"
+    if drift:
+        sql(drift)
+        with pytest.raises(app.Blocked):
+            app.database_release_postflight(policy)
+        with pytest.raises(app.Blocked):
+            app.database_release_preflight(False, "refuse")

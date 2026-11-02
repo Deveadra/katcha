@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from katcha.audio.captions import build_caption_cues
-from katcha.editing.blueprints import EditBlueprintContract
+from katcha.editing.blueprints import EditBlueprintContract, MemePolicy
 from katcha.rendering.manifest import RenderCaptionCue, ShortBrandSpec
 
 
@@ -55,9 +56,47 @@ class BlueprintMemeEvent(BaseModel):
     storage_key: str = Field(min_length=1)
     source_url: str = Field(min_length=1, max_length=4000)
     title: str = Field(min_length=1, max_length=300)
+    caption: str = Field(default="", max_length=120)
     start_seconds: float = Field(ge=0, allow_inf_nan=False)
     duration_seconds: float = Field(gt=0, le=10, allow_inf_nan=False)
     volume: float = Field(default=0.55, ge=0, le=1, allow_inf_nan=False)
+
+
+def validate_meme_additions(
+    events: list[BlueprintMemeEvent], policy: MemePolicy, duration_seconds: float,
+) -> None:
+    """Enforce the same remix minimums during preparation and manifest compilation."""
+    if not policy.enabled:
+        return
+    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError("Meme source duration must be finite and positive")
+    for event in events:
+        if event.duration_seconds > policy.max_asset_seconds + 0.00001:
+            raise ValueError("Meme addition exceeds the blueprint duration limit")
+        if event.start_seconds + event.duration_seconds > duration_seconds + 0.00001:
+            raise ValueError("Meme addition extends beyond the source clip")
+        if policy.require_grounded_plan and not event.caption.strip():
+            raise ValueError("Meme remix additions require a contextual caption")
+    if len(events) > policy.max_assets:
+        raise ValueError("Too many meme additions for this blueprint")
+    if len(events) < policy.min_assets:
+        raise ValueError("Meme remix has too few prepared additions")
+    if len({event.kind for event in events}) < policy.min_media_kinds:
+        raise ValueError("Meme remix needs more than one kind of media")
+    visual_events = [event for event in events if event.kind != "audio"]
+    if len(visual_events) < policy.min_visual_assets:
+        raise ValueError("Meme remix has too few visual additions")
+    intervals = sorted(
+        (event.start_seconds, min(duration_seconds, event.start_seconds + event.duration_seconds))
+        for event in events
+    )
+    covered_seconds = 0.0
+    covered_end = 0.0
+    for start, end in intervals:
+        covered_seconds += max(0.0, end - max(start, covered_end))
+        covered_end = max(covered_end, end)
+    if covered_seconds + 0.00001 < duration_seconds * policy.min_coverage_ratio:
+        raise ValueError("Meme additions cover too little of the source video")
 
 
 class BlueprintRenderManifest(BaseModel):
@@ -111,6 +150,10 @@ class BlueprintRenderManifest(BaseModel):
                 > self.output_duration_seconds + 0.00001
             ):
                 raise ValueError("Meme addition extends beyond the source clip")
+
+        validate_meme_additions(
+            self.meme_events, blueprint.meme, self.source.duration_seconds,
+        )
 
         expects_header = blueprint.source_layout.mode == "header_panel"
         if self.header.enabled != expects_header:

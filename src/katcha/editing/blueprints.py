@@ -53,6 +53,19 @@ class MemePolicy(BaseModel):
     enabled: bool = False
     max_assets: int = Field(default=3, ge=0, le=8)
     max_asset_seconds: float = Field(default=3.0, gt=0, le=10)
+    min_assets: int = Field(default=1, ge=1, le=8)
+    min_media_kinds: int = Field(default=1, ge=1, le=3)
+    min_visual_assets: int = Field(default=0, ge=0, le=8)
+    min_coverage_ratio: float = Field(default=0, ge=0, le=1, allow_inf_nan=False)
+    require_grounded_plan: bool = False
+
+    @model_validator(mode="after")
+    def validate_minimums(self) -> MemePolicy:
+        if self.enabled and max(
+            self.min_assets, self.min_media_kinds, self.min_visual_assets,
+        ) > self.max_assets:
+            raise ValueError("Meme minimums must fit within the asset limit")
+        return self
 
 
 class EditBlueprintContract(BaseModel):
@@ -174,8 +187,21 @@ _MEME_V1.ai_guidance.always_rules.append(
     "Find relevant meme sounds, reactions, and images to enhance the source moment."
 )
 
+_MEME_V2 = _MEME_V1.model_copy(deep=True)
+_MEME_V2.version = "2.0.0"
+_MEME_V2.meme = MemePolicy(
+    enabled=True, max_assets=6, max_asset_seconds=5,
+    min_assets=4, min_media_kinds=2, min_visual_assets=2,
+    min_coverage_ratio=0.10, require_grounded_plan=True,
+)
+_MEME_V2.ai_guidance.always_rules.append(
+    "Plan reactions against inspected source moments, use readable visual captions, "
+    "and verify the completed remix meets its minimum additions and coverage."
+)
+
 
 _REGISTRY = {
+    (_MEME_V2.key, _MEME_V2.version): _MEME_V2,
     (_MEME_V1.key, _MEME_V1.version): _MEME_V1,
     (_SOURCE_ORIGINAL_V1.key, _SOURCE_ORIGINAL_V1.version): _SOURCE_ORIGINAL_V1,
     (_PERSONA_COMMENTARY_V1.key, _PERSONA_COMMENTARY_V1.version): _PERSONA_COMMENTARY_V1,
@@ -186,6 +212,12 @@ _REGISTRY = {
 def meme_v1() -> EditBlueprintContract:
     return EditBlueprintContract.model_validate(
         deepcopy(_MEME_V1.model_dump(mode="json"))
+    )
+
+
+def meme_v2() -> EditBlueprintContract:
+    return EditBlueprintContract.model_validate(
+        deepcopy(_MEME_V2.model_dump(mode="json"))
     )
 
 

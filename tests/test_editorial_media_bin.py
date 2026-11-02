@@ -197,7 +197,7 @@ def test_links_and_ready_state_fail_closed(media_bin):
 def test_media_bin_migration_is_additive_and_model_columns_match():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0066_acquisition_handoff"]
+    assert script.get_heads() == ["0067_acquisition_human_recovery"]
     assert script.get_revision("0062_requirement_shot_matching").down_revision == (
         "0061_media_scene_indexes"
     )

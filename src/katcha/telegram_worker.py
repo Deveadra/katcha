@@ -10,7 +10,11 @@ from sqlalchemy import func, select
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import ReviewDecision
-from katcha.integrations.telegram import TelegramAPIError, TelegramBotClient
+from katcha.integrations.telegram import (
+    TelegramAPIError,
+    TelegramBotClient,
+    redact_telegram_secrets,
+)
 from katcha.models import DomainEvent
 from katcha.orchestration.client import (
     start_longform_workflow,
@@ -18,6 +22,7 @@ from katcha.orchestration.client import (
     start_publication_workflow,
     start_short_episode_editorial_workflow,
 )
+from katcha.services.acquisition_notifications import deliver_pending_acquisition_notifications
 from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
@@ -29,6 +34,7 @@ from katcha.services.short_episode_reviews import (
     review_short_episode,
 )
 from katcha.services.telegram_reviews import (
+    OversizedTelegramReview,
     backlogged_sessions,
     ensure_review_sessions,
     feedback_session,
@@ -37,6 +43,7 @@ from katcha.services.telegram_reviews import (
     mark_failed,
     mark_sent,
     operator_binding,
+    oversized_review_url,
     pair_operator,
     pending_review_sessions,
     render_bytes,
@@ -48,6 +55,33 @@ from katcha.telegram_models import TelegramBotCursor, TelegramReviewSession
 
 LOGGER = logging.getLogger("katcha.telegram")
 _CURSOR_KEY = "operator-bot"
+
+
+class _TelegramSafeFormatter(logging.Formatter):
+    """Redact secrets even when they occur inside formatted tracebacks."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_telegram_secrets(super().format(record))
+
+
+def _configure_logging(settings: Settings) -> None:
+    # This is a dedicated worker process. Use a single sanitized root handler
+    # so even an HTTP exception traceback cannot print the bot credential.
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(
+            _TelegramSafeFormatter(
+                "%(asctime)s %(levelname)s %(name)s %(message)s"
+            )
+        )
+    # HTTPX normally prints the entire Bot API URL on every successful poll.
+    # Preserve WARNING/ERROR diagnostics; the shared filter redacts those.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _authorized(
@@ -196,11 +230,48 @@ async def _deliver_pending(
                 if card.file_id:
                     video = card.file_id
                 else:
-                    video = await asyncio.to_thread(
-                        render_bytes,
-                        card,
-                        settings=settings,
-                    )
+                    try:
+                        video = await asyncio.to_thread(
+                            render_bytes,
+                            card,
+                            settings=settings,
+                        )
+                    except OversizedTelegramReview as exc:
+                        review_url = oversized_review_url(card, settings=settings)
+                        if not review_url:
+                            raise ValueError(
+                                "Telegram video exceeds the upload limit and an externally "
+                                "reachable HTTPS review media endpoint is not configured"
+                            ) from exc
+                        message = await asyncio.to_thread(
+                            client.send_message,
+                            card.chat_id,
+                            (
+                                card.caption
+                                + "\n\n▶ This video exceeds Telegram's upload limit. "
+                                + "Open the full video using the secure, expiring "
+                                + "review link below. "
+                                + "Tap Refresh if the link expires."
+                            ),
+                            reply_markup=keyboard(
+                                card.callback_token,
+                                review_url=review_url,
+                            ),
+                        )
+                        set_session_state(
+                            row.id,
+                            "queued",
+                            metadata={
+                                "delivery_mode": "oversized_review_link",
+                                "review_link_available": True,
+                            },
+                        )
+                        mark_sent(
+                            row.id,
+                            message_id=int(message["message_id"]),
+                            telegram_file_id=None,
+                        )
+                        continue
                 message = await asyncio.to_thread(
                     client.send_video,
                     card.chat_id,
@@ -361,6 +432,22 @@ async def _refresh(
         set_session_state(row.id, "queued")
         return "Review re-queued."
     card = review_card(row.id)
+    if dict(row.session_metadata or {}).get("delivery_mode") == "oversized_review_link":
+        review_url = oversized_review_url(card, settings=settings)
+        if not review_url:
+            raise ValueError("The secure review link endpoint is no longer available")
+        await asyncio.to_thread(
+            client.edit_text,
+            row.chat_id,
+            row.message_id,
+            text=(
+                card.caption
+                + "\n\n▶ Open the full video with the refreshed, expiring "
+                + "review link below."
+            ),
+            reply_markup=keyboard(card.callback_token, review_url=review_url),
+        )
+        return "Secure review link refreshed."
     if card.source_kind == "compilation":
         review_url = longform_review_url(card, settings=settings)
         if review_url:
@@ -713,10 +800,7 @@ async def _handle_update(
 
 async def main() -> None:
     settings = get_settings()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    _configure_logging(settings)
     if not settings.telegram_enabled:
         LOGGER.info(
             "Telegram worker is dormant; set KATCHA_TELEGRAM_ENABLED=true to enable it"
@@ -755,6 +839,12 @@ async def main() -> None:
 
     while True:
         try:
+            try:
+                await asyncio.to_thread(deliver_pending_acquisition_notifications, client, settings)
+            except Exception as exc:
+                # Acquisition rollout/DB failures must not stop existing review delivery.
+                # No raw exception: upstream messages may contain private request context.
+                LOGGER.warning("Acquisition notification scan failed type=%s", type(exc).__name__)
             await _deliver_pending(client, settings)
             updates = await asyncio.to_thread(
                 client.get_updates,

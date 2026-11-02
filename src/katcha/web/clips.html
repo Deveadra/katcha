@@ -14,6 +14,7 @@
     <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="/pages/clip-library-aerith.css">
     <script src="/clips.js" defer></script>
+    <script src="/clips-upload.js" defer></script>
     <script src="/launcher-bridge.js" defer></script>
 </head>
 <body data-katcha-page="clips">
@@ -42,7 +43,7 @@
                         <h1>Source media, in context.</h1>
                         <p>Search, inspect, and manage the media Katcha can use.</p>
                     </div>
-                    <a class="button primary" href="/content">Add content</a><button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
+                    <button id="add-media" class="button primary" type="button" disabled>Add media</button><a class="button secondary" href="/content">Add content</a><button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
                 </div>
 
                 <form id="connect-form" class="connect card">
@@ -119,6 +120,31 @@
         </main>
     </div>
 
+    <dialog id="add-media-dialog" class="vault-dialog" aria-labelledby="add-media-title">
+        <div class="dialog-head">
+            <div><div class="eyebrow">CLIP LIBRARY · SOURCE INTAKE</div><h2 id="add-media-title">Add media</h2></div>
+            <button type="button" class="mini" id="upload-media-close">Close</button>
+        </div>
+        <p id="upload-media-channel" class="dialog-copy"></p>
+        <p class="dialog-copy">Upload a reusable video directly to this channel's Clip Library. No Editorial Project is created. Videos up to 4 GiB are supported; larger files transfer directly to R2 in resumable parts.</p>
+        <div class="clip-upload-fields">
+            <label for="upload-media-file">Video file
+                <input id="upload-media-file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.m4v,.mkv,.webm">
+            </label>
+            <label for="upload-media-title">Display title (optional)
+                <input id="upload-media-title" type="text" maxlength="300" placeholder="Defaults to the filename">
+            </label>
+            <label class="check-card"><input id="upload-media-permission" type="checkbox"><span>I have permission to use this video in the selected channel</span></label>
+        </div>
+        <progress id="upload-media-progress" max="100" value="0" aria-label="Upload progress" hidden></progress>
+        <p id="upload-media-status" role="status" aria-live="polite">Choose a local video to upload.</p>
+        <p class="dialog-copy">If the connection drops, reselect the same file with the same title and choose Upload again. Uploaded R2 parts are checked before resuming. Uploading does not grant publication rights or automatically start analysis.</p>
+        <div class="clip-upload-actions">
+            <button id="upload-media-submit" class="button primary" type="button">Upload to Clip Library</button>
+            <button id="upload-media-pause" class="button secondary" type="button" hidden>Pause transfer</button>
+            <button id="upload-media-discard" class="button secondary" type="button" hidden>Discard unfinished upload</button>
+        </div>
+    </dialog>
     <dialog id="retention-dialog" class="vault-dialog">
         <form id="retention-form" method="dialog">
             <div class="dialog-head">
