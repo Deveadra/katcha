@@ -241,7 +241,7 @@ The executor independently checks signed request, strict immutable images, schem
 {"deployment_request_id": 1234567890, "sha": "YOUR_EXACT_SHA", "status": "SUCCEEDED"}
 ```
 
-`SUCCEEDED` must be corroborated by the protected `DEPLOYED` audit and live runtime in Stage 5.
+`SUCCEEDED` must be corroborated by the protected `DEPLOYED` audit and live runtime in Stage 5. The poller uses the status marker `"status":"SUCCEEDED"` and the protected result audit uses `"status":"DEPLOYED"`. Neither one alone is proof of a safe release.
 
 ## 5. Verify, close both gates and test the web app
 
