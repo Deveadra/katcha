@@ -6,8 +6,8 @@ import sys
 import uuid
 from types import SimpleNamespace
 
-import pytest
 from pydantic import SecretStr, ValidationError
+import pytest
 
 from katcha.config import Settings
 from katcha.integrations import twelvelabs_jockey as jockey
