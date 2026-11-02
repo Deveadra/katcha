@@ -8,7 +8,7 @@ const REQUIRED_PUSH_JOBS = Object.freeze([
   'explorer', 'Server browser Chromium acceptance', 'PR Gate',
 ]);
 
-function assessCiJobs(jobs, headSha, runAttempt) {
+function assessCiJobs(jobs, headSha, runAttempt, runId) {
   const problems = [];
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return { ok: false, problems: ['GitHub returned no CI jobs'] };
@@ -21,11 +21,17 @@ function assessCiJobs(jobs, headSha, runAttempt) {
     }
     if (seen.has(job.name)) problems.push('Duplicate CI job: ' + job.name);
     seen.add(job.name);
-    if (job.head_sha && job.head_sha !== headSha) {
-      problems.push(job.name + ': different commit SHA');
+    if (job.head_sha !== headSha) {
+      problems.push(job.name + ': missing or different commit SHA');
     }
-    if (job.run_attempt != null && job.run_attempt !== runAttempt) {
-      problems.push(job.name + ': different run attempt');
+    if (job.run_id !== runId || job.run_attempt !== runAttempt) {
+      problems.push(job.name + ': missing or different run identity');
+    }
+    // A successful DAG dependency is not proof that a runner executed the job.
+    if (!job.runner_id || !Array.isArray(job.steps) ||
+        !job.steps.some((step) => step.name === 'Set up job' &&
+          step.status === 'completed' && step.conclusion === 'success')) {
+      problems.push(job.name + ': no verified runner execution evidence');
     }
     if (job.status !== 'completed' || job.conclusion !== 'success') {
       problems.push(job.name + ': ' + job.status + '/' + job.conclusion);
@@ -54,7 +60,7 @@ async function waitForCompletedCiJobs({
       const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
         owner, repo, run_id: runId, filter: 'latest', per_page: 100,
       });
-      const decision = assessCiJobs(jobs, headSha, runAttempt);
+      const decision = assessCiJobs(jobs, headSha, runAttempt, runId);
       if (decision.ok) {
         log('Verified ' + jobs.length + ' completed/success CI jobs for run ' + runId +
             ' attempt ' + runAttempt + ' at ' + headSha);
