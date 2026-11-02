@@ -1,4 +1,5 @@
 """Mocked Jockey upload, indexing and measured retrieval, with zero provider traffic."""
+# ruff: noqa: F811
 
 from __future__ import annotations
 
