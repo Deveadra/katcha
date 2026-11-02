@@ -527,24 +527,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: renderer/package-lock.json
 
-      - name: Cache renderer npm downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: renderer-npm-${{ runner.os }}-${{ hashFiles('renderer/package.json') }}
-          restore-keys: |
-            renderer-npm-${{ runner.os }}-
-
-      - name: Install renderer dependencies
-        run: timeout --signal=TERM --kill-after=10s 300s npm install --ignore-scripts --no-audit --no-fund
+      - name: Install renderer dependencies from committed lockfile
+        run: |
+          timeout --signal=TERM --kill-after=10s 300s npm ci --ignore-scripts --no-audit --no-fund
+          npm ls --depth=0
+          git diff --exit-code -- package-lock.json
 
       # Remotion pins and verifies its own headless shell version.
       - name: Cache Remotion headless browser
         uses: actions/cache@v4
         with:
           path: renderer/node_modules/.remotion/chrome-headless-shell
-          key: renderer-browser-${{ runner.os }}-${{ hashFiles('renderer/package.json') }}
+          key: renderer-browser-${{ runner.os }}-${{ hashFiles('renderer/package-lock.json') }}
 
       - name: Ensure FFmpeg
         run: bash ../scripts/ci-install-ffmpeg.sh
