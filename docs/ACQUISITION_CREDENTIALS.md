@@ -68,7 +68,7 @@ The checker starts a temporary container as UID/GID 10001, overrides its entrypo
 disables networking, drops capabilities, and mounts only the selected files read-only.
 It checks metadata, opens and closes each file **without reading any bytes**, and
 checks the filesystem read-only flag. It removes only its temporary checker container.
-This verifies file access and mount behavior, not authentication with Cloudflare or Katcha.
+This verifies file access and mount behavior, not authentication with Cloudflare or Katcha. Run the live read-only `python -m katcha.acquisition.worker --check-auth` check from the actual worker runtime after mounting credentials; see [Access authentication and 403 diagnosis](ACQUISITION_ACCESS_AUTH.md).
 
 ## Configure the worker
 
