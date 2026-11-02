@@ -424,6 +424,8 @@ def search_jockey(
         if existing is not None:
             if existing.input_digest != request_digest:
                 raise EditorialConflict("Jockey search key was reused with different inputs")
+            if existing.artifacts.get("snapshot_digest") != stamp:
+                raise EditorialConflict("Saved Jockey search is stale; media or rights changed")
             return _search_receipt(existing)
         previous = list(
             session.scalars(
