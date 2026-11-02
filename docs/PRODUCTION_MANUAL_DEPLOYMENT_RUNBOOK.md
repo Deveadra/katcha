@@ -122,6 +122,8 @@ TARGET_SHA='PASTE_SAME_EXACT_40_CHARACTER_SHA'
 sudo python3 \
   /usr/local/lib/katcha-production-deploy/release_eligibility.py \
   "$TARGET_SHA"
+sudo /usr/local/sbin/katcha-production-deploy --readiness
+sudo /usr/local/sbin/katcha-production-deploy --plan-release "$TARGET_SHA"
 ```
 
 | Result | Meaning |
@@ -133,7 +135,7 @@ sudo python3 \
 
 The `installed_tool_version.source_sha` may differ from the application `TARGET_SHA`; it identifies root-owned **deployer tooling**. The legacy diagnostic field `migration` can show a supported baseline; use `database_start_revision` / `release_plan.database_revision` for the *actual* live schema.
 
-**Migration policy:** If `schema_change=false` and `migration_files=[]`, choose **`migration_policy=refuse`**. When `0066_acquisition_handoff` is already applied and verified, do **not** apply it again. For a proposed migration, inspect the exact diff/blob and live database, evaluate compatibility and forward repair, and separately authorize only the proposed reviewed policy. If schema or migration identity differs, **STOP**. No manual Alembic stamp, schema downgrade or forced rollback.
+**Migration policy:** If `schema_change=false` and `migration_files=[]`, choose **`migration_policy=refuse`**. Production was verified at `0067_acquisition_human_recovery` on November 2, 2026; treat that as a dated observation, not a substitute for a fresh database check. When `0066_acquisition_handoff` or `0067_acquisition_human_recovery` is already applied and verified, do **not** apply it again. For a proposed migration, inspect the exact diff/blob and live database, evaluate compatibility and forward repair, and separately authorize only the proposed reviewed policy. If schema or migration identity differs, **STOP**. No manual Alembic stamp, schema downgrade or forced rollback.
 
 **Temporal policy:** Default **`running_workflows=refuse`** blocks deployment when workflows remain running. Review actual IDs/types and pending work using:
 
@@ -168,6 +170,8 @@ sudo systemctl is-enabled katcha-restore-test.timer
 The restore timer is **weekly**: an empty 48-hour journal isn't proof of failure. Confirm the latest isolated restore passed for **three databases**, the backup completion marker, enabled timer, and no later failure. See [Disaster Recovery Backups](DISASTER_RECOVERY_BACKUPS.md). Historic journal evidence does not replace the executor's **fresh backup and isolated restore checks before stopping production**. If evidence is missing/stale/failed, **STOP** and investigate; don't restore over production.
 
 **Decision gate:** Complete the worksheet, document any migration policy other than `refuse`, independently approve `approved-resume` if needed, verify capacity and a recovery operator, and confirm leadership/fencing readiness. Only then proceed.
+
+**Production planning is a read-only review, not permission to deploy.** A release with only application changes on an already verified `0067` database normally uses `migration_policy=refuse`; use exactly the policy produced by the live planner. Never widen the migration policy to resolve a block.
 
 **Deployer installation is NOT a routine step.** If `--diagnose-release` is unavailable because tools are outdated, use the [one-time tool installation procedure](PRODUCTION_DEPLOYMENT_RUNBOOK.md) *after review*, and redo all checks. The current installer fetches **live `origin/main` internally**; freeze new merges, verify its installed `source_sha` and do not assume it is pinned to your `TARGET_SHA`. Future engineering should make this explicitly SHA-pinned.
 
