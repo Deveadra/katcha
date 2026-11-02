@@ -21,6 +21,7 @@ on:
       - renderer/**
 
 permissions:
+  actions: read
   contents: read
   packages: write
   pull-requests: read
@@ -52,6 +53,11 @@ jobs:
       has_images: ${{ steps.plan.outputs.has_images }}
       release_sha: ${{ steps.plan.outputs.release_sha }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          # For workflow_run, read only the exact CI-tested main commit.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Select images and platforms
         id: plan
         uses: actions/github-script@v7
@@ -96,6 +102,20 @@ jobs:
                 core.setOutput("release_sha", "");
                 return;
               }
+              // Workflow success alone is not release evidence. The October 22
+              // incident showed an independently queued renderer check.
+              const {waitForCompletedCiJobs} = require(
+                process.env.GITHUB_WORKSPACE + "/scripts/ci-release-job-gate.cjs"
+              );
+              await waitForCompletedCiJobs({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                runId: run.id,
+                headSha: run.head_sha,
+                runAttempt: run.run_attempt,
+                log: (message) => core.info(message),
+              });
               releaseSha = run.head_sha;
             }
             if (context.eventName === "pull_request") {
