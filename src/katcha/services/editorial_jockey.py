@@ -231,6 +231,9 @@ def advance_index(
             _reserve(session, project, settings)
             locked.options = {**locked.options, "chargeable_operations": 2}
             locked.stage = "item_create_submitting"
+        if _source(channel, project, item_id) != source:
+            _block(run_id, "permission_changed_before_item_create")
+            raise EditorialConflict("Source permission changed before remote indexing")
         try:
             item = _client(settings, client).knowledge_store_items.create(
                 knowledge_store_id=store_id,
@@ -469,6 +472,12 @@ def search_jockey(
                 },
             )
         )
+    _, preflight_gaps, preflight_stamp = _snapshot(
+        channel, project, body.item_ids, store=store or ObjectStore()
+    )
+    if preflight_gaps or preflight_stamp != stamp:
+        _block(run_id, "permission_changed_before_search")
+        raise EditorialConflict("Footage or rights changed before provider inspection")
     try:
         raw = search_candidates(
             channel_id=channel,
