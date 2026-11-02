@@ -186,7 +186,10 @@ def test_auth_cli_success_does_not_run_worker_loop(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("response", "reason"),
     [
-        (httpx.Response(401, json={"detail": "private-auth-sentinel"}), "katcha_principal_http_401"),
+        (
+            httpx.Response(401, json={"detail": "private-auth-sentinel"}),
+            "katcha_principal_http_401",
+        ),
         (httpx.Response(403, text="edge-private-sentinel"), "edge_or_unclassified_http_403"),
         (
             httpx.Response(302, headers={"Location": "https://login.example/private-sentinel"}),
