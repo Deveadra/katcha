@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import uuid
 
@@ -226,6 +227,7 @@ def test_denied_journal_request_stops_processing_other_jobs(tmp_path, monkeypatc
 
 
 def test_permanent_auth_failure_backoff_resets_after_recovery(caplog):
+    caplog.set_level(logging.INFO, logger="katcha.acquisition.worker")
     responses = iter(
         [
             ControlAuthBlocked("edge_or_unclassified_http_403"),
