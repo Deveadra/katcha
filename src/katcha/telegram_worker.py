@@ -249,7 +249,8 @@ async def _deliver_pending(
                             (
                                 card.caption
                                 + "\n\n▶ This video exceeds Telegram's upload limit. "
-                                + "Open the full video using the secure, expiring review link below. "
+                                + "Open the full video using the secure, expiring "
+                                + "review link below. "
                                 + "Tap Refresh if the link expires."
                             ),
                             reply_markup=keyboard(
