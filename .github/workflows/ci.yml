@@ -749,6 +749,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test release-job gate against stale, missing and failed check records
+        run: node --test scripts/ci-release-job-gate.test.cjs
       - name: Require every selected check to pass
         env:
           CHECK_RESULTS: ${{ toJson(needs) }}
