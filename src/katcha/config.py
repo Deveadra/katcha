@@ -434,6 +434,26 @@ class Settings(BaseSettings):
     elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
     semantic_matching_dispatch_enabled: bool = False
+    # Optional Jockey inspection; canonical media, rights and receipts remain Katcha-owned.
+    twelvelabs_jockey_api_token: SecretStr | None = None
+    twelvelabs_jockey_dispatch_enabled: bool = False
+    # Canonical channel UUID -> dedicated provider knowledge store.
+    twelvelabs_jockey_knowledge_stores: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("twelvelabs_jockey_knowledge_stores")
+    @classmethod
+    def validate_jockey_stores(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for channel, store in value.items():
+            channel_id = str(uuid.UUID(channel))
+            if channel != channel_id:
+                raise ValueError("Jockey knowledge-store keys must be canonical channel UUIDs")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", store):
+                raise ValueError("Invalid Jockey knowledge-store ID")
+            normalized[channel_id] = store
+        if len(set(normalized.values())) != len(normalized):
+            raise ValueError("Each channel requires a distinct Jockey knowledge store")
+        return normalized
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
         "free_first"
