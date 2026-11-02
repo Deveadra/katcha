@@ -339,6 +339,19 @@ def _measured_candidates(
     return results
 
 
+def _search_receipt(run: EditorialRun) -> dict[str, Any]:
+    return {
+        "run_id": str(run.id),
+        "status": run.status,
+        "stage": run.stage,
+        "error": run.error,
+        "result": run.artifacts.get("jockey_result") if run.status == "completed" else None,
+        "billing_reconciliation_required": True,
+        "automatic_retry_allowed": False,
+        "human_review_required": True,
+    }
+
+
 def get_search(
     channel: uuid.UUID, project: uuid.UUID, run_id: uuid.UUID,
     *, store: ObjectStore | None = None,
@@ -354,16 +367,7 @@ def get_search(
     _, gaps, stamp = _snapshot(channel, project, request.item_ids, store=store or ObjectStore())
     if gaps or stamp != run.artifacts.get("snapshot_digest"):
         raise EditorialConflict("Jockey search is stale; current footage evidence changed")
-    return {
-        "run_id": str(run.id),
-        "status": run.status,
-        "stage": run.stage,
-        "error": run.error,
-        "result": run.artifacts.get("jockey_result") if run.status == "completed" else None,
-        "billing_reconciliation_required": True,
-        "automatic_retry_allowed": False,
-        "human_review_required": True,
-    }
+    return _search_receipt(run)
 
 
 def search_jockey(
@@ -420,7 +424,7 @@ def search_jockey(
         if existing is not None:
             if existing.input_digest != request_digest:
                 raise EditorialConflict("Jockey search key was reused with different inputs")
-            return get_search(channel, project, run_id, store=store)
+            return _search_receipt(existing)
         previous = list(
             session.scalars(
                 select(EditorialRun).where(
