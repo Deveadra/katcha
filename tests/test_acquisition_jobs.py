@@ -490,7 +490,7 @@ def test_audit_failure_rolls_back_job_and_receipt_reservation(job_db, monkeypatc
 
 
 @pytest.fixture
-def job_client(job_db, monkeypatch):
+def job_client(job_db, monkeypatch, tmp_path):
     from fastapi import Depends, FastAPI
     from fastapi.testclient import TestClient
 
@@ -499,6 +499,9 @@ def job_client(job_db, monkeypatch):
     from katcha.config import Settings
 
     channel, other, _ = job_db
+    worker_token = tmp_path / "worker-token"
+    worker_token.write_text("worker-a-fixture-token-001\n")
+    worker_token.chmod(0o600)
     settings = Settings(
         _env_file=None,
         remote_acquisition_enabled=True,
@@ -511,7 +514,7 @@ def job_client(job_db, monkeypatch):
             },
             {
                 "name": "worker-a",
-                "token": "worker-a-fixture-token-001",
+                "credentials": [{"id": "installed", "token_file": str(worker_token)}],
                 "scopes": ["acquisition:work"],
                 "channel_profile_ids": [str(channel)],
             },
@@ -661,6 +664,10 @@ def test_api_worker_cannot_enqueue_cancel_or_access_other_routes(job_db, job_cli
         response = client.post(root + suffix, headers=headers("worker-a"), json=body)
         assert response.status_code == 403, response.text
     assert client.get("/v1/channels", headers=headers("worker-a")).status_code == 403
+    other_root = f"/v1/channels/{job_db[1]}/acquisition-jobs"
+    assert client.get(other_root, headers=headers("worker-a")).status_code == 403
+    assert client.get(root, headers=headers("worker-a")).status_code == 200
+    assert client.get(root, headers=headers()).status_code == 200
 
 
 def test_api_another_worker_cannot_report_or_heartbeat_an_existing_lease(job_db, job_client):
