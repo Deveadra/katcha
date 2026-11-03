@@ -160,6 +160,49 @@ When this registry is configured, the legacy `KATCHA_CONTROL_API_TOKEN` is not a
 Without a registry, the existing single-token setup remains backward compatible through
 `KATCHA_CONTROL_API_TOKEN` and `KATCHA_CONTROL_API_SCOPES`.
 
+Machine principals can reference an installed private token without embedding its
+value in the core environment. Append a principal to the existing registry; preserve
+every operator entry. A credential accepts exactly one of `token` or `token_file`:
+
+```json
+{
+  "name": "acquisition-worker",
+  "credentials": [
+    {"id": "installed", "token_file": "/run/katcha-acquisition/worker-token"}
+  ],
+  "scopes": ["acquisition:work"],
+  "channel_profile_ids": ["2a1dc777-fae4-4f5c-a6fd-eeabe4826af1"]
+}
+```
+
+The absolute path is inside the API container. If services share an environment
+file, use an API-specific registry override; keep other services' existing
+registries intact. Every process configured with a file reference must be able
+to read that file at startup. Provision a private, read-only mount
+readable by the API UID; keep its parent directories private and trusted. The final
+file must be a regular file with no group/other permissions (0400 or 0600), contain
+one UTF-8 token of at least 16 characters, and be at most 4096 bytes. Final symlinks,
+devices, FIFOs, missing files, insecure modes and ambiguous sources fail startup.
+Only mount the bearer file into the API, never the worker's Cloudflare secret,
+browser credentials or full private directory. Do not print file contents, hashes
+or serialized configuration during registration checks.
+
+Files are read once during settings initialization. Atomic replacement does not
+reload a running API. For rotation, configure separate current/next credentials
+with distinct IDs, files and validity windows, restart/recreate the API and worker
+as needed for replaced bind-mount inodes, and canary the next credential before
+retiring the old one. Disabled/expired credentials and duplicate tokens retain
+their existing rejection rules. This is file-backed registration support, not
+an automated renewal or live deployment workflow.
+
+For #566, source support alone does not repair production. Before promoting any
+registration, verify the deployed release and mount, preserve existing operator
+access, prove the intended queue GET succeeds and other-channel/operator requests
+are denied, then repeat after restart. Independently correlate the public 403's
+Cloudflare Ray ID with Access and WAF logs and reconcile the exact live route with
+reviewed Terraform. Keep acquisition activation gated on the issue's remaining
+release, backup, workflow, credential-lifecycle and permissioned-media acceptance.
+
 Named principals are fail-closed. A restricted principal can use only explicitly scoped
 control-plane surfaces. Unmapped `/v1` routes return 403 instead of silently inheriting
 bearer access. Channel-restricted principals are also checked against channel IDs in URL

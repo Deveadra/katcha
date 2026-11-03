@@ -1,4 +1,6 @@
+import os
 import re
+import stat
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -17,9 +19,38 @@ class ControlCredentialSettings(BaseModel):
         pattern=r"^[A-Za-z0-9_.:-]+$",
     )
     token: SecretStr
+    token_file: Path | None = None
     not_before: datetime | None = None
     expires_at: datetime | None = None
     disabled: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def load_private_token(cls, value):
+        if not isinstance(value, dict) or value.get("token_file") is None:
+            return value
+        if "token" in value:
+            raise ValueError("control credential requires exactly one of token or token_file")
+        # Resolve once at process startup. Never insert a raw file secret into
+        # Pydantic's validation input, including on errors in sibling fields.
+        try:
+            path = Path(value["token_file"])
+            if not path.is_absolute():
+                raise ValueError("absolute path required")
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+                    raise ValueError("private regular file required")
+                data = stream.read(4097)
+            if len(data) > 4096:
+                raise ValueError("credential too large")
+            token = data.decode("utf-8").strip()
+            if len(token) < 16 or any(char.isspace() for char in token):
+                raise ValueError("invalid credential")
+        except (OSError, ValueError, TypeError):
+            raise ValueError("control credential token_file is unavailable or unsafe") from None
+        return {**value, "token": SecretStr(token)}
 
     @field_validator("token", mode="before")
     @classmethod

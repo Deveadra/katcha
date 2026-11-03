@@ -23,6 +23,142 @@ from katcha.api.control_auth import (
 from katcha.config import Settings
 
 
+def _private_credential(tmp_path, content="worker-private-fixture-token-0001"):
+    path = tmp_path / "worker-token"
+    path.write_text(content)
+    path.chmod(0o600)
+    return path
+
+
+def test_file_credential_preserves_operator_and_worker_channel_boundary(tmp_path):
+    channel_id = uuid.uuid4()
+    path = _private_credential(tmp_path)
+    settings = Settings(
+        _env_file=None,
+        control_principals=[
+            {"name": "operator", "token": "operator-fixture-token-0001"},
+            {
+                "name": "acquisition-worker",
+                "credentials": [{"id": "installed", "token_file": str(path)}],
+                "scopes": ["acquisition:work"],
+                "channel_profile_ids": [str(channel_id)],
+            },
+        ],
+    )
+    token = path.read_text()
+    request = _request(
+        f"/v1/channels/{channel_id}/acquisition-jobs",
+        path_params={"channel_profile_id": str(channel_id)},
+    )
+    _authenticate(request, _credentials(token), settings)
+    _require_named_principal_route_access(request)
+    require_control_channel(request, channel_id)
+    assert control_principal_name(request) == "acquisition-worker"
+    other_channel_id = str(uuid.uuid4())
+    for denied in (
+        _request(
+            f"/v1/channels/{other_channel_id}/acquisition-jobs",
+            path_params={"channel_profile_id": other_channel_id},
+        ),
+        _request("/v1/channels", method="POST"),
+    ):
+        _authenticate(denied, _credentials(token), settings)
+        with pytest.raises(HTTPException) as exc:
+            _require_named_principal_route_access(denied)
+            require_control_channel(denied, denied.path_params["channel_profile_id"])
+        assert exc.value.status_code == 403
+    operator = _request("/v1/channels", method="POST")
+    _authenticate(operator, _credentials("operator-fixture-token-0001"), settings)
+    _require_named_principal_route_access(operator)
+    assert token not in repr(settings)
+    assert token not in settings.model_dump_json()
+
+
+@pytest.mark.parametrize("kind", ["missing", "public", "symlink", "directory", "fifo",
+                                  "short", "oversized", "binary", "multiline", "relative",
+                                  "ambiguous"])
+def test_file_credential_rejects_unsafe_sources_without_leaking_content(tmp_path, kind):
+    from katcha.config import ControlCredentialSettings
+
+    secret = "private-file-fixture-must-not-appear"
+    path = _private_credential(tmp_path, secret)
+    value = {"id": "installed", "token_file": str(path)}
+    if kind == "missing":
+        path.unlink()
+    elif kind == "public":
+        path.chmod(0o644)
+    elif kind == "symlink":
+        link = tmp_path / "link"
+        link.symlink_to(path)
+        value["token_file"] = str(link)
+    elif kind in {"directory", "fifo"}:
+        path.unlink()
+        if kind == "directory":
+            path.mkdir(mode=0o700)
+        else:
+            import os
+            os.mkfifo(path, 0o600)
+    elif kind == "short":
+        path.write_text("short")
+    elif kind == "oversized":
+        path.write_text(secret * 200)
+    elif kind == "binary":
+        path.write_bytes(b"\xff" * 32)
+    elif kind == "multiline":
+        path.write_text(secret + "\n" + secret)
+    elif kind == "relative":
+        value["token_file"] = "worker-token"
+    elif kind == "ambiguous":
+        value["token"] = "other-inline-fixture-token"
+    with pytest.raises(ValidationError) as exc:
+        ControlCredentialSettings(**value)
+    assert secret not in str(exc.value)
+    assert secret not in repr(exc.value.errors())
+
+
+def test_file_credential_rotation_requires_restart_and_rechecks_duplicates(tmp_path):
+    from katcha.config import ControlCredentialSettings
+
+    path = _private_credential(tmp_path)
+    original = path.read_text()
+    current = ControlCredentialSettings(id="installed", token_file=path)
+    replacement = tmp_path / "replacement"
+    replacement.write_text("rotated-worker-fixture-token-0002\n")
+    replacement.chmod(0o600)
+    replacement.replace(path)
+    assert current.token.get_secret_value() == original
+    refreshed = ControlCredentialSettings(id="installed", token_file=path)
+    assert refreshed.token.get_secret_value() == path.read_text().strip()
+    with pytest.raises(ValidationError, match="tokens must be unique"):
+        Settings(_env_file=None, control_principals=[
+            {"name": "worker", "credentials": [{"id": "file", "token_file": path}]},
+            {"name": "operator", "token": path.read_text().strip()},
+        ])
+
+
+def test_file_credential_window_and_error_redaction(tmp_path):
+    from katcha.config import ControlCredentialSettings
+
+    path = _private_credential(tmp_path)
+    secret = path.read_text()
+    with pytest.raises(ValidationError) as exc:
+        ControlCredentialSettings(id="installed", token_file=path, expires_at="invalid")
+    assert secret not in str(exc.value)
+    assert secret not in repr(exc.value.errors())
+    for metadata in (
+        {"disabled": True},
+        {"expires_at": "2000-01-01T00:00:00Z"},
+        {"not_before": "2100-01-01T00:00:00Z"},
+    ):
+        settings = Settings(_env_file=None, control_principals=[{
+            "name": "worker",
+            "credentials": [{"id": "file", "token_file": path, **metadata}],
+        }])
+        with pytest.raises(HTTPException) as denied:
+            _authenticate(_request(), _credentials(secret), settings)
+        assert denied.value.status_code == 401
+
+
 def _request(
     path: str = "/v1/channels",
     *,

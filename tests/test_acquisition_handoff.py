@@ -37,8 +37,8 @@ def job_db(request):
 
 
 @pytest.fixture
-def job_client(job_db, monkeypatch):
-    yield from foundation.job_client.__wrapped__(job_db, monkeypatch)
+def job_client(job_db, monkeypatch, tmp_path):
+    yield from foundation.job_client.__wrapped__(job_db, monkeypatch, tmp_path)
 
 
 class FakeS3:
