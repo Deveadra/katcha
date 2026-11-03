@@ -311,8 +311,15 @@ class Worker:
                 )
         try:
             lease = self.request("POST", path + "/claim", {"claim_id": state["claim_id"]})
-        except LeaseLost:
-            if not recovering:
+        except ControlAuthBlocked:
+            # Global control auth failure is never a recoverable lease conflict.
+            # Do not issue a second mutation when Access or Katcha denied us.
+            raise
+        except LeaseLost as exc:
+            # Only the authenticated claim conflict permits an upload-only
+            # recovery attempt. Missing jobs, proxy responses and malformed
+            # control replies must stop without another mutation.
+            if not recovering or str(exc) != "control_http_409":
                 raise
             lease = self.request(
                 "POST",

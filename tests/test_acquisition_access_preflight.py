@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sys
 import uuid
@@ -296,3 +297,100 @@ def test_transient_reconciliation_keeps_short_polling_interval():
 
     with pytest.raises(StopPolling):
         run_worker_polls(FakeWorker(), sleep=sleep)
+
+
+@pytest.fixture
+def known_acquired_journal(tmp_path):
+    worker = build_worker(
+        tmp_path, lambda _request: pytest.fail("Unexpected network request")
+    )
+    journal = Journal(worker.state_dir, CHANNEL, str(uuid.uuid4()))
+    media_bytes = b"harmless-local-recovery-fixture"
+    filename = "media.bin"
+    (journal.directory / filename).write_bytes(media_bytes)
+    journal.update(
+        phase="acquired",
+        generation=1,
+        filename=filename,
+        size_bytes=len(media_bytes),
+        sha256=hashlib.sha256(media_bytes).hexdigest(),
+    )
+    return worker, journal
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ControlAuthBlocked("edge_or_unclassified_http_403"),
+        ControlAuthBlocked("katcha_principal_http_401"),
+        ControlAuthBlocked("edge_or_unclassified_redirect"),
+        LeaseLost("control_non_json_response"),
+        LeaseLost("control_http_404"),
+        LeaseLost("control_http_410"),
+        LeaseLost("control_http_503"),
+    ],
+)
+def test_acquired_media_does_not_attempt_recovery_after_nonconflict_denial(
+    known_acquired_journal, failure,
+):
+    worker, journal = known_acquired_journal
+    calls = []
+
+    def request(method, path, payload=None):
+        calls.append((method, path))
+        raise failure
+
+    worker.request = request
+    original = dict(journal.state)
+    with pytest.raises(type(failure), match=str(failure)):
+        worker._run_job(journal, current={"status": "leased"})
+    assert len(calls) == 1
+    assert calls[0][0] == "POST"
+    assert calls[0][1].endswith("/claim")
+    assert journal.state == original
+    assert (journal.directory / original["filename"]).is_file()
+
+
+def test_acquired_media_recovery_attempt_only_after_authenticated_claim_conflict(
+    known_acquired_journal,
+):
+    worker, journal = known_acquired_journal
+    calls = []
+
+    class StopAtRecovery(Exception):
+        pass
+
+    def request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if path.endswith("/claim"):
+            raise LeaseLost("control_http_409")
+        if path.endswith("/upload/recover"):
+            raise StopAtRecovery()
+        pytest.fail("Unexpected control operation")
+
+    worker.request = request
+    with pytest.raises(StopAtRecovery):
+        worker._run_job(journal, current={"status": "leased"})
+    assert len(calls) == 2
+    assert calls[0][1].endswith("/claim")
+    assert calls[1][1].endswith("/upload/recover")
+    assert calls[1][2]["claim_id"] == journal.state["claim_id"]
+    assert calls[1][2]["sha256"] == journal.state["sha256"]
+
+
+def test_missing_media_checkpoint_never_triggers_upload_recovery(tmp_path):
+    worker = build_worker(
+        tmp_path, lambda _request: pytest.fail("Unexpected network request")
+    )
+    journal = Journal(worker.state_dir, CHANNEL, str(uuid.uuid4()))
+    calls = []
+
+    def request(_method, path, _payload=None):
+        calls.append(path)
+        raise LeaseLost("control_http_409")
+
+    worker.request = request
+    with pytest.raises(LeaseLost, match="control_http_409"):
+        worker._run_job(journal, current={"status": "leased"})
+    assert len(calls) == 1
+    assert calls[0].endswith("/claim")
