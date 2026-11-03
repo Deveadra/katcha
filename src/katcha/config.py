@@ -437,6 +437,8 @@ class Settings(BaseSettings):
     # Optional Jockey inspection; canonical media, rights and receipts remain Katcha-owned.
     twelvelabs_jockey_api_token: SecretStr | None = None
     twelvelabs_jockey_dispatch_enabled: bool = False
+    # Durable ceiling on outbound asset-create, item-create and search attempts per project.
+    twelvelabs_jockey_max_operations_per_project: int = Field(default=0, ge=0, le=1000)
     # Canonical channel UUID -> dedicated provider knowledge store.
     twelvelabs_jockey_knowledge_stores: dict[str, str] = Field(default_factory=dict)
 

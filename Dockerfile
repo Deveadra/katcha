@@ -20,7 +20,7 @@ WORKDIR /app
 # therefore reuse this expensive layer instead of reinstalling dependencies.
 COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c 'import subprocess,tomllib; data=tomllib.load(open("pyproject.toml","rb")); deps=data["project"]["dependencies"]+data["project"]["optional-dependencies"]["ai"]; subprocess.check_call(["python","-m","pip","install",*deps])'
+    python -c 'import subprocess,tomllib; data=tomllib.load(open("pyproject.toml","rb")); deps=data["project"]["dependencies"]+data["project"]["optional-dependencies"]["ai"]+data["project"]["optional-dependencies"]["twelvelabs"]; subprocess.check_call(["python","-m","pip","install",*deps])'
 
 # Fail the image build if the bundled extractor runtime cannot execute.
 RUN node --version && ssh -V && python -c "import yt_dlp_ejs"
