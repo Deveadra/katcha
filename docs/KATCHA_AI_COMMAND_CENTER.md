@@ -175,7 +175,10 @@ every operator entry. A credential accepts exactly one of `token` or `token_file
 }
 ```
 
-The absolute path is inside the API container. Provision a private, read-only mount
+The absolute path is inside the API container. If services share an environment
+file, use an API-specific registry override; keep other services' existing
+registries intact. Every process configured with a file reference must be able
+to read that file at startup. Provision a private, read-only mount
 readable by the API UID; keep its parent directories private and trusted. The final
 file must be a regular file with no group/other permissions (0400 or 0600), contain
 one UTF-8 token of at least 16 characters, and be at most 4096 bytes. Final symlinks,
