@@ -310,6 +310,21 @@ TOOLS = {
             "configuration availability is not proof of a successful live operation", "ai:read",
         ),
         GoalTool(
+            "acquisition_jobs",
+            "Read recent persisted acquisition jobs in this channel, including queued, "
+            "waiting_human, failed and independently completed handoffs. "
+            "No jobs means no recorded remote attempt, not a broken downloader. "
+            "These historical states do not probe provider access or current worker health.",
+            "channels:read", "GET", "/v1/channels/{channel_profile_id}/acquisition-jobs",
+        ),
+        GoalTool(
+            "acquisition_job",
+            "Read one observed channel acquisition job's phase, byte progress, heartbeat, "
+            "failure code and media_verified state. Waiting for an operator is not failure "
+            "or acquired media. Does not expose browser commands, cookies or retry controls.",
+            "channels:read", "GET", "/v1/channels/{channel_profile_id}/acquisition-jobs/{job_id}",
+        ),
+        GoalTool(
             "browser_open_page",
             "Open a public HTTPS research page in isolated server-side Chromium and return "
             "rendered page evidence without client-browser dependence or approval. "
@@ -971,6 +986,7 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "scout_run_id",
                 "asset_run_id",
                 "direction_run_id",
+                "job_id",
             }
             and value is not None
         ):
@@ -1376,6 +1392,7 @@ def native_route_tool(path: str, method: str) -> GoalTool | None:
 
 def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
+    from katcha.acquisition_job_models import AcquisitionJob
     from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
     from katcha.editorial_models import EditorialProject, EditorialRun, ProjectMediaItem
@@ -1388,6 +1405,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     from katcha.shot_matching_models import RequirementShotPackage
 
     mapping = {
+        "job_id": AcquisitionJob,
         "project_id": EditorialProject,
         "item_id": ProjectMediaItem,
         "package_id": RequirementShotPackage,
