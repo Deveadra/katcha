@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Small, tracked WSL entry point for the existing OCI Bastion operator helper.
-# No production bootstrap, implicit browser login, or OCI resource creation.
+# Does not bootstrap production, log in implicitly, or create compute/disks.
 set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 command="${1:-connect}"
