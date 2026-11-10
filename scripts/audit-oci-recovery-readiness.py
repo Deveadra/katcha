@@ -147,7 +147,15 @@ def metadata(argv: list[str], *, empty_list_ok: bool = False) -> dict:
 
 
 def github_vars() -> dict[str, str]:
-    raw = read_command(["gh", "variable", "list", "--repo", REPO, "--json", "name,value"])
+    try:
+        raw = read_command(["gh", "variable", "list", "--repo", REPO,
+                            "--json", "name,value"])
+    except AuditError as exc:
+        raise AuditError(
+            "GITHUB_VARIABLES_UNAVAILABLE: verify 'gh auth status -h github.com' "
+            "and 'gh variable list -R Deveadra/katcha'. If necessary, run "
+            "'gh auth login -h github.com' and check GH_TOKEN/GITHUB_TOKEN overrides."
+        ) from exc
     try:
         rows = json.loads(raw)
         if not isinstance(rows, list) or any(
