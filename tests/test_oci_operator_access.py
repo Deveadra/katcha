@@ -654,3 +654,30 @@ def test_startup_is_tracked_read_only_status_passthrough():
     assert 'command="${1:-connect}"' in startup
     assert 'status|doctor|audit|metrics|disconnect|reauth|repair-access)' in startup
     assert 'exec bash "$script_dir/katcha-oci-admin.sh" "$command" "$@"' in startup
+
+
+def test_startup_status_and_connect_dispatch_without_live_oci(tmp_path):
+    import os
+    import subprocess
+
+    fake_python = tmp_path / "python3"
+    fake_python.write_text('#!/bin/sh\\nprintf "%s\\\\n" "$@"\\n', encoding="utf-8")
+    fake_python.chmod(0o700)
+    env = os.environ.copy()
+    env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
+    wrapper = str(Path("scripts/katcha-oci-startup.sh"))
+
+    status = subprocess.run(
+        ["bash", wrapper, "status"], capture_output=True, text=True,
+        check=False, env=env, timeout=10,
+    )
+    assert status.returncode == 0
+    assert status.stdout.splitlines()[-1] == "status"
+    assert "connect" not in status.stdout
+
+    connection = subprocess.run(
+        ["bash", wrapper], capture_output=True, text=True,
+        check=False, env=env, timeout=10,
+    )
+    assert connection.returncode == 0
+    assert connection.stdout.splitlines()[-1] == "connect"
