@@ -562,9 +562,13 @@ def test_audit_expired_admin_still_runs_host_backup_audit(monkeypatch, capsys):
 def test_audit_valid_admin_with_failed_probe_prints_direct_command(monkeypatch, capsys):
     monkeypatch.setattr(admin, "admin_valid", lambda: True)
     monkeypatch.setattr(admin, "handshake", lambda: False)
-    monkeypatch.setattr(admin, "run", lambda *a, **k: (
-        (_ for _ in ()).throw(admin.AccessError("command failed: python3 (exit 2)"))
-    ))
+
+    def probe(args, timeout=45):
+        if args[:3] == ["gh", "variable", "list"]:
+            return "[]"
+        raise admin.AccessError("command failed: python3 (exit 2)")
+
+    monkeypatch.setattr(admin, "run", probe)
     assert admin.audit() is False
     out = capsys.readouterr().out
     assert "python3 scripts/audit-oci-recovery-readiness.py --iam-only" in out
@@ -603,3 +607,50 @@ def test_ssh_exit_stops_wait_without_accepting_unrelated_listener(monkeypatch):
     )
     monkeypatch.setattr(admin.time, "sleep", lambda seconds: pytest.fail("do not wait after exit"))
     assert not admin.wait_for_forward_listener(child)
+
+
+def test_github_variable_error_has_actionable_private_diagnostics(monkeypatch):
+    def fail(args, timeout=45):
+        raise admin.AccessError("command failed: gh (exit 1)")
+
+    monkeypatch.setattr(admin, "run", fail)
+    with pytest.raises(admin.AccessError) as error:
+        admin.variable("KATCHA_OCI_BASTION_ID")
+    message = str(error.value)
+    assert "gh auth status -h github.com" in message
+    assert "gh variable list -R Deveadra/katcha" in message
+    assert "GH_TOKEN" in message
+    assert "OCI resources were changed" in message
+    assert "command failed: gh (exit 1)" not in message
+
+
+def test_gh_preflight_blocks_redundant_iam_and_capacity_probes(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "admin_valid", lambda: True)
+    monkeypatch.setattr(admin, "handshake", lambda: False)
+    calls = []
+
+    def fail(args, timeout=45):
+        calls.append(args)
+        assert args[:3] == ["gh", "variable", "list"]
+        raise admin.AccessError("command failed: gh (exit 1)")
+
+    monkeypatch.setattr(admin, "run", fail)
+    assert admin.audit() is False
+    assert len(calls) == 1
+    output = capsys.readouterr().out
+    assert "audit_github_variables: UNAVAILABLE" in output
+    assert "IAM: BLOCKED (GitHub Actions variables unavailable" in output
+    assert "CAPACITY: BLOCKED (GitHub Actions variables unavailable" in output
+
+
+def test_default_admin_command_is_read_only_status(monkeypatch):
+    monkeypatch.setattr(admin, "status", lambda: False)
+    monkeypatch.setattr(admin, "connect", lambda: pytest.fail("connect must be explicit"))
+    assert admin.main([]) == 2
+
+
+def test_startup_is_tracked_read_only_status_passthrough():
+    startup = Path("scripts/katcha-oci-startup.sh").read_text(encoding="utf-8")
+    assert 'command="${1:-connect}"' in startup
+    assert 'status|doctor|audit|metrics|disconnect|reauth|repair-access)' in startup
+    assert 'exec bash "$script_dir/katcha-oci-admin.sh" "$command" "$@"' in startup
