@@ -696,7 +696,9 @@ jobs:
   explorer:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.explorer == 'true'
-    runs-on: ubuntu-latest
+    # Playwright WebKit in the committed lockfile needs ICU 74, available on
+    # Ubuntu 24.04 but absent from the rolling ubuntu-latest (26.04) image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -712,7 +714,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-all-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
+          key: playwright-all-ubuntu-24.04-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - name: Install browser test dependencies
         run: timeout --signal=TERM --kill-after=10s 300s npm ci --ignore-scripts
       - name: Configure Ubuntu package mirrors for Playwright
