@@ -1,5 +1,70 @@
 # Operator OCI access — one short command
 
+## Chronos startup and GitHub browser-free login
+
+The tracked `scripts/katcha-oci-startup.sh` preserves the previously local
+operator workflow: **no arguments open interactive SSH** to the existing OCI
+primary after the managed localhost Bastion tunnel is verified. Use `connect`
+only to establish/reuse the tunnel, and `status` for a read-only check.
+The startup script no longer implicitly launches OCI browser reauthentication
+or assumes GitHub credentials are valid. It never automatically changes the
+Bastion CIDR allowlist; `repair-access` remains separately authorized by the
+operator's interactive `UPDATE` approval.
+
+The browser success page for GitHub device authentication does **not** mean
+the WSL `gh auth login` process finished. Interrupting it with Ctrl+C can leave
+`~/.config/gh/hosts.yml` with the prior invalid credential. When Chromium
+will not launch correctly under WSL, use the following explicit helper:
+
+```bash
+cd ~/src/katcha
+bash scripts/katcha-oci-startup.sh github-login
+# Enter the new one-time code in your *normal Windows browser* at:
+# https://github.com/login/device
+# KEEP THE WSL COMMAND RUNNING until it reports successful login.
+bash scripts/katcha-oci-startup.sh github-doctor
+bash scripts/katcha-oci-startup.sh doctor
+bash scripts/katcha-oci-startup.sh
+```
+
+The helper uses `GH_BROWSER=/bin/true` and `BROWSER=/bin/true` only for the
+login subprocess so Chromium is not launched; the operator opens the
+GitHub device page manually. It avoids inherited `GH_TOKEN` and
+`GITHUB_TOKEN` during login and the immediate verification, but it cannot
+modify the parent WSL shell's environment. If another shell still exports an
+invalid token, run `unset GH_TOKEN GITHUB_TOKEN` in that shell and review any
+shell startup configuration that re-exports it. Do not print token contents.
+
+**Git transport:** `gh auth login` authenticates the GitHub API.
+`ssh -T git@github.com` separately tests Git-over-SSH; there is no
+`gh ssh -T` or `git ssh -T` subcommand.
+
+### Safe local diagnostics
+
+The Python OCI admin helper records allowlisted, token-free events under:
+
+`~/.config/katcha/production/bastion/operator-tunnel/operator-events.jsonl`
+
+The file is created mode `0600` and appends structured UTC timestamps, action
+names, and restricted failure categories. It deliberately **does not** record
+GitHub/OCI credentials, raw command arguments or stderr, session identifiers,
+IP addresses, browser device codes, or production secrets. The existing
+`ssh.log` can contain lower-level SSH diagnostics and must remain local and
+owner-only. For sanitized recent events run:
+
+```bash
+bash scripts/katcha-oci-startup.sh diagnostics
+bash scripts/katcha-oci-startup.sh github-doctor
+bash scripts/katcha-oci-startup.sh doctor
+```
+
+`github-doctor` reports independently whether local GitHub authentication
+and repository Actions variable access work, without printing the variable
+values. Logs establish where a local attempt stopped, **not** that live
+Bastion connectivity succeeded. Only a verified, pinned primary SSH handshake
+after `connect` can establish that.
+
+
 Run in Ubuntu WSL from the Katcha checkout:
 
 ```bash
@@ -84,8 +149,6 @@ keeping host backup checks independent when a verified tunnel already exists.
 A failing GitHub preflight does **not** authorize bypassing repository
 variables, changing IAM, or creating a Bastion session.
 
-The tracked `scripts/katcha-oci-startup.sh` is the canonical entry point:
-without arguments it calls `connect`; with `status`, it runs read-only
-`status` and never tries to establish a new tunnel. If you already have an
-**untracked** startup script on Chronos, save your local copy before pulling
-the branch or merged PR, since Git will not overwrite untracked work.
+The tracked startup script preserves the interactive SSH connection with no
+arguments and implements a read-only `status` path. Before pulling the PR,
+save any previously untracked local copy to a separate backup file.
