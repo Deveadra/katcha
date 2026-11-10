@@ -739,8 +739,6 @@ def test_github_doctor_success_tests_repository_access(monkeypatch, capsys):
 
 
 def test_sanitized_diagnostics_rejects_unapproved_fields(monkeypatch, tmp_path, capsys):
-    import json
-
     monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "operator")
     admin.log_event("command_start", action="connect")
     admin.log_event("github_request_failed", reason="github_unauthorized")
