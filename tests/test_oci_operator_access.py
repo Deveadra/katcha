@@ -651,9 +651,12 @@ def test_default_admin_command_is_read_only_status(monkeypatch):
 
 def test_startup_is_tracked_read_only_status_passthrough():
     startup = Path("scripts/katcha-oci-startup.sh").read_text(encoding="utf-8")
-    assert 'command="${1:-connect}"' in startup
-    assert 'status|doctor|audit|metrics|disconnect|reauth|repair-access)' in startup
-    assert 'exec bash "$script_dir/katcha-oci-admin.sh" "$command" "$@"' in startup
+    assert 'command="${1:-ssh}"' in startup
+    assert 'connect|status|doctor|audit|metrics|disconnect|reauth|repair-access|' in startup
+    assert 'github-doctor|diagnostics)' in startup
+    assert 'exec bash "$ADMIN" "$command" "$@"' in startup
+    assert 'exec ssh -F /dev/null -4' in startup
+    assert 'StrictHostKeyChecking=yes' in startup
 
 
 def test_startup_status_and_connect_dispatch_without_live_oci(tmp_path):
@@ -676,8 +679,96 @@ def test_startup_status_and_connect_dispatch_without_live_oci(tmp_path):
     assert "connect" not in status.stdout
 
     connection = subprocess.run(
-        ["bash", wrapper], capture_output=True, text=True,
+        ["bash", wrapper, "connect"], capture_output=True, text=True,
         check=False, env=env, timeout=10,
     )
     assert connection.returncode == 0
     assert connection.stdout.splitlines()[-1] == "connect"
+
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text('#!/bin/sh\nprintf "SSH_FAKE %s\\n" "$@"\n', encoding="utf-8")
+    fake_ssh.chmod(0o700)
+    interactive = subprocess.run(
+        ["bash", wrapper], capture_output=True, text=True,
+        check=False, env=env, timeout=10,
+    )
+    assert interactive.returncode == 0
+    assert "connect" in interactive.stdout
+    assert "SSH_FAKE" in interactive.stdout
+    assert "StrictHostKeyChecking=yes" in interactive.stdout
+
+def test_gh_http_401_is_classified_without_echoing_provider_stderr(monkeypatch, tmp_path):
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "operator")
+    class Fake:
+        returncode = 1
+        stderr = "HTTP 401: Bad credentials; token super-secret-abc"
+        stdout = "potential private data"
+    monkeypatch.setattr(admin.subprocess, "run", lambda *args, **kwargs: Fake())
+    with pytest.raises(admin.AccessError) as exc:
+        admin.run(["gh", "variable", "get", "KATCHA_OCI_BASTION_ID"])
+    assert "github_unauthorized" in str(exc.value)
+    assert "super-secret" not in str(exc.value)
+    assert "private data" not in str(exc.value)
+
+    event_log = admin.STATE_DIR / "operator-events.jsonl"
+    assert "github_unauthorized" in event_log.read_text(encoding="utf-8")
+    assert "super-secret" not in event_log.read_text(encoding="utf-8")
+    assert event_log.stat().st_mode & 0o077 == 0
+
+
+def test_github_doctor_failed_auth_never_attempts_variables(monkeypatch, capsys):
+    calls = []
+    def fail_auth(args, timeout=45):
+        calls.append(args)
+        raise admin.AccessError("GitHub CLI failed (github_unauthorized, exit 1)")
+    monkeypatch.setattr(admin, "run", fail_auth)
+    assert admin.github_doctor() is False
+    assert calls == [["gh", "auth", "status", "-h", "github.com"]]
+    out = capsys.readouterr().out
+    assert "github_cli_auth: FAILED" in out
+    assert "github-login" in out
+
+
+def test_github_doctor_success_tests_repository_access(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(admin, "run", lambda args, timeout=45: calls.append(args) or "[]")
+    assert admin.github_doctor() is True
+    assert calls[0] == ["gh", "auth", "status", "-h", "github.com"]
+    assert calls[1][:3] == ["gh", "variable", "list"]
+    assert "github_repo_variables: PASS" in capsys.readouterr().out
+
+
+def test_sanitized_diagnostics_rejects_unapproved_fields(monkeypatch, tmp_path, capsys):
+    import json
+
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "operator")
+    admin.log_event("command_start", action="connect")
+    admin.log_event("github_request_failed", reason="github_unauthorized")
+    admin.log_event("NOT_APPROVED", reason="secret-value")
+    target = admin.STATE_DIR / "operator-events.jsonl"
+    assert target.stat().st_mode & 0o077 == 0
+    assert admin.diagnostics() is True
+    output = capsys.readouterr().out
+    assert '"event": "command_start"' in output
+    assert '"reason": "github_unauthorized"' in output
+    assert "secret-value" not in output
+    assert len(target.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_operator_log_cannot_follow_symlink(monkeypatch, tmp_path):
+    outside = tmp_path / "outside"
+    outside.write_text("unchanged", encoding="utf-8")
+    folder = tmp_path / "operator"
+    folder.mkdir()
+    (folder / "operator-events.jsonl").symlink_to(outside)
+    monkeypatch.setattr(admin, "STATE_DIR", folder)
+    admin.log_event("command_start", action="connect")
+    assert outside.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_startup_github_login_uses_no_browser_and_never_prints_credentials():
+    script = Path("scripts/katcha-oci-startup.sh").read_text(encoding="utf-8")
+    assert "GH_BROWSER=/bin/true BROWSER=/bin/true" in script
+    assert "env -u GH_TOKEN -u GITHUB_TOKEN" in script
+    assert "--skip-ssh-key --web" in script
+    assert "gh auth token" not in script
