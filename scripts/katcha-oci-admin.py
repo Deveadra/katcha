@@ -30,6 +30,12 @@ TARGET_KEY = HOME / ".ssh/katcha-oci"
 SCRIPTS = Path(__file__).resolve().parent
 SWITCHES = ("KATCHA_OCI_RECOVERY_CONFIGURED", "KATCHA_EXTERNAL_COMPUTE_ENABLED",
             "KATCHA_OCI_PAID_FALLBACK_ENABLED")
+GITHUB_RECOVERY_HINT = (
+    "Check 'gh auth status -h github.com' and "
+    "'gh variable list -R Deveadra/katcha'; if needed, run "
+    "'gh auth login -h github.com'. Check for an expired GH_TOKEN or "
+    "GITHUB_TOKEN overriding the saved login. No OCI resources were changed."
+)
 
 
 class AccessError(Exception):
@@ -95,7 +101,29 @@ def reauth() -> None:
 
 
 def variable(name: str) -> str:
-    return run(["gh", "variable", "get", name, "-R", REPO], 30)
+    try:
+        value = run(["gh", "variable", "get", name, "-R", REPO], 30)
+    except AccessError as exc:
+        raise AccessError(
+            "GitHub Actions variable '" + name + "' unavailable. "
+            + GITHUB_RECOVERY_HINT
+        ) from exc
+    if not value:
+        raise AccessError(
+            "GitHub Actions variable '" + name + "' is empty. "
+            + GITHUB_RECOVERY_HINT
+        )
+    return value
+
+
+def github_audit_ready() -> bool:
+    """Check the prerequisite shared by both read-only OCI metadata audits."""
+    try:
+        run(["gh", "variable", "list", "-R", REPO, "--json", "name"], 30)
+    except AccessError:
+        print("audit_github_variables: UNAVAILABLE. " + GITHUB_RECOVERY_HINT)
+        return False
+    return True
 
 
 def valid_ocid(value: str, kind: str) -> bool:
@@ -531,12 +559,16 @@ def status() -> bool:
     else:
         connected = False
         print("bastion_tunnel:", "STALE_MANAGED" if state else "MISSING")
+    github_warning = False
     for switch in SWITCHES:
         try:
             state_value = variable(switch)
             print(switch + ":", "SAFE_FALSE" if state_value.lower() == "false" else "REVIEW")
-        except AccessError:
+        except AccessError as exc:
             print(switch + ": NOT_VERIFIED")
+            if not github_warning:
+                print("github_variables: UNAVAILABLE (" + str(exc) + ")")
+                github_warning = True
     return valid and connected
 
 
@@ -548,6 +580,7 @@ def audit() -> bool:
     admin_ready = admin_valid()
     if not admin_ready:
         print("audit_admin_session: NEEDS_BROWSER_LOGIN")
+    github_ready = github_audit_ready() if admin_ready else False
     for name, command, markers in [
         ("IAM", "audit-oci-recovery-readiness.py", ["vault_admin_session: VALID",
                                                     "candidate_four_secret_only_grant: PASS"]),
@@ -557,6 +590,11 @@ def audit() -> bool:
         if not admin_ready:
             print(name + ": BLOCKED (administrator session invalid or unavailable; "
                   "run 'bash scripts/katcha-oci-admin.sh reauth')")
+            success = False
+            continue
+        if not github_ready:
+            print(name + ": BLOCKED (GitHub Actions variables unavailable; "
+                  "no OCI metadata audit attempted)")
             success = False
             continue
         arguments = [sys.executable, str(SCRIPTS / command)]
@@ -604,8 +642,9 @@ def audit() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "connect", "disconnect", "audit",
-                                             "doctor", "reauth", "repair-access", "metrics"))
+    parser.add_argument("command", nargs="?", default="status",
+                        choices=("status", "connect", "disconnect", "audit",
+                                 "doctor", "reauth", "repair-access", "metrics"))
     command = parser.parse_args(argv).command
     try:
         if command == "status":
