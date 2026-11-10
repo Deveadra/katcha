@@ -140,7 +140,9 @@ jobs:
   python:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 currently defaults to PostgreSQL 18. The CI service is
+    # PostgreSQL 16, so pin the runner with the matching client package.
+    runs-on: ubuntu-24.04
     # Full suite previously hit 15 minutes without a failing test result.
     timeout-minutes: 30
     services:
