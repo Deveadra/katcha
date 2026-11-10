@@ -40,7 +40,11 @@ GITHUB_RECOVERY_HINT = (
 
 
 class AccessError(Exception):
-    pass
+    """Operator failure with an optional vetted diagnostic reason."""
+
+    def __init__(self, message: str, *, reason: str = "") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 # Persist only allowlisted metadata; NEVER raw provider stderr, command arguments,
@@ -174,14 +178,14 @@ def run(args: list[str], timeout: int = 45) -> str:
                       else "github_unavailable")
             log_event("github_request_failed", reason=reason)
             raise AccessError("GitHub CLI failed (" + reason + "); check WSL "
-                              "installation/network and retry") from exc
+                              "installation/network and retry", reason=reason) from exc
         raise AccessError("local command unavailable or timed out: " + Path(args[0]).name) from exc
     if result.returncode:
         if Path(args[0]).name == "gh":
             reason = github_failure(result.stderr or "")
             log_event("github_request_failed", reason=reason)
             raise AccessError("GitHub CLI failed (" + reason + ", exit "
-                              + str(result.returncode) + ")")
+                              + str(result.returncode) + ")", reason=reason)
         raise AccessError("command failed: " + Path(args[0]).name
                           + " (exit " + str(result.returncode) + ")")
     return result.stdout.strip()
@@ -238,10 +242,14 @@ def variable(name: str) -> str:
     try:
         value = run(["gh", "variable", "get", name, "-R", REPO], 30)
     except AccessError as exc:
-        log_event("github_variable_unavailable", reason="github_failed")
+        # Never forward raw nested exception text from this boundary. Even if
+        # callers supply unexpected errors, preserve only a known enum value.
+        reason = (exc.reason if exc.reason in REASONS
+                  and exc.reason.startswith("github_") else "github_failed")
+        log_event("github_variable_unavailable", reason=reason)
         raise AccessError(
-            "GitHub Actions variable '" + name + "' unavailable: "
-            + str(exc) + ". " + GITHUB_RECOVERY_HINT
+            "GitHub Actions variable '" + name + "' unavailable ("
+            + reason + "). " + GITHUB_RECOVERY_HINT, reason=reason
         ) from exc
     if not value:
         raise AccessError(
