@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 
 HOME = Path.home()
@@ -42,12 +43,145 @@ class AccessError(Exception):
     pass
 
 
+# Persist only allowlisted metadata; NEVER raw provider stderr, command arguments,
+# GitHub tokens, OCI session identifiers, IP addresses, or interactive login URLs.
+EVENTS = frozenset({
+    "command_start", "command_finished", "command_failed",
+    "github_request_failed", "github_variable_unavailable",
+    "bastion_active", "bastion_access_mismatch", "session_created",
+    "session_active", "ssh_forward_attempt", "ssh_forward_failed",
+    "ssh_handshake_failed", "tunnel_verified", "session_cleanup_failed",
+})
+REASONS = frozenset({
+    "github_unauthorized", "github_forbidden", "github_not_found",
+    "github_failed", "github_timeout", "github_unavailable",
+    "bastion_mismatch", "session_unknown", "ssh_failed", "target_unverified",
+})
+ACTIONS = frozenset({
+    "status", "connect", "disconnect", "audit", "doctor", "reauth",
+    "repair-access", "metrics", "github-doctor", "diagnostics",
+})
+
+
+def log_event(event: str, *, action: str = "", reason: str = "") -> None:
+    """Append small, token-free events to an owner-only local log.
+
+    Logging is best-effort so diagnostic I/O cannot block safe OCI operations.
+    Paths are fixed. No caller-provided message or exception text is persisted.
+    """
+    if event not in EVENTS or (action and action not in ACTIONS) or (
+        reason and reason not in REASONS
+    ):
+        return
+    record = {"utc": datetime.now(timezone.utc).isoformat(), "event": event}
+    if action:
+        record["action"] = action
+    if reason:
+        record["reason"] = reason
+    try:
+        if STATE_DIR.is_symlink():
+            return
+        STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if STATE_DIR.is_symlink():
+            return
+        # Existing operator state directory is already owner-only. Do not make
+        # log files group/world-readable under permissive umask settings.
+        fd = os.open(STATE_DIR / "operator-events.jsonl",
+                     os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, (json.dumps(record, sort_keys=True) + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def github_failure(stderr: str) -> str:
+    """Classify provider errors without ever exposing their raw output."""
+    if "HTTP 401" in stderr or "Bad credentials" in stderr:
+        return "github_unauthorized"
+    if "HTTP 403" in stderr or "Resource not accessible" in stderr:
+        return "github_forbidden"
+    if "HTTP 404" in stderr:
+        return "github_not_found"
+    return "github_failed"
+
+
+def diagnostics() -> bool:
+    """Display only verified fields from the latest local structured events."""
+    path = STATE_DIR / "operator-events.jsonl"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            size = os.fstat(fd).st_size
+            offset = max(0, size - 131072)
+            os.lseek(fd, offset, os.SEEK_SET)
+            raw = os.read(fd, min(size, 131072)).decode("utf-8", "replace")
+        finally:
+            os.close(fd)
+    except OSError:
+        print("operator_events: NO_LOCAL_LOG (run a command to record events)")
+        return False
+    if offset:
+        raw = raw.partition("\n")[2]  # ignore truncated first record
+    rows = []
+    for line in raw.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(value, dict) or value.get("event") not in EVENTS:
+            continue
+        if value.get("action", "") not in ACTIONS | {""}:
+            continue
+        if value.get("reason", "") not in REASONS | {""}:
+            continue
+        if not isinstance(value.get("utc"), str):
+            continue
+        rows.append({key: value[key] for key in ("utc", "event", "action", "reason")
+                     if key in value})
+    print("operator_events: sanitized; last " + str(min(len(rows), 25)) + " events")
+    for row in rows[-25:]:
+        print(json.dumps(row, sort_keys=True))
+    return bool(rows)
+
+
+def github_doctor() -> bool:
+    """Read-only local GH auth and repository-variable access preflight."""
+    for label, argv in (
+        ("github_cli_auth", ["gh", "auth", "status", "-h", "github.com"]),
+        ("github_repo_variables", ["gh", "variable", "list", "-R", REPO,
+                                   "--json", "name"]),
+    ):
+        try:
+            run(argv, 30)
+        except AccessError as exc:
+            print(label + ": FAILED (" + str(exc) + ")")
+            print("Next: bash scripts/katcha-oci-startup.sh github-login; "
+                  "finish the device flow in WSL and check GH_TOKEN/GITHUB_TOKEN.")
+            return False
+        print(label + ": PASS")
+    return True
+
+
 def run(args: list[str], timeout: int = 45) -> str:
     try:
         result = subprocess.run(args, capture_output=True, text=True, check=False, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if Path(args[0]).name == "gh":
+            reason = ("github_timeout" if isinstance(exc, subprocess.TimeoutExpired)
+                      else "github_unavailable")
+            log_event("github_request_failed", reason=reason)
+            raise AccessError("GitHub CLI failed (" + reason + "); check WSL "
+                              "installation/network and retry") from exc
         raise AccessError("local command unavailable or timed out: " + Path(args[0]).name) from exc
     if result.returncode:
+        if Path(args[0]).name == "gh":
+            reason = github_failure(result.stderr or "")
+            log_event("github_request_failed", reason=reason)
+            raise AccessError("GitHub CLI failed (" + reason + ", exit "
+                              + str(result.returncode) + ")")
         raise AccessError("command failed: " + Path(args[0]).name
                           + " (exit " + str(result.returncode) + ")")
     return result.stdout.strip()
@@ -104,9 +238,10 @@ def variable(name: str) -> str:
     try:
         value = run(["gh", "variable", "get", name, "-R", REPO], 30)
     except AccessError as exc:
+        log_event("github_variable_unavailable", reason="github_failed")
         raise AccessError(
-            "GitHub Actions variable '" + name + "' unavailable. "
-            + GITHUB_RECOVERY_HINT
+            "GitHub Actions variable '" + name + "' unavailable: "
+            + str(exc) + ". " + GITHUB_RECOVERY_HINT
         ) from exc
     if not value:
         raise AccessError(
@@ -427,6 +562,7 @@ def connect() -> None:
     with lock():
         state = load()
         if state and owned(state) and handshake():
+            log_event("tunnel_verified", action="connect")
             print("bastion_tunnel: CONNECTED; reused existing managed tunnel")
             return
         if state and owned(state) and listening():
@@ -459,7 +595,9 @@ def connect() -> None:
                   file=sys.stderr)
         else:
             if allow_status == "MISMATCH":
+                log_event("bastion_access_mismatch", reason="bastion_mismatch")
                 raise AccessError(reason + " Refusing to create a doomed session.")
+        log_event("bastion_active", action="connect")
         key = STATE_DIR / "session_key"
         if key.exists() or key.is_symlink():
             raise AccessError("unexpected ephemeral key exists; investigate manually")
@@ -476,10 +614,12 @@ def connect() -> None:
             if not valid_ocid(sid, "bastionsession"):
                 raise AccessError("Bastion session result ambiguous; inspect sessions before retrying")
             save({"session_id": sid, "pid": None, "target_ip": ip})
+            log_event("session_created", action="connect")
             for _ in range(45):
                 phase = oci("bastion", "session", "get", "--session-id", sid,
                             "--query", 'data."lifecycle-state"', "--raw-output")
                 if phase == "ACTIVE":
+                    log_event("session_active", action="connect")
                     break
                 if phase in ("DELETED", "FAILED", "EXPIRED", "CANCELED"):
                     raise AccessError("Bastion session terminal: " + phase)
@@ -488,6 +628,7 @@ def connect() -> None:
                 raise AccessError("Bastion session activation timed out")
             host = sid + "@host.bastion." + REGION + ".oci.oraclecloud.com"
             for _ in range(24):
+                log_event("ssh_forward_attempt", action="connect")
                 log_fd = os.open(STATE_DIR / "ssh.log",
                                  os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(log_fd, "wb") as log:
@@ -509,10 +650,13 @@ def connect() -> None:
                 if wait_for_forward_listener(child):
                     for _ in range(6):
                         if handshake():
+                            log_event("tunnel_verified", action="connect")
                             print("bastion_tunnel: CONNECTED on 127.0.0.1:22022")
                             print("Used existing Bastion; session TTL three hours; no VM/disk created")
                             return
                         time.sleep(2)
+                    log_event("ssh_handshake_failed", action="connect",
+                              reason="target_unverified")
                     raise AccessError("SSH listener ready but pinned primary handshake failed")
                 if child.poll() is None:
                     child.terminate()
@@ -522,12 +666,14 @@ def connect() -> None:
                     encoding="utf-8", errors="replace"
                 )
                 if "Connection to " in log_data and "closed by remote host" in log_data:
+                    log_event("ssh_forward_failed", action="connect", reason="bastion_mismatch")
                     raise AccessError(
                         "Bastion remote host closed SSH before the local tunnel was established. "
                         "Run 'doctor' to compare current IPv4 egress with the Bastion CIDR allowlist. "
                         "Do not create repeated sessions or change network settings blindly."
                     )
                 if "Permission denied (publickey)" not in log_data:
+                    log_event("ssh_forward_failed", action="connect", reason="ssh_failed")
                     raise AccessError("Bastion SSH failed; inspect protected ssh.log locally")
                 time.sleep(3)
             raise AccessError("Bastion SSH key propagation timed out")
@@ -538,6 +684,8 @@ def connect() -> None:
                 try:
                     delete_session(sid)
                 except AccessError:
+                    log_event("session_cleanup_failed", action="connect",
+                              reason="session_unknown")
                     print("NOTICE: managed OCI session cleanup failed; state retained", file=sys.stderr)
                     raise
                 (STATE_DIR / "session.json").unlink(missing_ok=True)
@@ -644,9 +792,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="status",
                         choices=("status", "connect", "disconnect", "audit",
-                                 "doctor", "reauth", "repair-access", "metrics"))
+                                 "doctor", "reauth", "repair-access", "metrics",
+                                 "github-doctor", "diagnostics"))
     command = parser.parse_args(argv).command
+    log_event("command_start", action=command)
     try:
+        if command == "github-doctor":
+            return 0 if github_doctor() else 2
+        if command == "diagnostics":
+            return 0 if diagnostics() else 2
         if command == "status":
             return 0 if status() else 2
         if command == "doctor":
@@ -681,8 +835,11 @@ def main(argv: list[str] | None = None) -> int:
         print("\nOCI_OPERATOR_STOP: interrupted by operator", file=sys.stderr)
         return 130
     except (AccessError, OSError) as exc:
+        log_event("command_failed", action=command)
         print("OCI_OPERATOR_STOP: " + str(exc), file=sys.stderr)
         return 2
+    finally:
+        log_event("command_finished", action=command)
     return 0
 
 
