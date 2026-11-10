@@ -205,7 +205,15 @@ jobs:
           pytest -q tests/test_media_decode.py
 
       - name: Install PostgreSQL recovery and media test tools
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client ffmpeg
+        # Match the postgres:16-alpine CI service. Newer pg_dump/pg_restore
+        # emits SET transaction_timeout, which PostgreSQL 16 cannot accept.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16 ffmpeg
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/pg_restore --version
 
       - name: Test manual content recovery first
         env:
