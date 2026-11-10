@@ -53,3 +53,39 @@ bash scripts/katcha-oci-admin.sh audit
 ```
 
 If your observed HTTPS and SSH egress addresses differ, stop; this repair does not infer SSH egress from a VPN, split tunnel, or proxy. This command deliberately replaces only an existing *single* `/32` rule and refuses unfamiliar allowlist layouts, rather than silently removing additional permitted operators. For an unexpected OCI error or ambiguous update result, inspect via `doctor` before retrying; **OCI access changes are never attempted during `status`, `doctor`, or `audit`.**
+
+
+## GitHub CLI authentication failure on Chronos
+
+OCI authentication and GitHub CLI authentication are separate. If `connect`,
+`doctor`, or `repair-access` previously stopped with only
+`OCI_OPERATOR_STOP: command failed: gh (exit 1)`, the wrapper could not
+read its authoritative GitHub Actions variables; that alone does **not**
+establish a failed Bastion, a broken primary, or an incorrect client allowlist.
+
+From WSL, run these commands without printing any token values:
+
+```bash
+cd ~/src/katcha
+gh auth status -h github.com
+gh variable list -R Deveadra/katcha
+# If GitHub authentication is invalid:
+gh auth login -h github.com
+# If login appears valid but variable reads fail, examine the active
+# account's access to Deveadra/katcha and whether GH_TOKEN or GITHUB_TOKEN
+# is set and overriding the saved CLI login (never print the token).
+bash scripts/katcha-oci-admin.sh doctor
+```
+
+The CLI now reports the failing variable name and a safe next action rather
+than an unhelpful `gh (exit 1)`. Both read-only administrator audits check
+GitHub variable access once before invoking two separate Python probes,
+keeping host backup checks independent when a verified tunnel already exists.
+A failing GitHub preflight does **not** authorize bypassing repository
+variables, changing IAM, or creating a Bastion session.
+
+The tracked `scripts/katcha-oci-startup.sh` is the canonical entry point:
+without arguments it calls `connect`; with `status`, it runs read-only
+`status` and never tries to establish a new tunnel. If you already have an
+**untracked** startup script on Chronos, save your local copy before pulling
+the branch or merged PR, since Git will not overwrite untracked work.
