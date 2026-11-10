@@ -661,7 +661,7 @@ def test_startup_status_and_connect_dispatch_without_live_oci(tmp_path):
     import subprocess
 
     fake_python = tmp_path / "python3"
-    fake_python.write_text('#!/bin/sh\\nprintf "%s\\\\n" "$@"\\n', encoding="utf-8")
+    fake_python.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
     fake_python.chmod(0o700)
     env = os.environ.copy()
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
