@@ -624,6 +624,22 @@ def test_github_variable_error_has_actionable_private_diagnostics(monkeypatch):
     assert "command failed: gh (exit 1)" not in message
 
 
+def test_variable_failure_classifies_without_leaking_nested_stderr(monkeypatch, tmp_path):
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "operator")
+    def fail(args, timeout=45):
+        raise admin.AccessError(
+            "untrusted CLI stderr with secret-credential", reason="github_unauthorized"
+        )
+    monkeypatch.setattr(admin, "run", fail)
+    with pytest.raises(admin.AccessError) as err:
+        admin.variable("KATCHA_OCI_BASTION_ID")
+    assert "github_unauthorized" in str(err.value)
+    assert "secret-credential" not in str(err.value)
+    events = (admin.STATE_DIR / "operator-events.jsonl").read_text(encoding="utf-8")
+    assert "github_unauthorized" in events
+    assert "secret-credential" not in events
+
+
 def test_gh_preflight_blocks_redundant_iam_and_capacity_probes(monkeypatch, capsys):
     monkeypatch.setattr(admin, "admin_valid", lambda: True)
     monkeypatch.setattr(admin, "handshake", lambda: False)
