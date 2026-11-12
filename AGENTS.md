@@ -5,6 +5,16 @@ use plain-language tasks, hide implementation details by default, explain empty
 and error states, and preserve user input during recovery. Extend the existing
 application and its authentication/launcher integration.
 
+## Canonical autonomy requirements
+
+For Katcha autonomous-content features and end-to-end integration, **read and follow
+[`KATCHA_AUTONOMY_SPEC.md`](KATCHA_AUTONOMY_SPEC.md)**. It defines R01–R19,
+required RankSnaxx/FORESCENE workflows, stage contracts, policy gates, and
+A01–A22 acceptance evidence. Treat it as a target specification, not a claim
+that the capabilities are already deployed or verified. Ensure each new feature
+connects to its upstream and downstream stages; never substitute mock success
+for live evidence.
+
 ## Autonomous parallel development
 Use docs/agent-coordination for role, contracts and backlog. Live merged PRs and CI outrank stale backlog state.
 Each agent owns its own feature branch and necessary implementation, including ordinary API/model changes and additive Alembic migrations. No coordinator-appointed owner or routine permission request. Check active PRs and migration heads to avoid real collisions.
