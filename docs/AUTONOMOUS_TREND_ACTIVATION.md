@@ -108,3 +108,24 @@ The recurring workflow continues-as-new after a bounded number of cycles.
 - `GET /v1/trends/activation-runs/{run_id}/decisions`
 
 A disabled or absent policy cannot autonomously plan content. A schedule may remain durable while a policy is disabled; its runs terminate without activation until a later version enables the policy.
+
+## Recovery of saved-source opportunity handoffs
+
+Completed saved-source discovery survives a downstream trend-ranking outage. The
+existing automatic research scheduler now reconciles failed handoffs, missing
+channel-interest configuration and paused channels after a bounded exponential
+backoff (5 minutes up to 60 minutes). It reuses stored discoveries and the stable
+`source:<discovery-run-id>` ranking identity; it does not repeat provider discovery
+or infer permission to acquire media. Reassigned sources remain blocked from
+cross-channel reuse.
+
+Each attempt retains its versioned receipt in an append-only domain event, while
+`DiscoveryRun.run_metadata.opportunity_handoff` exposes the latest outcome,
+attempt and next retry time. Concurrent late failures cannot overwrite completed
+receipts. Reconciliation prioritizes unattempted work and admits at most five
+saved-source handoffs per call. Research pause still disables reconciliation.
+
+Contract tests cover downstream failure, configuration repair, channel resume,
+retry backoff, source reassignment, provider-call deduplication and a late failure
+after completion. These are isolated database tests, not live deployment or full
+R02/R07 acceptance. Topic-watch workflows retain their existing separate handoff.
