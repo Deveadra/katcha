@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -85,12 +85,31 @@ def _record_source_handoff(
             return _record_source_handoff(
                 run_uuid, summary, channel_id, session=owned_session
             )
-    row = session.get(DiscoveryRun, run_uuid)
+    row = session.scalar(
+        select(DiscoveryRun).where(DiscoveryRun.id == run_uuid)
+        .with_for_update().execution_options(populate_existing=True)
+    )
     if row is None:
         return summary
     existing = dict(row.run_metadata or {}).get("opportunity_handoff")
+    if isinstance(existing, dict) and existing.get("status") in {"completed", "no_evidence"}:
+        return dict(existing)
     if isinstance(existing, dict) and existing == summary:
         return summary
+    attempt = int(existing.get("attempt", 0)) + 1 if isinstance(existing, dict) else 1
+    recorded_at = datetime.now(UTC)
+    retryable = summary["status"] in {"failed", "awaiting_configuration", "channel_inactive"}
+    summary = {
+        **summary,
+        "schema_version": "source-opportunity-handoff-v1",
+        "attempt": attempt,
+        "recorded_at": recorded_at.isoformat(),
+        "retry_class": "local_reconciliation" if retryable else "none",
+        "next_attempt_at": (
+            (recorded_at + timedelta(minutes=min(60, 5 * 2 ** min(attempt - 1, 4))))
+            .isoformat() if retryable else None
+        ),
+    }
     row.run_metadata = {
         **dict(row.run_metadata or {}),
         "opportunity_handoff": summary,
@@ -107,6 +126,7 @@ def _record_source_handoff(
                 "qualified_opportunities": int(
                     summary.get("qualified_opportunities") or 0
                 ),
+                "receipt": summary,
             },
         )
     )
@@ -133,7 +153,7 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
             return {"status": "handled_elsewhere"}
         previous = metadata.get("opportunity_handoff")
         if isinstance(previous, dict) and previous.get("status") in {
-            "completed", "awaiting_configuration", "no_evidence",
+            "completed", "no_evidence",
         }:
             return dict(previous)
         try:

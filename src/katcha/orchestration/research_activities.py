@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from temporalio import activity
 
 from katcha.acquisition_models import DiscoveryRun
@@ -21,7 +21,7 @@ def reconcile_completed_source_handoffs(
 ) -> dict[str, object]:
     """Backfill previously completed channel Source checks without provider requests.
 
-    Only old, channel-scoped, unprocessed source runs are eligible. Existing
+    Only old, channel-scoped, unprocessed or retryable source runs are eligible. Existing
     topic-watch jobs already bridge through their queue and are excluded.
     """
     if not get_settings().research_enabled:
@@ -29,9 +29,13 @@ def reconcile_completed_source_handoffs(
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
+    now = now.astimezone(UTC)
     cutoff = now - timedelta(minutes=10)
     bounded = max(1, min(int(limit), 5))
     metadata = DiscoveryRun.run_metadata
+    handoff = metadata["opportunity_handoff"]
+    handoff_status = handoff["status"].as_string()
+    next_attempt = handoff["next_attempt_at"].as_string()
     with session_scope() as session:
         ids = list(
             session.scalars(
@@ -43,9 +47,21 @@ def reconcile_completed_source_handoffs(
                     metadata["ingestion_source_id"].as_string().is_not(None),
                     metadata["source_scope"].as_string() == "channel",
                     metadata["topic_watch_id"].as_string().is_(None),
-                    metadata["opportunity_handoff"]["status"].as_string().is_(None),
+                    or_(
+                        handoff_status.is_(None),
+                        and_(
+                            handoff_status.in_([
+                                "failed", "awaiting_configuration", "channel_inactive",
+                            ]),
+                            or_(next_attempt.is_(None), next_attempt <= now.isoformat()),
+                        ),
+                    ),
                 )
-                .order_by(DiscoveryRun.completed_at, DiscoveryRun.id)
+                # Failed older rows must rotate behind unattempted work rather
+                # than starving the bounded reconciliation window forever.
+                .order_by(
+                    next_attempt.asc().nulls_first(), DiscoveryRun.completed_at, DiscoveryRun.id
+                )
                 .limit(bounded)
             )
         )

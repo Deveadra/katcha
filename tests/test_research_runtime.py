@@ -618,3 +618,89 @@ def test_unconfigured_channel_trends_wait_without_retries(research_db, monkeypat
     assert result["status"] == "awaiting_configuration"
     with pytest.raises(ValueError, match="channel profile not found"):
         refresh_channel_trends(uuid.uuid4(), run_key="missing")
+
+
+@pytest.mark.parametrize("block", ["ranking_failure", "missing_watch", "inactive_channel"])
+def test_source_handoff_recovers_without_repeating_provider_work(research_db, monkeypatch, block):
+    from katcha.models import DomainEvent
+    from katcha.orchestration import discovery_activities
+
+    profile_id, _ = channel()
+    if block != "missing_watch":
+        create_watch_profile(profile_id, interests=["Gaming"], opportunity_threshold=0.99)
+    source = upsert_ingestion_source(
+        source_key="recoverable-source", name="Gaming newsroom", adapter_key="rss_atom",
+        adapter_version="v1", platform="web", channel_profile_id=profile_id,
+        query_template={"feed_url": "https://example.com/recoverable-feed"},
+    )
+    calls = []
+
+    def discover(query, cursor):
+        calls.append("provider")
+        return DiscoveryBatch(items=(DiscoveredCandidate(
+            source_url="https://example.com/recoverable-game", title="Gaming update",
+            provenance_confidence=0.9,
+            metadata={"published_at": datetime.now(UTC).isoformat()},
+        ),))
+
+    monkeypatch.setattr(get_adapter("rss_atom", "v1"), "discover", discover)
+    run = create_discovery_run_from_source(source.id, idempotency_key="recovery")
+    execute_discovery_page_activity(str(run.id))
+    now = datetime.now(UTC)
+    with db.session_scope() as session:
+        session.get(DiscoveryRun, run.id).completed_at = now - timedelta(minutes=15)
+        if block == "inactive_channel":
+            session.get(ChannelProfile, profile_id).status = "paused"
+    real_refresh = discovery_activities.refresh_channel_trends
+    if block == "ranking_failure":
+        def fail_refresh(*args, **kwargs):
+            raise ConnectionError("fixture downstream database interruption")
+        monkeypatch.setattr(discovery_activities, "refresh_channel_trends", fail_refresh)
+    first = bridge_source_opportunities_activity(str(run.id))
+    assert first["status"] == {
+        "ranking_failure": "failed", "missing_watch": "awaiting_configuration",
+        "inactive_channel": "channel_inactive",
+    }[block]
+    assert first["attempt"] == 1
+    assert first["retry_class"] == "local_reconciliation"
+    # A scheduler restart respects backoff even though discovery completed long ago.
+    assert reconcile_completed_source_handoffs(now=now)["processed"] == 0
+    if block == "missing_watch":
+        create_watch_profile(profile_id, interests=["Gaming"], opportunity_threshold=0.99)
+    if block == "inactive_channel":
+        with db.session_scope() as session:
+            session.get(ChannelProfile, profile_id).status = "active"
+    monkeypatch.setattr(discovery_activities, "refresh_channel_trends", real_refresh)
+    after_backoff = datetime.fromisoformat(first["next_attempt_at"]) + timedelta(seconds=1)
+    assert reconcile_completed_source_handoffs(now=after_backoff)["outcomes"] == {"completed": 1}
+    assert calls == ["provider"]
+    assert reconcile_completed_source_handoffs(now=after_backoff)["processed"] == 0
+    with db.session_scope() as session:
+        saved = session.get(DiscoveryRun, run.id)
+        assert saved.status == "completed"
+        assert saved.run_metadata["opportunity_handoff"]["attempt"] == 2
+        assert saved.run_metadata["opportunity_handoff"]["next_attempt_at"] is None
+        attempts = list(session.scalars(select(DomainEvent).where(
+            DomainEvent.aggregate_id == str(run.id),
+            DomainEvent.event_type.like("source.opportunity_handoff.%"),
+        ).order_by(DomainEvent.created_at, DomainEvent.id)))
+        assert len(attempts) == 2
+        assert {event.payload["receipt"]["attempt"] for event in attempts} == {1, 2}
+        assert len(list(session.scalars(select(TrendOpportunity)))) == 1
+        assert len(list(session.scalars(select(TrendEvidencePacket)))) == 1
+
+
+def test_late_handoff_failure_cannot_replace_completed_receipt(research_db):
+    from katcha.orchestration.discovery_activities import _record_source_handoff
+
+    profile_id, _ = channel()
+    source = upsert_ingestion_source(
+        source_key="late-handoff", name="News", adapter_key="rss_atom",
+        adapter_version="v1", platform="web", channel_profile_id=profile_id,
+        query_template={"feed_url": "https://example.com/feed"},
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="late")
+    done = _record_source_handoff(run.id, {"status": "completed"}, profile_id)
+    assert _record_source_handoff(run.id, {"status": "failed"}, profile_id) == done
+    with db.session_scope() as session:
+        assert session.get(DiscoveryRun, run.id).run_metadata["opportunity_handoff"] == done
